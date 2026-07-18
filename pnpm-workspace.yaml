@@ -1,0 +1,38 @@
+packages:
+  - apps/*
+  - packages/*
+  - tools/*
+
+catalogMode: prefer
+
+catalog:
+  "@effect/platform-node": 4.0.0-beta.98
+  "@effect/vitest": 4.0.0-beta.98
+  "@types/node": ^24
+  alchemy: 2.0.0-beta.63
+  effect: 4.0.0-beta.98
+  typescript: ^7.0.2
+  vite: npm:@voidzero-dev/vite-plus-core@0.2.4
+  vite-plus: 0.2.4
+
+overrides:
+  vite: "catalog:"
+
+peerDependencyRules:
+  allowAny:
+    - vite
+  allowedVersions:
+    vite: "*"
+
+minimumReleaseAgeExclude:
+  - "@distilled.cloud/aws@0.29.1"
+  - "@distilled.cloud/axiom@0.29.1"
+  - "@distilled.cloud/cloudflare@0.29.1"
+  - "@distilled.cloud/core@0.29.1"
+  - "@distilled.cloud/neon@0.29.1"
+  - "@distilled.cloud/planetscale@0.29.1"
+  - alchemy@2.0.0-beta.63
+
+allowBuilds:
+  msgpackr-extract: false
+  workerd: true

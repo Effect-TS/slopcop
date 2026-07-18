@@ -1,0 +1,23 @@
+{
+  "name": "@triage-bot/api",
+  "type": "module",
+  "version": "0.0.0",
+  "private": true,
+  "exports": {
+    "./package.json": "./package.json",
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "check": "vp check"
+  },
+  "dependencies": {
+    "@triage-bot/domain": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "@triage-bot/bot",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "vp check",
+    "test": "vp test --run"
+  },
+  "dependencies": {
+    "@triage-bot/api": "workspace:*",
+    "@triage-bot/domain": "workspace:*",
+    "alchemy": "catalog:",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

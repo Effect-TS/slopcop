@@ -1,0 +1,26 @@
+# Dependencies and build output
+node_modules/
+dist/
+coverage/
+
+# Alchemy state
+.alchemy/
+
+# Local configuration
+.direnv/
+.env
+*.local
+
+# Logs
+*.log
+pnpm-debug.log*
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# AI agent worktrees
+.claude/worktrees/

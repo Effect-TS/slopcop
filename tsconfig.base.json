@@ -1,0 +1,57 @@
+{
+  "$schema": "https://raw.githubusercontent.com/Effect-TS/tsgo/refs/heads/main/schema.json",
+  "compilerOptions": {
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "target": "esnext",
+    "rewriteRelativeImportExtensions": true,
+    "allowImportingTsExtensions": true,
+    "esModuleInterop": true,
+
+    // Other Outputs
+    "sourceMap": true,
+    "declaration": true,
+    "declarationMap": true,
+
+    // Stricter Typechecking Options
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "erasableSyntaxOnly": true,
+
+    // Recommended Options
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "jsx": "preserve",
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "noUncheckedSideEffectImports": true,
+    "moduleDetection": "force",
+    "skipLibCheck": true,
+    "incremental": true,
+    "composite": true,
+
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        "namespaceImportPackages": ["effect", "@effect/*"],
+        "diagnosticSeverity": {
+          "extendsNativeError": "warning",
+          "globalConsole": "warning",
+          "globalConsoleInEffect": "warning",
+          "globalDate": "warning",
+          "globalDateInEffect": "warning",
+          "globalFetch": "warning",
+          "globalFetchInEffect": "warning",
+          "globalRandom": "warning",
+          "globalRandomInEffect": "warning",
+          "globalTimers": "warning",
+          "globalTimersInEffect": "warning",
+          "instanceOfSchema": "warning",
+          "nodeBuiltinImport": "warning",
+          "preferSchemaOverJson": "warning"
+        }
+      }
+    ]
+  }
+}
