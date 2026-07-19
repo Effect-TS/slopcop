@@ -8,6 +8,7 @@ import * as Layer from "effect/Layer"
 import * as Stream from "effect/Stream"
 import { GitHubEventsRepo } from "./repositories/GitHubEventsRepo.ts"
 import * as Schema from "effect/Schema"
+import type { WebhookEvent } from "alchemy/GitHub/RepositoryEventSource"
 
 export const GitHubEventsQueue = Cloudflare.Queues.Queue("GitHubEventsQueue", {
   name: "slopcop-github-webhook-events",
@@ -103,7 +104,7 @@ export class GitHubEvents extends Context.Service<
     })
 
     const decodeWebHookMessage = Schema.decodeUnknownEffect(GitHubWebHookEvent)
-    yield* Cloudflare.Queues.consumeQueueMessages(
+    yield* Cloudflare.Queues.consumeQueueMessages<WebhookEvent>(
       queueResource,
       {
         batchSize: 1,
@@ -117,7 +118,7 @@ export class GitHubEvents extends Context.Service<
         Stream.runForEach(
           stream,
           Effect.fnUntraced(function* (message) {
-            const event = yield* decodeWebHookMessage(message)
+            const event = yield* decodeWebHookMessage(message.body)
             yield* Effect.annotateLogs(consume(event), {
               attempts: message.attempts,
               messageId: message.id,
