@@ -4,7 +4,7 @@ import * as Context from "effect/Context"
 import * as Data from "effect/Data"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
-import type { GitHubWebHookEvent } from "@triage-bot/domain/GitHubWebhookEvent"
+import type { GitHubWebHookEvent } from "@slopcop/domain/GitHubWebhookEvent"
 import { Hyperdrive } from "../../Sql.ts"
 import { GitHubEvents, relations } from "../../Sql/schema.ts"
 import { and, eq, lte, or, sql } from "drizzle-orm"
@@ -60,7 +60,7 @@ export class GitHubEventsRepo extends Context.Service<
       error: string,
     ) => Effect.Effect<void, GitHubEventsRepoError>
   }
->()("@triage-bot/bot/GitHub/repositories/GitHubEventsRepo", {
+>()("@slopcop/bot/GitHub/repositories/GitHubEventsRepo", {
   make: Effect.gen(function* () {
     const conn = yield* Cloudflare.Hyperdrive.Connect(Hyperdrive)
     const db = yield* Drizzle.postgres(conn.connectionString, { relations })

@@ -1,5 +1,5 @@
 {
-  "name": "@triage-bot/bot",
+  "name": "@slopcop/bot",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -9,8 +9,8 @@
   },
   "dependencies": {
     "@effect/sql-pg": "4.0.0-beta.99",
-    "@triage-bot/api": "workspace:*",
-    "@triage-bot/domain": "workspace:*",
+    "@slopcop/api": "workspace:*",
+    "@slopcop/domain": "workspace:*",
     "alchemy": "catalog:",
     "drizzle-orm": "catalog:",
     "effect": "catalog:",

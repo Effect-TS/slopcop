@@ -1,4 +1,4 @@
-import { GitHubWebHookEvent } from "@triage-bot/domain/GitHubWebhookEvent"
+import { GitHubWebHookEvent } from "@slopcop/domain/GitHubWebhookEvent"
 import type { RuntimeContext } from "alchemy"
 import * as Cloudflare from "alchemy/Cloudflare"
 import * as Context from "effect/Context"
@@ -44,7 +44,7 @@ export class GitHubEvents extends Context.Service<
       event: GitHubWebHookEvent,
     ) => Effect.Effect<void, GitHubEventEnqueueError, RuntimeContext>
   }
->()("@triage-bot/bot/GitHub/GitHubEvents", {
+>()("@slopcop/bot/GitHub/GitHubEvents", {
   make: Effect.gen(function* () {
     const queueResource = yield* GitHubEventsQueue
     const queue = yield* Cloudflare.Queues.WriteQueue(queueResource)

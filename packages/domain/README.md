@@ -1,7 +1,7 @@
-# Triage Domain
+# SlopCop Domain
 
-Domain types and service contracts shared by the Effect triage applications.
+Domain types and service contracts shared by SlopCop applications.
 
 ## Development
 
-Run `vp run @effect/triage-domain#test` from the repository root.
+Run `vp run @slopcop/domain#test` from the repository root.

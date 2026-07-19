@@ -12,7 +12,7 @@ export class Database extends Context.Service<
   EffectPgDatabase & {
     readonly $client: PgClient
   }
->()("@triage-bot/bot/Sql/Database") {}
+>()("@slopcop/bot/Sql/Database") {}
 
 export const NeonDatabase = Effect.gen(function* () {
   const { stage } = yield* Alchemy.Stack

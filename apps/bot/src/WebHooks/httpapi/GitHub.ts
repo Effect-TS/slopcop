@@ -1,11 +1,11 @@
 import * as NodeCrypto from "node:crypto"
-import { RootApi } from "@triage-bot/api/RootApi"
+import { RootApi } from "@slopcop/api/RootApi"
 import {
   GitHubWebHookMiddleware,
   InvalidGitHubWebHookSignature,
-} from "@triage-bot/api/WebHooks/GitHub"
-import { WebhookQueueUnavailable } from "@triage-bot/api/WebHooks/GitHub"
-import { GitHubWebHookEvent } from "@triage-bot/domain/GitHubWebhookEvent"
+} from "@slopcop/api/WebHooks/GitHub"
+import { WebhookQueueUnavailable } from "@slopcop/api/WebHooks/GitHub"
+import { GitHubWebHookEvent } from "@slopcop/domain/GitHubWebhookEvent"
 import * as Config from "effect/Config"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"

@@ -11,7 +11,7 @@ import { Database, Hyperdrive } from "./Sql.ts"
 import { GitHubEvents } from "./GitHub/GitHubEvents.ts"
 
 export default Cloudflare.Worker(
-  "TriageBot",
+  "SlopCop",
   {
     main: import.meta.url,
     compatibility: { flags: ["nodejs_compat"] },

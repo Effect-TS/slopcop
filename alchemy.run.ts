@@ -19,7 +19,7 @@ const Providers = Layer.mergeAll(
 const State = Cloudflare.state()
 
 export default Alchemy.Stack(
-  "EffectTriage",
+  "SlopCop",
   {
     providers: Providers,
     state: State,

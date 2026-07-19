@@ -15,6 +15,6 @@ export class WebhookQueueUnavailable extends Schema.TaggedErrorClass<WebhookQueu
 ) {}
 
 export class GitHubWebHookMiddleware extends HttpApiMiddleware.Service<GitHubWebHookMiddleware>()(
-  "@effect/triage/GitHubWebHookMiddleware",
+  "@slopcop/api/GitHubWebHookMiddleware",
   { error: [HttpApiError.BadRequest, InvalidGitHubWebHookSignature] },
 ) {}

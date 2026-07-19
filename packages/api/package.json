@@ -1,5 +1,5 @@
 {
-  "name": "@triage-bot/api",
+  "name": "@slopcop/api",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -12,7 +12,7 @@
     "check": "vp check"
   },
   "dependencies": {
-    "@triage-bot/domain": "workspace:*",
+    "@slopcop/domain": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {

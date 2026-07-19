@@ -1,7 +1,7 @@
 import * as Layer from "effect/Layer"
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder"
 import * as HttpApiScalar from "effect/unstable/httpapi/HttpApiScalar"
-import { RootApi } from "@triage-bot/api/RootApi"
+import { RootApi } from "@slopcop/api/RootApi"
 import { WebHooksApiHandlersLayer } from "./WebHooks/httpapi/GitHub.ts"
 import { SchemaErrorLoggerLayer } from "./Shared/SchemaErrorLogger.ts"
 

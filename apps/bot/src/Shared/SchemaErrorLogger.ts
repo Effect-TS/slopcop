@@ -1,4 +1,4 @@
-import { SchemaErrorLogger } from "@triage-bot/api/RootApi"
+import { SchemaErrorLogger } from "@slopcop/api/RootApi"
 import * as Cause from "effect/Cause"
 import * as Effect from "effect/Effect"
 import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware"
