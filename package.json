@@ -13,11 +13,11 @@
   },
   "devDependencies": {
     "@effect/platform-node": "catalog:",
-    "@effect/tsgo": "0.24.1",
+    "@effect/tsgo": "catalog:",
     "@types/node": "catalog:",
     "alchemy": "catalog:",
     "effect": "catalog:",
-    "typescript": "7.1.0-dev.20260715.1",
+    "typescript": "catalog:",
     "vite": "catalog:",
     "vite-plus": "catalog:"
   },

@@ -6,12 +6,18 @@ packages:
 catalogMode: prefer
 
 catalog:
-  "@effect/platform-node": 4.0.0-beta.98
-  "@effect/vitest": 4.0.0-beta.98
+  "@effect/platform-node": 4.0.0-beta.99
+  "@effect/sql-pg": 4.0.0-beta.99
+  "@effect/tsgo": ^0.24.1
+  "@effect/vitest": 4.0.0-beta.99
   "@types/node": ^24
+  "@types/pg": ^8.20.0
   alchemy: 2.0.0-beta.63
-  effect: 4.0.0-beta.98
-  typescript: ^7.0.2
+  drizzle-kit: 1.0.0-rc.4
+  drizzle-orm: 1.0.0-rc.4
+  effect: 4.0.0-beta.99
+  pg: ^8.22.0
+  typescript: 7.1.0-dev.20260715.1
   vite: npm:@voidzero-dev/vite-plus-core@0.2.4
   vite-plus: 0.2.4
 
@@ -34,5 +40,6 @@ minimumReleaseAgeExclude:
   - alchemy@2.0.0-beta.63
 
 allowBuilds:
+  esbuild: true
   msgpackr-extract: false
   workerd: true

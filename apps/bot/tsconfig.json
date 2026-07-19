@@ -2,10 +2,8 @@
   "$schema": "http://json.schemastore.org/tsconfig",
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "types": ["node"],
+    "types": ["node"]
   },
   "include": ["src"],
-  "references": [
-    { "path": "../../packages/api" }
-  ]
+  "references": [{ "path": "../../packages/api" }]
 }

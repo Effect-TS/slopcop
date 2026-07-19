@@ -1,15 +1,20 @@
 import * as NodeCrypto from "node:crypto"
+import { RootApi } from "@triage-bot/api/RootApi"
 import {
   GitHubWebHookMiddleware,
   InvalidGitHubWebHookSignature,
 } from "@triage-bot/api/WebHooks/GitHub"
+import { WebhookQueueUnavailable } from "@triage-bot/api/WebHooks/GitHub"
+import { GitHubWebHookEvent } from "@triage-bot/domain/GitHubWebhookEvent"
 import * as Config from "effect/Config"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Redacted from "effect/Redacted"
 import * as Schema from "effect/Schema"
-import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest"
+import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder"
 import * as HttpApiError from "effect/unstable/httpapi/HttpApiError"
+import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest"
+import { GitHubEvents } from "../../GitHub/GitHubEvents.ts"
 
 const HMAC_SHA256_PATTERN = /^[0-9a-fA-F]{64}$/
 
@@ -25,7 +30,7 @@ const GitHubWebhookHeaders = Schema.Struct({
 export const GitHubWebHookMiddlewareLayer = Layer.effect(
   GitHubWebHookMiddleware,
   Effect.gen(function* () {
-    const token = yield* Config.redacted("WEBHOOK_TOKEN")
+    const secret = yield* Config.redacted("GITHUB_WEBHOOK_SECRET")
 
     const decodeHeaders = HttpServerRequest.schemaHeaders(
       GitHubWebhookHeaders,
@@ -42,7 +47,7 @@ export const GitHubWebHookMiddlewareLayer = Layer.effect(
     )
 
     function verifySignature(signature: string, body: string) {
-      const digest = NodeCrypto.createHmac("sha256", Redacted.value(token))
+      const digest = NodeCrypto.createHmac("sha256", Redacted.value(secret))
         .update(body, "utf8")
         .digest("hex")
 
@@ -73,3 +78,33 @@ export const GitHubWebHookMiddlewareLayer = Layer.effect(
     })
   }),
 )
+
+export const WebHooksApiHandlersLayer = HttpApiBuilder.group(
+  RootApi,
+  "webhooks",
+  Effect.fnUntraced(function* (handlers) {
+    const events = yield* GitHubEvents
+
+    return handlers.handle(
+      "github",
+      Effect.fnUntraced(function* ({ headers, payload }) {
+        const event = new GitHubWebHookEvent({
+          deliveryId: headers["x-github-delivery"],
+          eventName: headers["x-github-event"],
+          payload,
+        })
+
+        yield* events
+          .enqueue(event)
+          .pipe(Effect.mapError(() => new WebhookQueueUnavailable()))
+
+        yield* Effect.logInfo("Queued GitHub webhook").pipe(
+          Effect.annotateLogs({
+            deliveryId: event.deliveryId,
+            event: event.eventName,
+          }),
+        )
+      }),
+    )
+  }),
+).pipe(Layer.provide(GitHubWebHookMiddlewareLayer))

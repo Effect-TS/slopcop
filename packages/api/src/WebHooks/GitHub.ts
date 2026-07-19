@@ -8,6 +8,12 @@ export class InvalidGitHubWebHookSignature extends Schema.TaggedErrorClass<Inval
   { httpApiStatus: 401 },
 ) {}
 
+export class WebhookQueueUnavailable extends Schema.TaggedErrorClass<WebhookQueueUnavailable>()(
+  "WebhookQueueUnavailable",
+  {},
+  { httpApiStatus: 503 },
+) {}
+
 export class GitHubWebHookMiddleware extends HttpApiMiddleware.Service<GitHubWebHookMiddleware>()(
   "@effect/triage/GitHubWebHookMiddleware",
   { error: [HttpApiError.BadRequest, InvalidGitHubWebHookSignature] },
