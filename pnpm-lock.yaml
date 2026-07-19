@@ -211,30 +211,15 @@ catalogs:
     '@effect/tsgo':
       specifier: ^0.24.1
       version: 0.24.1
-    '@effect/vitest':
-      specifier: 4.0.0-beta.99
-      version: 4.0.0-beta.99
     '@types/node':
       specifier: ^24
       version: 24.13.3
-    '@types/pg':
-      specifier: ^8.20.0
-      version: 8.20.0
     alchemy:
       specifier: 2.0.0-beta.63
       version: 2.0.0-beta.63
-    drizzle-kit:
-      specifier: 1.0.0-rc.4
-      version: 1.0.0-rc.4
-    drizzle-orm:
-      specifier: 1.0.0-rc.4
-      version: 1.0.0-rc.4
     effect:
       specifier: 4.0.0-beta.99
       version: 4.0.0-beta.99
-    pg:
-      specifier: ^8.22.0
-      version: 8.22.0
     typescript:
       specifier: 7.1.0-dev.20260715.1
       version: 7.1.0-dev.20260715.1

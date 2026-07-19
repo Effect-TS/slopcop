@@ -18,8 +18,8 @@ export const NeonDatabase = Effect.gen(function* () {
   const { stage } = yield* Alchemy.Stack
 
   const schema = yield* Drizzle.Schema("SlopCopDatabaseSchema", {
-    schema: "./Sql/schema.ts",
-    out: "./Sql/migrations",
+    schema: "./apps/bot/src/Sql/schema.ts",
+    out: "./apps/bot/src/migrations",
   })
 
   const project = stage.startsWith("pr-")
