@@ -1,4 +1,4 @@
-import { GitHubWebHookEvent } from "@slopcop/domain/GitHubWebhookEvent"
+import { GitHubWebhookEvent } from "@slopcop/domain/GitHubWebhookEvent"
 import type { RuntimeContext } from "alchemy"
 import * as Cloudflare from "alchemy/Cloudflare"
 import * as Context from "effect/Context"
@@ -6,9 +6,9 @@ import * as Data from "effect/Data"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Stream from "effect/Stream"
+import { GitHubWebhookQueueMessage } from "./GitHubWebhookQueueMessage.ts"
 import { GitHubEventsRepo } from "./repositories/GitHubEventsRepo.ts"
 import * as Schema from "effect/Schema"
-import type { WebhookEvent } from "alchemy/GitHub/RepositoryEventSource"
 
 export const GitHubEventsQueue = Cloudflare.Queues.Queue("GitHubEventsQueue", {
   name: "slopcop-github-webhook-events",
@@ -26,15 +26,15 @@ export const GitHubEventsDeadLetterQueue = Cloudflare.Queues.Queue(
 export class GitHubEventEnqueueError extends Data.TaggedError(
   "GitHubEventQueueError",
 )<{
-  readonly deliveryId: string
+  readonly event: GitHubWebhookEvent
   readonly cause: unknown
 }> {}
 
 export class GitHubEventProcessingError extends Data.TaggedError(
   "GitHubEventProcessingError",
 )<{
-  readonly deliveryId: string
   readonly reason: "DeliveryBusy" | "ProcessingFailed"
+  readonly event: GitHubWebhookEvent
   readonly message: string
 }> {}
 
@@ -42,7 +42,7 @@ export class GitHubEvents extends Context.Service<
   GitHubEvents,
   {
     readonly enqueue: (
-      event: GitHubWebHookEvent,
+      event: GitHubWebhookEvent,
     ) => Effect.Effect<void, GitHubEventEnqueueError, RuntimeContext>
   }
 >()("@slopcop/bot/GitHub/GitHubEvents", {
@@ -50,61 +50,63 @@ export class GitHubEvents extends Context.Service<
     const queueResource = yield* GitHubEventsQueue
     const queue = yield* Cloudflare.Queues.WriteQueue(queueResource)
     const repo = yield* GitHubEventsRepo
+    const encodeWebhookEvent = Schema.encodeEffect(GitHubWebhookEvent)
 
-    const enqueue = Effect.fn("GitHubEvents.enqueue")(function* (
-      event: GitHubWebHookEvent,
-    ) {
-      yield* queue.send(event, { contentType: "json" }).pipe(
+    const enqueue = Effect.fn("GitHubEvents.enqueue")(
+      function* (event: GitHubWebhookEvent) {
+        const body = encodeWebhookEvent(event)
+        return yield* queue.send(body, { contentType: "json" })
+      },
+      (effect, event) =>
         Effect.mapError(
-          (cause) =>
-            new GitHubEventEnqueueError({
-              deliveryId: event.deliveryId,
-              cause,
-            }),
+          effect,
+          (cause) => new GitHubEventEnqueueError({ event, cause }),
         ),
-      )
-    })
+    )
 
     const process = Effect.fn("GitHubEvents.process")(function* (
-      event: GitHubWebHookEvent,
+      event: GitHubWebhookEvent,
     ): Effect.fn.Return<void, GitHubEventProcessingError> {
       // Stub processor for now
       yield* Effect.logInfo("Processed GitHub webhook event").pipe(
         Effect.annotateLogs({
-          deliveryId: event.deliveryId,
-          event: event.eventName,
+          deliveryId: event.id,
+          event: event.name,
         }),
       )
     })
 
     const consume = Effect.fn("GitHubEvents.consume")(function* (
-      event: GitHubWebHookEvent,
+      event: GitHubWebhookEvent,
     ) {
       const claim = yield* repo.claim(event)
 
       if (claim._tag === "Completed") {
         return yield* Effect.annotateLogs(
           Effect.logInfo("Skipped completed GitHub webhook delivery"),
-          { deliveryId: event.deliveryId },
+          { deliveryId: event.id },
         )
       }
 
       if (claim._tag === "Busy") {
         return yield* new GitHubEventProcessingError({
-          deliveryId: event.deliveryId,
+          event,
           reason: "DeliveryBusy",
           message: "The GitHub webhook delivery is already being processed",
         })
       }
 
       return yield* process(event).pipe(
-        Effect.catch((error) => repo.release(error.deliveryId, error.message)),
-        Effect.andThen(repo.complete(event.deliveryId)),
+        Effect.catch((error) => repo.release(error.event.id, error.message)),
+        Effect.andThen(repo.complete(event.id)),
       )
     })
 
-    const decodeWebHookMessage = Schema.decodeUnknownEffect(GitHubWebHookEvent)
-    yield* Cloudflare.Queues.consumeQueueMessages<WebhookEvent>(
+    const decodeQueueMessage = Schema.decodeUnknownEffect(
+      GitHubWebhookQueueMessage.schema,
+    )
+    const decodeWebhookEvent = Schema.decodeUnknownEffect(GitHubWebhookEvent)
+    yield* Cloudflare.Queues.consumeQueueMessages<unknown>(
       queueResource,
       {
         batchSize: 1,
@@ -118,7 +120,24 @@ export class GitHubEvents extends Context.Service<
         Stream.runForEach(
           stream,
           Effect.fnUntraced(function* (message) {
-            const event = yield* decodeWebHookMessage(message.body)
+            const envelope = GitHubWebhookQueueMessage.normalize(
+              yield* decodeQueueMessage(message.body),
+            )
+
+            if (!GitHubWebhookQueueMessage.isSupported(envelope.name)) {
+              return yield* Effect.annotateLogs(
+                Effect.logInfo(
+                  "Ignored unsupported queued GitHub webhook event",
+                ),
+                {
+                  id: envelope.id,
+                  event: envelope.name,
+                  messageId: message.id,
+                },
+              )
+            }
+
+            const event = yield* decodeWebhookEvent(envelope)
             yield* Effect.annotateLogs(consume(event), {
               attempts: message.attempts,
               messageId: message.id,

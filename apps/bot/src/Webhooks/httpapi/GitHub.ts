@@ -1,11 +1,14 @@
 import * as NodeCrypto from "node:crypto"
 import { RootApi } from "@slopcop/api/RootApi"
 import {
-  GitHubWebHookMiddleware,
-  InvalidGitHubWebHookSignature,
-} from "@slopcop/api/WebHooks/GitHub"
-import { WebhookQueueUnavailable } from "@slopcop/api/WebHooks/GitHub"
-import { GitHubWebHookEvent } from "@slopcop/domain/GitHubWebhookEvent"
+  GitHubWebhookMiddleware,
+  EventQueueUnavailable,
+} from "@slopcop/api/Webhooks/GitHub"
+import { InvalidWebhookSignature } from "@slopcop/api/Webhooks/Errors"
+import {
+  GitHubWebhookEvent,
+  WebhookEventName,
+} from "@slopcop/domain/GitHubWebhookEvent"
 import * as Config from "effect/Config"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
@@ -27,8 +30,11 @@ const GitHubWebhookHeaders = Schema.Struct({
   "x-hub-signature-256": GitHubWebhookSignature,
 })
 
-export const GitHubWebHookMiddlewareLayer = Layer.effect(
-  GitHubWebHookMiddleware,
+const decodeWebhookEvent = Schema.decodeUnknownEffect(GitHubWebhookEvent)
+const isValidWebhookEventName = Schema.is(WebhookEventName)
+
+export const GitHubWebhookMiddlewareLayer = Layer.effect(
+  GitHubWebhookMiddleware,
   Effect.gen(function* () {
     const secret = yield* Config.redacted("GITHUB_WEBHOOK_SECRET")
 
@@ -71,7 +77,7 @@ export const GitHubWebHookMiddlewareLayer = Layer.effect(
       )
 
       if (!verifySignature(signature, body)) {
-        return yield* new InvalidGitHubWebHookSignature()
+        return yield* new InvalidWebhookSignature()
       }
 
       return yield* effect
@@ -79,7 +85,7 @@ export const GitHubWebHookMiddlewareLayer = Layer.effect(
   }),
 )
 
-export const WebHooksApiHandlersLayer = HttpApiBuilder.group(
+export const WebhooksApiHandlersLayer = HttpApiBuilder.group(
   RootApi,
   "webhooks",
   Effect.fnUntraced(function* (handlers) {
@@ -88,23 +94,42 @@ export const WebHooksApiHandlersLayer = HttpApiBuilder.group(
     return handlers.handle(
       "github",
       Effect.fnUntraced(function* ({ headers, payload }) {
-        const event = new GitHubWebHookEvent({
-          deliveryId: headers["x-github-delivery"],
-          eventName: headers["x-github-event"],
-          payload,
-        })
+        const id = headers["x-github-delivery"]
+        const name = headers["x-github-event"]
 
-        yield* events
-          .enqueue(event)
-          .pipe(Effect.mapError(() => new WebhookQueueUnavailable()))
+        if (!isValidWebhookEventName(name)) {
+          // Return a successful response to GitHub for unsupported events
+          return yield* Effect.annotateLogs(
+            Effect.logInfo("Ignored unsupported GitHub webhook event"),
+            { id, event: name },
+          )
+        }
 
-        yield* Effect.logInfo("Queued GitHub webhook").pipe(
-          Effect.annotateLogs({
-            deliveryId: event.deliveryId,
-            event: event.eventName,
-          }),
+        const event = yield* decodeWebhookEvent({ id, name, payload }).pipe(
+          Effect.catchCause(
+            Effect.fnUntraced(function* (cause) {
+              yield* Effect.annotateLogs(
+                Effect.logWarning(
+                  "Failed to decode GitHub webhook payload",
+                  cause,
+                ),
+                { id, event: name },
+              )
+              return yield* new HttpApiError.BadRequest()
+            }),
+          ),
+        )
+
+        yield* Effect.mapError(
+          events.enqueue(event),
+          () => new EventQueueUnavailable(),
+        )
+
+        return yield* Effect.annotateLogs(
+          Effect.logInfo("Queued GitHub webhook"),
+          { id, event: event.name },
         )
       }),
     )
   }),
-).pipe(Layer.provide(GitHubWebHookMiddlewareLayer))
+).pipe(Layer.provide(GitHubWebhookMiddlewareLayer))

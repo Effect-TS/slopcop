@@ -4,6 +4,7 @@ export default defineConfig({
   fmt: {
     printWidth: 80,
     semi: false,
+    ignorePatterns: ["apps/bot/src/migrations"],
   },
   lint: {
     plugins: ["typescript"],

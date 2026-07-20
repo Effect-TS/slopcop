@@ -4,7 +4,7 @@ import * as Context from "effect/Context"
 import * as Data from "effect/Data"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
-import type { GitHubWebHookEvent } from "@slopcop/domain/GitHubWebhookEvent"
+import type { GitHubWebhookEvent } from "@slopcop/domain/GitHubWebhookEvent"
 import { Hyperdrive } from "../../Sql.ts"
 import { GitHubEvents, relations } from "../../Sql/schema.ts"
 import { and, eq, lte, or, sql } from "drizzle-orm"
@@ -50,7 +50,7 @@ export class GitHubEventsRepo extends Context.Service<
   GitHubEventsRepo,
   {
     readonly claim: (
-      event: GitHubWebHookEvent,
+      event: GitHubWebhookEvent,
     ) => Effect.Effect<GitHubEventClaim, GitHubEventsRepoError>
     readonly complete: (
       deliveryId: string,
@@ -66,17 +66,17 @@ export class GitHubEventsRepo extends Context.Service<
     const db = yield* Drizzle.postgres(conn.connectionString, { relations })
 
     const claim = Effect.fn("GitHubEventsRepo.claim")(function* (
-      event: GitHubWebHookEvent,
+      event: GitHubWebhookEvent,
     ) {
       yield* db
         .insert(GitHubEvents)
         .values({
-          id: event.deliveryId,
-          name: event.eventName,
+          id: event.id,
+          name: event.name,
           status: "pending",
         })
         .onConflictDoNothing()
-        .pipe(mapDatabaseError(event.deliveryId, "Claim", "InsertDelivery"))
+        .pipe(mapDatabaseError(event.id, "Claim", "InsertDelivery"))
 
       const claimed = yield* db
         .update(GitHubEvents)
@@ -88,7 +88,7 @@ export class GitHubEventsRepo extends Context.Service<
         })
         .where(
           and(
-            eq(GitHubEvents.id, event.deliveryId),
+            eq(GitHubEvents.id, event.id),
             or(
               eq(GitHubEvents.status, "pending"),
               and(
@@ -102,7 +102,7 @@ export class GitHubEventsRepo extends Context.Service<
           ),
         )
         .returning({ id: GitHubEvents.id })
-        .pipe(mapDatabaseError(event.deliveryId, "Claim", "AcquireDelivery"))
+        .pipe(mapDatabaseError(event.id, "Claim", "AcquireDelivery"))
 
       if (claimed.length === 1) {
         return GitHubEventClaim.Acquired()
@@ -111,9 +111,9 @@ export class GitHubEventsRepo extends Context.Service<
       const [existing] = yield* db
         .select({ status: GitHubEvents.status })
         .from(GitHubEvents)
-        .where(eq(GitHubEvents.id, event.deliveryId))
+        .where(eq(GitHubEvents.id, event.id))
         .limit(1)
-        .pipe(mapDatabaseError(event.deliveryId, "Claim", "ReadDeliveryStatus"))
+        .pipe(mapDatabaseError(event.id, "Claim", "ReadDeliveryStatus"))
 
       return existing?.status === "completed"
         ? GitHubEventClaim.Completed()

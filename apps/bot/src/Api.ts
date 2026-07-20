@@ -2,11 +2,11 @@ import * as Layer from "effect/Layer"
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder"
 import * as HttpApiScalar from "effect/unstable/httpapi/HttpApiScalar"
 import { RootApi } from "@slopcop/api/RootApi"
-import { WebHooksApiHandlersLayer } from "./WebHooks/httpapi/GitHub.ts"
+import { WebhooksApiHandlersLayer } from "./Webhooks/httpapi/GitHub.ts"
 import { SchemaErrorLoggerLayer } from "./Shared/SchemaErrorLogger.ts"
 
 export const ApiHandlersLayer = HttpApiBuilder.layer(RootApi).pipe(
-  Layer.provide([WebHooksApiHandlersLayer]),
+  Layer.provide([WebhooksApiHandlersLayer]),
   Layer.provide(SchemaErrorLoggerLayer),
 )
 
