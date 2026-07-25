@@ -1,0 +1,128 @@
+diff --git a/lib/Util/proxy-chain.js b/lib/Util/proxy-chain.js
+index c908c8cc56cde5ed59e540d00003eb85cb2a818f..f5f07104ed960e423644ca5fff8c02eb63030b63 100644
+--- a/lib/Util/proxy-chain.js
++++ b/lib/Util/proxy-chain.js
+@@ -1,12 +1,13 @@
+ /** @effect-diagnostics anyUnknownInErrorContext:off */
+ import * as Effect from "effect/Effect";
++const chainStates = new WeakMap();
+ /**
+  * Replay an op chain against a real value. `get` reads a property,
+  * `call` invokes — bound to the previous receiver so `this` resolves
+  * to the object the method was read from (drizzle's `select()` etc.
+  * read `this._.session`, so dropping `this` would throw).
+  */
+-const replay = (root, ops) => {
++const replay = (root, ops, cached) => {
+     let cur = root;
+     let receiver = root;
+     for (const op of ops) {
+@@ -15,7 +16,17 @@ const replay = (root, ops) => {
+             cur = cur[op.prop];
+         }
+         else {
+-            cur = cur.apply(receiver, op.args);
++            const args = op.args.map((arg) => {
++                if ((typeof arg === "object" && arg !== null) ||
++                    typeof arg === "function") {
++                    const state = chainStates.get(arg);
++                    if (state?.cached === cached) {
++                        return replay(root, state.ops, cached);
++                    }
++                }
++                return arg;
++            });
++            cur = cur.apply(receiver, args);
+             receiver = cur;
+         }
+     }
+@@ -50,8 +61,8 @@ const replay = (root, ops) => {
+  */
+ export const proxyChain = (cached) => chain(cached);
+ const chain = (cached, ops = []) => {
+-    const effect = Effect.flatMap(cached, (root) => replay(root, ops));
+-    return new Proxy(function () { }, {
++    const effect = Effect.flatMap(cached, (root) => replay(root, ops, cached));
++    const proxy = new Proxy(function () { }, {
+         get(_, prop) {
+             if (Reflect.has(effect, prop)) {
+                 return Reflect.get(effect, prop);
+@@ -65,5 +76,7 @@ const chain = (cached, ops = []) => {
+             return chain(cached, [...ops, { kind: "call", args }]);
+         },
+     });
++    chainStates.set(proxy, { cached, ops });
++    return proxy;
+ };
+ //# sourceMappingURL=proxy-chain.js.map
+diff --git a/src/Util/proxy-chain.ts b/src/Util/proxy-chain.ts
+index fe19936f7bef25eeba4a1ee175786107943da872..a507e22fd55de546c2afa7fb90f4a5a325f84aa8 100644
+--- a/src/Util/proxy-chain.ts
++++ b/src/Util/proxy-chain.ts
+@@ -5,13 +5,24 @@ type Op =
+   | { kind: "get"; prop: PropertyKey }
+   | { kind: "call"; args: unknown[] };
+ 
++type ChainState = {
++  readonly cached: Effect.Effect<unknown, any, any>;
++  readonly ops: ReadonlyArray<Op>;
++};
++
++const chainStates = new WeakMap<object, ChainState>();
++
+ /**
+  * Replay an op chain against a real value. `get` reads a property,
+  * `call` invokes — bound to the previous receiver so `this` resolves
+  * to the object the method was read from (drizzle's `select()` etc.
+  * read `this._.session`, so dropping `this` would throw).
+  */
+-const replay = (root: unknown, ops: ReadonlyArray<Op>): unknown => {
++const replay = (
++  root: unknown,
++  ops: ReadonlyArray<Op>,
++  cached: Effect.Effect<unknown, any, any>,
++): unknown => {
+   let cur: any = root;
+   let receiver: any = root;
+   for (const op of ops) {
+@@ -19,7 +30,19 @@ const replay = (root: unknown, ops: ReadonlyArray<Op>): unknown => {
+       receiver = cur;
+       cur = cur[op.prop];
+     } else {
+-      cur = cur.apply(receiver, op.args);
++      const args = op.args.map((arg) => {
++        if (
++          (typeof arg === "object" && arg !== null) ||
++          typeof arg === "function"
++        ) {
++          const state = chainStates.get(arg);
++          if (state?.cached === cached) {
++            return replay(root, state.ops, cached);
++          }
++        }
++        return arg;
++      });
++      cur = cur.apply(receiver, args);
+       receiver = cur;
+     }
+   }
+@@ -62,9 +85,10 @@ const chain = (
+ ): unknown => {
+   const effect = Effect.flatMap(
+     cached,
+-    (root) => replay(root, ops) as Effect.Effect<unknown, unknown, unknown>,
++    (root) =>
++      replay(root, ops, cached) as Effect.Effect<unknown, unknown, unknown>,
+   );
+-  return new Proxy(function () {}, {
++  const proxy = new Proxy(function () {}, {
+     get(_, prop) {
+       if (Reflect.has(effect, prop)) {
+         return Reflect.get(effect, prop);
+@@ -78,4 +102,6 @@ const chain = (
+       return chain(cached, [...ops, { kind: "call", args }]);
+     },
+   });
++  chainStates.set(proxy, { cached, ops });
++  return proxy;
+ };

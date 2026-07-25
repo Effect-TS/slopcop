@@ -5,7 +5,7 @@ import * as Neon from "alchemy/Neon"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import Worker from "./apps/bot/src/Worker.ts"
-import { Hyperdrive, NeonDatabase } from "./apps/bot/src/Sql.ts"
+import { D1Database } from "./apps/bot/src/Sql.ts"
 import {
   GitHubEventsQueue,
   GitHubEventsDeadLetterQueue,
@@ -25,8 +25,7 @@ export default Alchemy.Stack(
     state: State,
   },
   Effect.gen(function* () {
-    const db = yield* NeonDatabase
-    const hyperdrive = yield* Hyperdrive
+    const db = yield* D1Database
 
     const queue = yield* GitHubEventsQueue
     const deadLetterQueue = yield* GitHubEventsDeadLetterQueue
@@ -34,10 +33,7 @@ export default Alchemy.Stack(
     const worker = yield* Worker
 
     return {
-      databaseName: db.branch.databaseName,
-      databaseBranchName: db.branch.branchName,
-
-      hyperdriveName: hyperdrive.name,
+      databaseName: db.databaseName,
 
       queueName: queue.queueName,
       deadLetterQueueName: deadLetterQueue.queueName,

@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema"
-import { BaseWebhookEvent } from "./BaseWebhookEvent.ts"
+import { BaseWebhookEvent } from "./GitHubCommon.ts"
 
 export const PingWebhookPayload = Schema.Struct({
   hook_id: Schema.Finite,

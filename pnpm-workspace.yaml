@@ -6,17 +6,15 @@ packages:
 catalogMode: prefer
 
 catalog:
-  "@effect/platform-node": 4.0.0-beta.99
-  "@effect/sql-pg": 4.0.0-beta.99
+  "@effect/ai-openai": 4.0.0-beta.100
+  "@effect/openapi-generator": 4.0.0-beta.100
+  "@effect/platform-node": 4.0.0-beta.100
+  "@effect/sql-d1": 4.0.0-beta.100
   "@effect/tsgo": ^0.24.1
-  "@effect/vitest": 4.0.0-beta.99
+  "@effect/vitest": 4.0.0-beta.100
   "@types/node": ^24
-  "@types/pg": ^8.20.0
-  alchemy: 2.0.0-beta.63
-  drizzle-kit: 1.0.0-rc.4
-  drizzle-orm: 1.0.0-rc.4
-  effect: 4.0.0-beta.99
-  pg: ^8.22.0
+  alchemy: https://pkg.ing/alchemy/b9f0c1c
+  effect: 4.0.0-beta.100
   typescript: 7.1.0-dev.20260715.1
   vite: npm:@voidzero-dev/vite-plus-core@0.2.4
   vite-plus: 0.2.4
@@ -31,15 +29,21 @@ peerDependencyRules:
     vite: "*"
 
 minimumReleaseAgeExclude:
-  - "@distilled.cloud/aws@0.29.1"
-  - "@distilled.cloud/axiom@0.29.1"
-  - "@distilled.cloud/cloudflare@0.29.1"
-  - "@distilled.cloud/core@0.29.1"
-  - "@distilled.cloud/neon@0.29.1"
-  - "@distilled.cloud/planetscale@0.29.1"
+  - "@distilled.cloud/aws@0.29.1 || 0.30.0"
+  - "@distilled.cloud/axiom@0.29.1 || 0.30.0"
+  - "@distilled.cloud/cloudflare@0.29.1 || 0.30.0"
+  - "@distilled.cloud/core@0.29.1 || 0.30.0"
+  - "@distilled.cloud/neon@0.29.1 || 0.30.0"
+  - "@distilled.cloud/planetscale@0.29.1 || 0.30.0"
   - alchemy@2.0.0-beta.63
+  - "@distilled.cloud/cloudflare-rolldown-plugin@0.13.8"
+  - "@distilled.cloud/cloudflare-runtime@0.13.8"
+  - "@distilled.cloud/cloudflare-vite-plugin@0.13.8"
 
 allowBuilds:
   esbuild: true
   msgpackr-extract: false
   workerd: true
+
+patchedDependencies:
+  alchemy: patches/alchemy.patch

@@ -5,10 +5,7 @@ import {
   EventQueueUnavailable,
 } from "@slopcop/api/Webhooks/GitHub"
 import { InvalidWebhookSignature } from "@slopcop/api/Webhooks/Errors"
-import {
-  GitHubWebhookEvent,
-  WebhookEventName,
-} from "@slopcop/domain/GitHubWebhookEvent"
+import * as GitHubWebhookEvent from "@slopcop/domain/GitHub/GitHubWebhookEvent"
 import * as Config from "effect/Config"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
@@ -30,8 +27,9 @@ const GitHubWebhookHeaders = Schema.Struct({
   "x-hub-signature-256": GitHubWebhookSignature,
 })
 
-const decodeWebhookEvent = Schema.decodeUnknownEffect(GitHubWebhookEvent)
-const isValidWebhookEventName = Schema.is(WebhookEventName)
+const decodeWebhookEvent = Schema.decodeUnknownEffect(
+  GitHubWebhookEvent.GitHubWebhookEvent,
+)
 
 export const GitHubWebhookMiddlewareLayer = Layer.effect(
   GitHubWebhookMiddleware,
@@ -97,37 +95,22 @@ export const WebhooksApiHandlersLayer = HttpApiBuilder.group(
         const id = headers["x-github-delivery"]
         const name = headers["x-github-event"]
 
-        if (!isValidWebhookEventName(name)) {
-          // Return a successful response to GitHub for unsupported events
-          return yield* Effect.annotateLogs(
-            Effect.logInfo("Ignored unsupported GitHub webhook event"),
-            { id, event: name },
-          )
-        }
-
-        const event = yield* decodeWebhookEvent({ id, name, payload }).pipe(
-          Effect.catchCause(
-            Effect.fnUntraced(function* (cause) {
-              yield* Effect.annotateLogs(
-                Effect.logWarning(
-                  "Failed to decode GitHub webhook payload",
-                  cause,
-                ),
-                { id, event: name },
-              )
-              return yield* new HttpApiError.BadRequest()
+        yield* decodeWebhookEvent({ id, name, payload }).pipe(
+          Effect.tap((event) => events.enqueue(event)),
+          Effect.flatMap((event) =>
+            Effect.annotateLogs(Effect.logInfo("Queued GitHub webhook"), {
+              id,
+              event: event.name,
             }),
           ),
-        )
-
-        yield* Effect.mapError(
-          events.enqueue(event),
-          () => new EventQueueUnavailable(),
-        )
-
-        return yield* Effect.annotateLogs(
-          Effect.logInfo("Queued GitHub webhook"),
-          { id, event: event.name },
+          Effect.catchTags({
+            GitHubEventQueueError: () => new EventQueueUnavailable(),
+            SchemaError: () =>
+              Effect.annotateLogs(
+                Effect.logError("Ignored malformed GitHub webhook event"),
+                { id, event: name },
+              ),
+          }),
         )
       }),
     )

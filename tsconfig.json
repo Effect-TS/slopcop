@@ -1,9 +1,39 @@
 {
+  "$schema": "https://raw.githubusercontent.com/Effect-TS/tsgo/refs/heads/main/schema.json",
   "extends": "./tsconfig.base.json",
-  "include": [],
-  "references": [
-    { "path": "packages/api" },
-    { "path": "apps/bot" },
-    { "path": "packages/domain" }
-  ]
+  "references": [{ "path": "tsconfig.packages.json" }],
+  "include": [
+    "**/vitest.*.ts", // All vitest config files across all packages
+    "./apps/*/test/**/*.ts",
+    "./packages/*/test/**/*.ts"
+  ],
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true,
+    "rewriteRelativeImportExtensions": false,
+    "erasableSyntaxOnly": false,
+    "resolveJsonModule": true,
+    "types": ["node"],
+    "paths": {
+      // These path aliases allow us to load internal modules in tests and to use other workspace packages in tests
+      // that would otherwise be considered cyclic dependencies
+      "@slopcop/api": ["./packages/api/src/index.ts"],
+      "@slopcop/api/*": ["./packages/api/src/*"],
+      "@slopcop/domain": ["./packages/domain/src/index.ts"],
+      "@slopcop/domain/*": ["./packages/domain/src/*"]
+    },
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        "namespaceImportPackages": [],
+        "includeSuggestionsInTsc": false,
+        "ignoreEffectWarningsInTscExitCode": true,
+        "ignoreEffectErrorsInTscExitCode": true,
+        "diagnosticSeverity": {
+          "unknownInEffectCatch": "off",
+          "multipleEffectProvide": "off"
+        }
+      }
+    ]
+  }
 }

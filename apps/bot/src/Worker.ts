@@ -1,5 +1,4 @@
 import * as Cloudflare from "alchemy/Cloudflare"
-import * as Drizzle from "alchemy/Drizzle"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Path from "effect/Path"
@@ -7,8 +6,11 @@ import * as Etag from "effect/unstable/http/Etag"
 import * as HttpPlatform from "effect/unstable/http/HttpPlatform"
 import * as HttpRouter from "effect/unstable/http/HttpRouter"
 import { ApiDocsLayer, ApiHandlersLayer } from "./Api.ts"
-import { Database, Hyperdrive } from "./Sql.ts"
+import { GitHubEventProcessors } from "./GitHub/GitHubEventProcessors.ts"
 import { GitHubEvents } from "./GitHub/GitHubEvents.ts"
+import { LabelingRules } from "./Labeling/LabelingRules.ts"
+import { PullRequestLabelingProcessorLayer } from "./Labeling/PullRequestLabelingProcessor.ts"
+import { DatabaseLayer } from "./Sql.ts"
 
 export default Cloudflare.Worker(
   "SlopCop",
@@ -17,11 +19,6 @@ export default Cloudflare.Worker(
     compatibility: { flags: ["nodejs_compat"] },
   },
   Effect.gen(function* () {
-    const hyperdrive = yield* Hyperdrive
-    const connection = yield* Cloudflare.Hyperdrive.Connect(hyperdrive)
-    const database = yield* Drizzle.postgres(connection.connectionString)
-    const DatabaseLayer = Layer.succeed(Database, database)
-
     const HttpPlatformStubLayer = Layer.succeed(HttpPlatform.HttpPlatform, {
       fileResponse: () => Effect.die("HttpPlatform.fileResponse not supported"),
       fileWebResponse: () =>
@@ -29,12 +26,20 @@ export default Cloudflare.Worker(
     })
 
     const HttpLayer = Layer.mergeAll(ApiHandlersLayer, ApiDocsLayer).pipe(
+      Layer.provide(LabelingRules.layer),
       Layer.provide([Etag.layer, HttpPlatformStubLayer, Path.layer]),
       Layer.provide(HttpRouter.cors()),
     )
 
+    const GitHubEventProcessingLayer = Layer.mergeAll(
+      GitHubEvents.layer,
+      PullRequestLabelingProcessorLayer,
+    ).pipe(Layer.provide(GitHubEventProcessors.layer))
+
     const MainLayer = HttpLayer.pipe(
-      Layer.provide([DatabaseLayer, GitHubEvents.layer]),
+      Layer.provide(GitHubEventProcessingLayer),
+      Layer.provide(DatabaseLayer),
+      Layer.orDie,
     )
 
     const handler = yield* HttpRouter.toHttpEffect(MainLayer)
@@ -42,9 +47,10 @@ export default Cloudflare.Worker(
     return { fetch: handler }
   }).pipe(
     Effect.provide([
-      Cloudflare.Hyperdrive.ConnectBinding,
+      Cloudflare.D1.QueryDatabaseBinding,
       Cloudflare.Queues.EventSourceLive,
       Cloudflare.Queues.WriteQueueBinding,
+      Cloudflare.Workers.CronEventSourceLive,
     ]),
   ),
 )

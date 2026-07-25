@@ -1,166 +1,203 @@
-import * as Cloudflare from "alchemy/Cloudflare"
-import * as Drizzle from "alchemy/Drizzle"
+import * as GitHubEvent from "@slopcop/domain/GitHub/GitHubEvent"
 import * as Context from "effect/Context"
 import * as Data from "effect/Data"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
-import type { GitHubWebhookEvent } from "@slopcop/domain/GitHubWebhookEvent"
-import { Hyperdrive } from "../../Sql.ts"
-import { GitHubEvents, relations } from "../../Sql/schema.ts"
-import { and, eq, lte, or, sql } from "drizzle-orm"
-import type { EffectDrizzleQueryError } from "drizzle-orm/effect-core/errors"
-
-export type GitHubEventClaim = Data.TaggedEnum<{
-  readonly Acquired: {}
-  readonly Completed: {}
-  readonly Busy: {}
-}>
-export const GitHubEventClaim = Data.taggedEnum<GitHubEventClaim>()
+import * as Option from "effect/Option"
+import * as Schema from "effect/Schema"
+import * as SqlClient from "effect/unstable/sql/SqlClient"
+import type * as SqlError from "effect/unstable/sql/SqlError"
+import * as SqlSchema from "effect/unstable/sql/SqlSchema"
 
 export class GitHubEventsRepoError extends Data.TaggedError(
   "GitHubEventsRepoError",
 )<{
-  readonly deliveryId: string
-  readonly operation: "Claim" | "Complete" | "Release"
-  readonly step:
-    | "InsertDelivery"
-    | "AcquireDelivery"
-    | "ReadDeliveryStatus"
-    | "MarkCompleted"
-    | "ReturnToPending"
-  readonly cause: EffectDrizzleQueryError
+  readonly eventId: GitHubEvent.GitHubEventId
+  readonly cause:
+    | GitHubEventNotFoundError
+    | GitHubEventTransitionError
+    | SqlError.SqlError
+    | Schema.SchemaError
 }> {}
 
-const mapDatabaseError = (
-  deliveryId: string,
-  operation: GitHubEventsRepoError["operation"],
-  step: GitHubEventsRepoError["step"],
-) =>
-  Effect.mapError(
-    (cause: EffectDrizzleQueryError) =>
-      new GitHubEventsRepoError({
-        deliveryId,
-        operation,
-        step,
-        cause,
-      }),
-  )
+export class GitHubEventNotFoundError extends Data.TaggedError(
+  "GitHubEventNotFoundError",
+)<{
+  readonly eventId: GitHubEvent.GitHubEventId
+}> {}
+
+export class GitHubEventTransitionError extends Data.TaggedError(
+  "GitHubEventTransitionError",
+)<{
+  readonly eventId: GitHubEvent.GitHubEventId
+  readonly transition: "MarkCompleted" | "ReleaseClaim"
+  readonly expectedStatus: "processing"
+}> {}
+
+export type GitHubEventClaim = Data.TaggedEnum<{
+  readonly Claimed: { readonly event: GitHubEvent.GitHubEvent }
+  readonly Busy: {}
+  readonly Completed: {}
+}>
+export const GitHubEventClaim = Data.taggedEnum<GitHubEventClaim>()
 
 export class GitHubEventsRepo extends Context.Service<
   GitHubEventsRepo,
   {
     readonly claim: (
-      event: GitHubWebhookEvent,
+      input: typeof GitHubEvent.GitHubEvent.insert.Type,
     ) => Effect.Effect<GitHubEventClaim, GitHubEventsRepoError>
-    readonly complete: (
-      deliveryId: string,
-    ) => Effect.Effect<void, GitHubEventsRepoError>
-    readonly release: (
-      deliveryId: string,
+    readonly markCompleted: (
+      id: GitHubEvent.GitHubEventId,
+    ) => Effect.Effect<GitHubEvent.GitHubEvent, GitHubEventsRepoError>
+    readonly releaseClaim: (
+      id: GitHubEvent.GitHubEventId,
       error: string,
-    ) => Effect.Effect<void, GitHubEventsRepoError>
+    ) => Effect.Effect<GitHubEvent.GitHubEvent, GitHubEventsRepoError>
   }
 >()("@slopcop/bot/GitHub/repositories/GitHubEventsRepo", {
   make: Effect.gen(function* () {
-    const conn = yield* Cloudflare.Hyperdrive.Connect(Hyperdrive)
-    const db = yield* Drizzle.postgres(conn.connectionString, { relations })
+    const sql = yield* SqlClient.SqlClient
 
-    const claim = Effect.fn("GitHubEventsRepo.claim")(function* (
-      event: GitHubWebhookEvent,
-    ) {
-      yield* db
-        .insert(GitHubEvents)
-        .values({
-          id: event.id,
-          name: event.name,
-          status: "pending",
-        })
-        .onConflictDoNothing()
-        .pipe(mapDatabaseError(event.id, "Claim", "InsertDelivery"))
-
-      const claimed = yield* db
-        .update(GitHubEvents)
-        .set({
-          status: "processing",
-          attempts: sql`${GitHubEvents.attempts} + 1`,
-          lastError: null,
-          updatedAt: sql`CURRENT_TIMESTAMP`,
-        })
-        .where(
-          and(
-            eq(GitHubEvents.id, event.id),
-            or(
-              eq(GitHubEvents.status, "pending"),
-              and(
-                eq(GitHubEvents.status, "processing"),
-                lte(
-                  GitHubEvents.updatedAt,
-                  sql`CURRENT_TIMESTAMP - INTERVAL '5 minutes'`,
-                ),
-              ),
-            ),
-          ),
-        )
-        .returning({ id: GitHubEvents.id })
-        .pipe(mapDatabaseError(event.id, "Claim", "AcquireDelivery"))
-
-      if (claimed.length === 1) {
-        return GitHubEventClaim.Acquired()
-      }
-
-      const [existing] = yield* db
-        .select({ status: GitHubEvents.status })
-        .from(GitHubEvents)
-        .where(eq(GitHubEvents.id, event.id))
-        .limit(1)
-        .pipe(mapDatabaseError(event.id, "Claim", "ReadDeliveryStatus"))
-
-      return existing?.status === "completed"
-        ? GitHubEventClaim.Completed()
-        : GitHubEventClaim.Busy()
+    const findById = SqlSchema.findOne({
+      Request: GitHubEvent.GitHubEventId,
+      Result: GitHubEvent.GitHubEvent,
+      execute: (id) => sql`
+        SELECT *
+        FROM "github_events"
+        WHERE "id" = ${id}
+          AND "deleted_at" IS NULL
+      `,
     })
 
-    const complete = Effect.fn("GitHubEventsRepo.complete")(function* (
-      deliveryId: string,
-    ) {
-      yield* db
-        .update(GitHubEvents)
-        .set({
-          status: "completed",
-          lastError: null,
-          updatedAt: sql`CURRENT_TIMESTAMP`,
-        })
-        .where(
-          and(
-            eq(GitHubEvents.id, deliveryId),
-            eq(GitHubEvents.status, "processing"),
-          ),
-        )
-        .pipe(mapDatabaseError(deliveryId, "Complete", "MarkCompleted"))
+    const insert = SqlSchema.void({
+      Request: GitHubEvent.GitHubEvent.insert,
+      execute: (request) => sql`
+        INSERT INTO "github_events" ${sql.insert(request)}
+        ON CONFLICT ("id") DO NOTHING
+      `,
     })
 
-    const release = Effect.fn("GitHubEventsRepo.release")(function* (
-      deliveryId: string,
-      error: string,
-    ) {
-      yield* db
-        .update(GitHubEvents)
-        .set({
-          status: "pending",
-          lastError: error,
-          updatedAt: sql`CURRENT_TIMESTAMP`,
-        })
-        .where(
-          and(
-            eq(GitHubEvents.id, deliveryId),
-            eq(GitHubEvents.status, "processing"),
-          ),
-        )
-        .pipe(mapDatabaseError(deliveryId, "Release", "ReturnToPending"))
+    const releaseClaim = SqlSchema.findOneOption({
+      Request: Schema.Struct({
+        id: GitHubEvent.GitHubEventId,
+        error: Schema.String,
+      }),
+      Result: GitHubEvent.GitHubEvent,
+      execute: ({ id, error }) => sql`
+         UPDATE "github_events"
+         SET
+           "status" = 'pending',
+           "last_error" = ${error},
+           "updated_at" = unixepoch() * 1000
+         WHERE "id" = ${id}
+           AND "status" = 'processing'
+         RETURNING *
+      `,
     })
 
-    return { claim, complete, release } as const
+    const setProcessing = SqlSchema.findOneOption({
+      Request: GitHubEvent.GitHubEventId,
+      Result: GitHubEvent.GitHubEvent,
+      execute: (id) => sql`
+        UPDATE "github_events"
+        SET
+           "status" = 'processing',
+           "attempts" = "attempts" + 1,
+           "last_error" = NULL,
+           "updated_at" = unixepoch() * 1000
+        WHERE "id" = ${id}
+          AND "status" = 'pending'
+        RETURNING *
+      `,
+    })
+
+    const markCompleted = SqlSchema.findOneOption({
+      Request: GitHubEvent.GitHubEventId,
+      Result: GitHubEvent.GitHubEvent,
+      execute: (id) => sql`
+        UPDATE "github_events"
+        SET
+          "status" = 'completed',
+          "last_error" = NULL,
+          "updated_at" = unixepoch() * 1000
+        WHERE "id" = ${id}
+          AND "status" = 'processing'
+        RETURNING *
+      `,
+    })
+
+    return {
+      claim: (input) =>
+        insert(input).pipe(
+          Effect.andThen(setProcessing(input.id)),
+          Effect.flatMap(
+            Effect.fnUntraced(function* (claimed) {
+              if (Option.isSome(claimed)) {
+                return GitHubEventClaim.Claimed({ event: claimed.value })
+              }
+              const event = yield* findById(input.id)
+              return event.status === "completed"
+                ? GitHubEventClaim.Completed()
+                : GitHubEventClaim.Busy()
+            }),
+          ),
+          Effect.catchTag(
+            "NoSuchElementError",
+            () =>
+              new GitHubEventsRepoError({
+                eventId: input.id,
+                cause: new GitHubEventNotFoundError({ eventId: input.id }),
+              }),
+          ),
+          Effect.mapError(toGitHubEventsRepoError(input.id)),
+        ),
+      markCompleted: (id) =>
+        markCompleted(id).pipe(
+          Effect.flatMap(requireTransition(id, "MarkCompleted")),
+          Effect.mapError(toGitHubEventsRepoError(id)),
+          Effect.withSpan("GitHubEventsRepo.markCompleted", {
+            attributes: { eventId: id },
+          }),
+        ),
+      releaseClaim: (id, error) =>
+        releaseClaim({ id, error }).pipe(
+          Effect.flatMap(requireTransition(id, "ReleaseClaim")),
+          Effect.mapError(toGitHubEventsRepoError(id)),
+          Effect.withSpan("GitHubEventsRepo.releaseClaim", {
+            attributes: { eventId: id, error },
+          }),
+        ),
+    }
   }),
 }) {
   static readonly layer = Layer.effect(this, this.make)
 }
+
+const toGitHubEventsRepoError =
+  (eventId: GitHubEvent.GitHubEventId) =>
+  (cause: GitHubEventsRepoError | Schema.SchemaError | SqlError.SqlError) =>
+    cause._tag === "GitHubEventsRepoError"
+      ? cause
+      : new GitHubEventsRepoError({ eventId, cause })
+
+const requireTransition =
+  (
+    eventId: GitHubEvent.GitHubEventId,
+    transition: GitHubEventTransitionError["transition"],
+  ) =>
+  (event: Option.Option<GitHubEvent.GitHubEvent>) =>
+    Option.match(event, {
+      onNone: () =>
+        Effect.fail(
+          new GitHubEventsRepoError({
+            eventId,
+            cause: new GitHubEventTransitionError({
+              eventId,
+              transition,
+              expectedStatus: "processing",
+            }),
+          }),
+        ),
+      onSome: Effect.succeed,
+    })

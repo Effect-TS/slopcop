@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "check": "vp check",
+    "check:types": "tsc -b tsconfig.json",
     "deploy": "alchemy deploy",
     "destroy": "alchemy destroy",
     "dev": "alchemy dev",
@@ -12,6 +13,7 @@
     "prepare": "effect-tsgo patch"
   },
   "devDependencies": {
+    "@effect/openapi-generator": "catalog:",
     "@effect/platform-node": "catalog:",
     "@effect/tsgo": "catalog:",
     "@types/node": "catalog:",

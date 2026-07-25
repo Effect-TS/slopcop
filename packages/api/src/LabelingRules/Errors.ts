@@ -1,0 +1,87 @@
+import * as Schema from "effect/Schema"
+import * as LabelingRuleManagement from "@slopcop/domain/Labeling/LabelingRuleManagement"
+
+export class Unauthenticated extends Schema.TaggedErrorClass<Unauthenticated>()(
+  "Unauthenticated",
+  { message: Schema.String },
+  { httpApiStatus: 401 },
+) {}
+
+export class Forbidden extends Schema.TaggedErrorClass<Forbidden>()(
+  "Forbidden",
+  { message: Schema.String },
+  { httpApiStatus: 403 },
+) {}
+
+export class RepositoryNotConfigured extends Schema.TaggedErrorClass<RepositoryNotConfigured>()(
+  "RepositoryNotConfigured",
+  { repository: Schema.String, message: Schema.String },
+  { httpApiStatus: 404 },
+) {}
+
+export class LabelingRuleNotFound extends Schema.TaggedErrorClass<LabelingRuleNotFound>()(
+  "LabelingRuleNotFound",
+  {
+    repository: Schema.String,
+    ruleId: Schema.String,
+    message: Schema.String,
+  },
+  { httpApiStatus: 404 },
+) {}
+
+export class GitHubLabelNotFound extends Schema.TaggedErrorClass<GitHubLabelNotFound>()(
+  "GitHubLabelNotFound",
+  {
+    repository: Schema.String,
+    label: Schema.String,
+    message: Schema.String,
+  },
+  { httpApiStatus: 422 },
+) {}
+
+export class InvalidLabelingRule extends Schema.TaggedErrorClass<InvalidLabelingRule>()(
+  "InvalidLabelingRule",
+  { message: Schema.String },
+  { httpApiStatus: 422 },
+) {}
+
+export class DuplicateLabelingRule extends Schema.TaggedErrorClass<DuplicateLabelingRule>()(
+  "DuplicateLabelingRule",
+  {
+    repository: Schema.String,
+    label: Schema.String,
+    message: Schema.String,
+  },
+  { httpApiStatus: 409 },
+) {}
+
+export class LabelingRuleConflict extends Schema.TaggedErrorClass<LabelingRuleConflict>()(
+  "LabelingRuleConflict",
+  {
+    repository: Schema.String,
+    ruleId: Schema.String,
+    currentRule: LabelingRuleManagement.PublicLabelingRule,
+    message: Schema.String,
+  },
+  { httpApiStatus: 409 },
+) {}
+
+export class LabelingRulesRevisionConflict extends Schema.TaggedErrorClass<LabelingRulesRevisionConflict>()(
+  "LabelingRulesRevisionConflict",
+  {
+    repository: Schema.String,
+    expectedRevision: Schema.Int,
+    actualRevision: Schema.Int,
+    message: Schema.String,
+  },
+  { httpApiStatus: 409 },
+) {}
+
+export class GitHubLabelValidationUnavailable extends Schema.TaggedErrorClass<GitHubLabelValidationUnavailable>()(
+  "GitHubLabelValidationUnavailable",
+  {
+    repository: Schema.String,
+    message: Schema.String,
+  },
+  { httpApiStatus: 503 },
+) {}

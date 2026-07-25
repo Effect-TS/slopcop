@@ -1,5 +1,10 @@
 import * as Schema from "effect/Schema"
-import { BaseWebhookEvent } from "./BaseWebhookEvent.ts"
+import { BaseWebhookEvent } from "./GitHubCommon.ts"
+import {
+  GitHubInstallationIdFromJson,
+  GitHubRepositoryExternalIdFromJson,
+  GitHubRepositorySlugFromString,
+} from "../GitHubRepository.ts"
 
 export const PullRequest = Schema.Struct({
   id: Schema.Finite,
@@ -20,15 +25,19 @@ export const PullRequest = Schema.Struct({
 export type PullRequest = typeof PullRequest.Type
 
 export const Repository = Schema.Struct({
-  id: Schema.Finite,
-  full_name: Schema.String,
-})
+  id: GitHubRepositoryExternalIdFromJson,
+  slug: GitHubRepositorySlugFromString,
+}).pipe(Schema.encodeKeys({ slug: "full_name" }))
+
 export type Repository = typeof Repository.Type
 
 export const BasePullRequestPayload = Schema.Struct({
   number: Schema.Finite,
   pull_request: PullRequest,
   repository: Repository,
+  installation: Schema.Struct({
+    id: GitHubInstallationIdFromJson,
+  }),
 })
 export type BasePullRequestPayload = typeof BasePullRequestPayload.Type
 
@@ -50,11 +59,20 @@ export const PullRequestSynchronized = Schema.Struct({
 })
 export type PullRequestSynchronized = typeof PullRequestSynchronized.Type
 
+export const PullRequestEdited = Schema.Struct({
+  ...BasePullRequestPayload.fields,
+  action: Schema.Literal("edited"),
+})
+export type PullRequestEdited = typeof PullRequestEdited.Type
+
 export const PullRequestWebhookPayload = Schema.Union([
   PullRequestOpened,
   PullRequestReopened,
   PullRequestSynchronized,
-]).pipe(Schema.toTaggedUnion("action"))
+  PullRequestEdited,
+])
+  .annotate({ message: "Unsupported or malformed pull request webhook action" })
+  .pipe(Schema.toTaggedUnion("action"))
 export type PullRequestWebhookPayload = typeof PullRequestWebhookPayload.Type
 
 export const PullRequestWebhookEvent = Schema.Struct({
