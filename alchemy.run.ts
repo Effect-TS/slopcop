@@ -31,6 +31,10 @@ export default Alchemy.Stack(
     const deadLetterQueue = yield* GitHubEventsDeadLetterQueue
 
     const worker = yield* Worker
+    const web = yield* Cloudflare.Website.Vite("Web", {
+      rootDir: "apps/web",
+      assets: { notFoundHandling: "single-page-application" },
+    })
 
     return {
       databaseName: db.databaseName,
@@ -40,6 +44,8 @@ export default Alchemy.Stack(
 
       workerName: worker.workerName,
       workerUrl: worker.url,
+
+      webUrl: web.url,
     }
   }),
 )

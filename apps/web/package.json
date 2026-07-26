@@ -1,0 +1,31 @@
+{
+  "name": "@slopcop/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vp build",
+    "check": "vp check",
+    "dev": "vp dev",
+    "preview": "vp preview",
+    "test": "vp test --run"
+  },
+  "dependencies": {
+    "@effect/platform-browser": "catalog:",
+    "@foldkit/devtools": "catalog:",
+    "@foldkit/ui": "catalog:",
+    "@tailwindcss/vite": "catalog:",
+    "effect": "catalog:",
+    "foldkit": "catalog:",
+    "tailwindcss": "catalog:"
+  },
+  "devDependencies": {
+    "@foldkit/devtools-mcp": "catalog:",
+    "@foldkit/vite-plugin": "catalog:",
+    "happy-dom": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vite-plus": "catalog:",
+    "vitest": "catalog:"
+  }
+}

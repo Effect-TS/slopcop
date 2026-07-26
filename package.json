@@ -6,9 +6,11 @@
   "scripts": {
     "check": "vp check",
     "check:types": "tsc -b tsconfig.json",
+    "build:web": "pnpm --filter @slopcop/web build",
     "deploy": "alchemy deploy",
     "destroy": "alchemy destroy",
     "dev": "alchemy dev",
+    "dev:web": "pnpm --filter @slopcop/web dev",
     "ready": "vp check",
     "prepare": "effect-tsgo patch"
   },
@@ -16,6 +18,7 @@
     "@effect/openapi-generator": "catalog:",
     "@effect/platform-node": "catalog:",
     "@effect/tsgo": "catalog:",
+    "@foldkit/devtools-mcp": "catalog:",
     "@types/node": "catalog:",
     "alchemy": "catalog:",
     "effect": "catalog:",
