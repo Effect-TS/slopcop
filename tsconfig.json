@@ -5,6 +5,7 @@
   "include": [
     "./alchemy.run.ts",
     "**/vitest.*.ts", // All vitest config files across all packages
+    "./apps/*/worker.ts",
     "./apps/*/test/**/*.ts",
     "./packages/*/test/**/*.ts"
   ],

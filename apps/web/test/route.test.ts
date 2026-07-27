@@ -2,7 +2,7 @@ import { Option } from "effect"
 import type { Url } from "foldkit/url"
 import { describe, expect, test } from "vite-plus/test"
 
-import { urlToAppRoute } from "./route"
+import { urlToAppRoute } from "../src/route.ts"
 
 const url = (pathname: string): Url => ({
   protocol: "https:",

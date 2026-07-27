@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vite-plus/test"
 
-import worker from "./worker"
+import worker from "../worker.ts"
 
 describe("Website Worker API authorization", () => {
   test("overwrites browser identity and removes cookies in local development", async () => {

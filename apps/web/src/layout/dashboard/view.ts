@@ -1,7 +1,7 @@
+import { Submodel } from "foldkit"
 import { type Html, html } from "foldkit/html"
 
-import { ClickedLogout, type Message, ToggledSidebar } from "../message"
-import type { Model } from "../model"
+import type { AppRoute } from "../../route"
 import {
   activityRouter,
   commandsRouter,
@@ -10,7 +10,14 @@ import {
   reviewsRouter,
   settingsRouter,
   slopDetectionRouter,
-} from "../route"
+} from "../../route"
+import { ClickedLogout, type Message, ToggledSidebar } from "./message"
+import type { Model } from "./model"
+
+export type ViewInputs = Readonly<{
+  route: AppRoute
+  content: () => Html
+}>
 
 const brand = (): Html => {
   const h = html<Message>()
@@ -81,9 +88,9 @@ const navItems = [
   { tag: "Settings", label: "Settings", href: settingsRouter(), status: "" },
 ] as const
 
-const sidebar = (model: Model): Html => {
+const sidebar = (model: Model, route: AppRoute): Html => {
   const h = html<Message>()
-  const repositoriesActive = model.route._tag === "RepositoryWorkspace"
+  const repositoriesActive = route._tag === "RepositoryWorkspace"
 
   return h.aside(
     [
@@ -138,7 +145,7 @@ const sidebar = (model: Model): Html => {
             [h.Class("space-y-1")],
             navItems.map((item) => {
               const active =
-                model.route._tag === item.tag ||
+                route._tag === item.tag ||
                 (item.tag === "Repositories" && repositoriesActive)
               return h.li(
                 [],
@@ -189,14 +196,14 @@ const sidebar = (model: Model): Html => {
   )
 }
 
-const routeTitle = (model: Model): string => {
-  switch (model.route._tag) {
+const routeTitle = (route: AppRoute): string => {
+  switch (route._tag) {
     case "Dashboard":
       return "Overview"
     case "Repositories":
       return "Repositories"
     case "RepositoryWorkspace":
-      return `${model.route.owner}/${model.route.repo}`
+      return `${route.owner}/${route.repo}`
     case "Activity":
       return "Activity"
     case "Reviews":
@@ -212,75 +219,77 @@ const routeTitle = (model: Model): string => {
   }
 }
 
-export const shellView = (model: Model, content: Html): Html => {
-  const h = html<Message>()
-  return h.div(
-    [
-      h.Class(
-        "records-texture relative min-h-svh bg-[var(--paper)] text-[var(--ink)]",
-      ),
-    ],
-    [
-      sidebar(model),
-      ...(model.isSidebarOpen
-        ? [
-            h.button(
-              [
-                h.OnClick(ToggledSidebar()),
-                h.AriaLabel("Close navigation"),
-                h.Class("fixed inset-0 z-20 bg-black/45 md:hidden"),
-              ],
-              [],
-            ),
-          ]
-        : []),
-      h.div(
-        [h.Class("min-h-svh min-w-0 md:pl-72")],
-        [
-          h.header(
-            [
-              h.Class(
-                "sticky top-0 z-10 flex h-14 items-center gap-3 border-b border-[var(--line)] bg-[var(--paper)]/95 px-3 backdrop-blur sm:px-5",
-              ),
-            ],
-            [
+export const view = Submodel.defineView<Model, Message, ViewInputs>(
+  (model, { route, content }): Html => {
+    const h = html<Message>()
+    return h.div(
+      [
+        h.Class(
+          "records-texture relative min-h-svh bg-[var(--paper)] text-[var(--ink)]",
+        ),
+      ],
+      [
+        sidebar(model, route),
+        ...(model.isSidebarOpen
+          ? [
               h.button(
                 [
                   h.OnClick(ToggledSidebar()),
-                  h.AriaLabel("Open navigation"),
-                  h.Class(
-                    "grid size-9 place-items-center border border-[var(--line)] bg-[var(--card)] font-mono text-lg md:hidden",
-                  ),
+                  h.AriaLabel("Close navigation"),
+                  h.Class("fixed inset-0 z-20 bg-black/45 md:hidden"),
                 ],
-                ["="],
+                [],
               ),
-              h.p(
-                [
-                  h.Class(
-                    "truncate font-mono text-xs font-black uppercase tracking-wider",
-                  ),
-                ],
-                [routeTitle(model)],
-              ),
-              h.div(
-                [h.Class("ml-auto")],
-                [
-                  h.button(
-                    [
-                      h.OnClick(ClickedLogout()),
-                      h.Class(
-                        "border border-[var(--line)] bg-[var(--card)] px-3 py-2 font-mono text-[10px] font-bold uppercase tracking-wider hover:border-[var(--blue)]",
-                      ),
-                    ],
-                    ["Sign out"],
-                  ),
-                ],
-              ),
-            ],
-          ),
-          h.main([], [content]),
-        ],
-      ),
-    ],
-  )
-}
+            ]
+          : []),
+        h.div(
+          [h.Class("min-h-svh min-w-0 md:pl-72")],
+          [
+            h.header(
+              [
+                h.Class(
+                  "sticky top-0 z-10 flex h-14 items-center gap-3 border-b border-[var(--line)] bg-[var(--paper)]/95 px-3 backdrop-blur sm:px-5",
+                ),
+              ],
+              [
+                h.button(
+                  [
+                    h.OnClick(ToggledSidebar()),
+                    h.AriaLabel("Open navigation"),
+                    h.Class(
+                      "grid size-9 place-items-center border border-[var(--line)] bg-[var(--card)] font-mono text-lg md:hidden",
+                    ),
+                  ],
+                  ["="],
+                ),
+                h.p(
+                  [
+                    h.Class(
+                      "truncate font-mono text-xs font-black uppercase tracking-wider",
+                    ),
+                  ],
+                  [routeTitle(route)],
+                ),
+                h.div(
+                  [h.Class("ml-auto")],
+                  [
+                    h.button(
+                      [
+                        h.OnClick(ClickedLogout()),
+                        h.Class(
+                          "border border-[var(--line)] bg-[var(--card)] px-3 py-2 font-mono text-[10px] font-bold uppercase tracking-wider hover:border-[var(--blue)]",
+                        ),
+                      ],
+                      ["Sign out"],
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            h.main([], [content()]),
+          ],
+        ),
+      ],
+    )
+  },
+)

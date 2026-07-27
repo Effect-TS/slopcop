@@ -1,23 +1,27 @@
 import { Scene } from "foldkit"
 import { describe, test } from "vite-plus/test"
 
-import { Model, NoPatrolNotice, RepositoriesReady } from "./model"
-import { RepositoriesRoute } from "./route"
-import { update } from "./update"
-import { view } from "./view"
+import { Dashboard } from "../src/layout/index.ts"
+import { Model } from "../src/model.ts"
+import { Repositories } from "../src/page/index.ts"
+import { RepositoriesRoute } from "../src/route.ts"
+import { update } from "../src/update.ts"
+import { view } from "../src/view.ts"
 
 const repositoriesModel = Model.make({
   route: RepositoriesRoute(),
-  isSidebarOpen: false,
-  repositoryQuery: "",
-  repositories: RepositoriesReady.make({
-    repositories: [
-      { owner: "Effect-TS", repo: "effect", enabled: true },
-      { owner: "effectful-tech", repo: "slopcop", enabled: false },
-    ],
-    pendingPatrols: [],
+  dashboard: Dashboard.Model.make({ isSidebarOpen: false }),
+  repositories: Repositories.Model.make({
+    query: "",
+    repositories: Repositories.RepositoriesReady.make({
+      repositories: [
+        { owner: "Effect-TS", repo: "effect", enabled: true },
+        { owner: "effectful-tech", repo: "slopcop", enabled: false },
+      ],
+      pendingPatrols: [],
+    }),
+    patrolNotice: Repositories.NoPatrolNotice.make({}),
   }),
-  patrolNotice: NoPatrolNotice.make({}),
 })
 
 describe("repositories dashboard", () => {

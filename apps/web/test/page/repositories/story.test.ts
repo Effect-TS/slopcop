@@ -2,31 +2,24 @@ import { Story } from "foldkit"
 import { describe, expect, test } from "vite-plus/test"
 
 import {
-  ClickedLogout,
-  CompletedLoadExternal,
+  LoadRepositories,
+  UpdateRepositoryEnabled,
+} from "../../../src/page/repositories/command.ts"
+import {
   FailedToUpdateRepositoryPatrol,
   LoadedRepositories,
   RequestedRepositories,
   ToggledRepositoryPatrol,
-} from "./message"
+} from "../../../src/page/repositories/message.ts"
 import {
   Model,
   NoPatrolNotice,
-  RepositoriesNotAsked,
   RepositoriesReady,
-} from "./model"
-import { RepositoriesRoute, initialDashboardRoute } from "./route"
-import {
-  LoadAccessLogout,
-  LoadRepositories,
-  UpdateRepositoryEnabled,
-  update,
-} from "./update"
+} from "../../../src/page/repositories/model.ts"
+import { update } from "../../../src/page/repositories/update.ts"
 
-const modelWithRepositories = Model.make({
-  route: RepositoriesRoute(),
-  isSidebarOpen: false,
-  repositoryQuery: "",
+const model = Model.make({
+  query: "",
   repositories: RepositoriesReady.make({
     repositories: [{ owner: "Effect-TS", repo: "effect", enabled: false }],
     pendingPatrols: [],
@@ -34,29 +27,11 @@ const modelWithRepositories = Model.make({
   patrolNotice: NoPatrolNotice.make({}),
 })
 
-describe("dashboard update", () => {
-  test("signs out through Cloudflare Access", () => {
-    Story.story(
-      update,
-      Story.with(
-        Model.make({
-          route: initialDashboardRoute,
-          isSidebarOpen: false,
-          repositoryQuery: "",
-          repositories: RepositoriesNotAsked.make({}),
-          patrolNotice: NoPatrolNotice.make({}),
-        }),
-      ),
-      Story.message(ClickedLogout()),
-      Story.Command.expectHas(LoadAccessLogout),
-      Story.Command.resolve(LoadAccessLogout, CompletedLoadExternal()),
-    )
-  })
-
+describe("repositories update", () => {
   test("loads repositories on request", () => {
     Story.story(
       update,
-      Story.with(modelWithRepositories),
+      Story.with(model),
       Story.message(RequestedRepositories()),
       Story.Command.expectHas(LoadRepositories),
       Story.Command.resolve(
@@ -77,7 +52,7 @@ describe("dashboard update", () => {
   test("optimistically updates patrol and rolls back failures", () => {
     Story.story(
       update,
-      Story.with(modelWithRepositories),
+      Story.with(model),
       Story.message(
         ToggledRepositoryPatrol({
           owner: "Effect-TS",

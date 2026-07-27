@@ -1,5 +1,6 @@
 import type * as RepositoryManagement from "@slopcop/domain/GitHub/RepositoryManagement"
 import { Input, Switch } from "@foldkit/ui"
+import { Submodel } from "foldkit"
 import { type Html, html } from "foldkit/html"
 
 import {
@@ -7,9 +8,9 @@ import {
   type Message,
   RequestedRepositories,
   ToggledRepositoryPatrol,
-} from "../message"
-import type { Model, RepositoriesState } from "../model"
-import { repositoryWorkspaceRouter } from "../route"
+} from "./message"
+import type { Model, RepositoriesState } from "./model"
+import { repositoryWorkspaceRouter } from "../../route"
 
 const repositoryKey = (repository: RepositoryManagement.RepositoryPath) =>
   `${repository.owner}/${repository.repo}`
@@ -292,12 +293,12 @@ const repositoryList = (model: Model): Html => {
     )
   }
 
-  const query = model.repositoryQuery.trim().toLocaleLowerCase()
+  const query = model.query.trim().toLocaleLowerCase()
   const repositories = state.repositories.filter((repository) =>
     repositoryKey(repository).toLocaleLowerCase().includes(query),
   )
 
-  if (repositories.length === 0) return emptyView(model.repositoryQuery)
+  if (repositories.length === 0) return emptyView(model.query)
 
   return h.div(
     [h.Class("grid gap-4 md:grid-cols-2 xl:grid-cols-3")],
@@ -305,7 +306,7 @@ const repositoryList = (model: Model): Html => {
   )
 }
 
-export const repositoriesView = (model: Model): Html => {
+export const view = Submodel.defineView<Model, Message>((model): Html => {
   const h = html<Message>()
   return h.div(
     [
@@ -356,7 +357,7 @@ export const repositoriesView = (model: Model): Html => {
       ),
       Input.view<Message>({
         id: "repository-search",
-        value: model.repositoryQuery,
+        value: model.query,
         placeholder: "Search owner or repository...",
         onInput: (query) => ChangedRepositoryQuery({ query }),
         toView: (attributes) =>
@@ -406,4 +407,4 @@ export const repositoriesView = (model: Model): Html => {
       repositoryList(model),
     ],
   )
-}
+})

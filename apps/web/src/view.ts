@@ -1,10 +1,14 @@
 import { type Document, type Html, html } from "foldkit/html"
 
-import type { Message } from "./message"
+import { Dashboard } from "./layout"
+import {
+  GotDashboardMessage,
+  GotRepositoriesMessage,
+  type Message,
+} from "./message"
 import type { Model } from "./model"
+import { Repositories } from "./page"
 import { repositoriesRouter } from "./route"
-import { repositoriesView } from "./views/repositories"
-import { shellView } from "./views/shell"
 
 const stubView = (
   eyebrow: string,
@@ -68,7 +72,12 @@ const routeView = (model: Model): Html => {
         "Monitor SlopCop operations across your GitHub App installations from one dispatch console.",
       )
     case "Repositories":
-      return repositoriesView(model)
+      return h.submodel({
+        slotId: "repositories",
+        model: model.repositories,
+        view: Repositories.view,
+        toParentMessage: (message) => GotRepositoriesMessage({ message }),
+      })
     case "RepositoryWorkspace":
       return h.section(
         [h.Class("mx-auto max-w-6xl px-4 py-10 sm:px-6 lg:px-8")],
@@ -155,7 +164,16 @@ const routeView = (model: Model): Html => {
   }
 }
 
-export const view = (model: Model): Document => ({
-  title: `${model.route._tag === "Dashboard" ? "Overview" : model.route._tag} | SlopCop`,
-  body: shellView(model, routeView(model)),
-})
+export const view = (model: Model): Document => {
+  const h = html<Message>()
+  return {
+    title: `${model.route._tag === "Dashboard" ? "Overview" : model.route._tag} | SlopCop`,
+    body: h.submodel({
+      slotId: "dashboard",
+      model: model.dashboard,
+      view: Dashboard.view,
+      viewInputs: { route: model.route, content: () => routeView(model) },
+      toParentMessage: (message) => GotDashboardMessage({ message }),
+    }),
+  }
+}
