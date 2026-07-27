@@ -1,154 +1,161 @@
 import { type Document, type Html, html } from "foldkit/html"
 
-import { ClickedLogout, type Message } from "./message"
+import type { Message } from "./message"
 import type { Model } from "./model"
+import { repositoriesRouter } from "./route"
+import { repositoriesView } from "./views/repositories"
+import { shellView } from "./views/shell"
 
-const brand = (): Html => {
+const stubView = (
+  eyebrow: string,
+  title: string,
+  description: string,
+): Html => {
   const h = html<Message>()
-  return h.div(
-    [h.Class("flex items-center gap-3")],
+  return h.section(
+    [h.Class("mx-auto max-w-6xl px-4 py-12 sm:px-6 lg:px-8 lg:py-20")],
     [
-      h.div(
+      h.p(
         [
-          h.AriaHidden(true),
           h.Class(
-            "grid size-10 place-items-center border-2 border-[var(--blue)] bg-[var(--ink)] font-mono text-sm font-black text-[var(--blue-light)] [clip-path:polygon(50%_0,100%_14%,92%_76%,50%_100%,8%_76%,0_14%)]",
+            "font-mono text-[10px] font-bold uppercase tracking-[0.22em] text-[var(--green-dark)]",
           ),
         ],
-        ["SC"],
+        [eyebrow],
+      ),
+      h.h1(
+        [
+          h.Class(
+            "mt-3 max-w-3xl text-4xl font-black tracking-tight sm:text-6xl",
+          ),
+        ],
+        [title],
+      ),
+      h.p(
+        [h.Class("mt-5 max-w-2xl text-base leading-7 text-[var(--muted-ink)]")],
+        [description],
       ),
       h.div(
-        [],
+        [
+          h.Class(
+            "mt-10 border border-[var(--line)] bg-[var(--card)] p-6 shadow-[7px_7px_0_var(--shadow)]",
+          ),
+        ],
         [
           h.p(
-            [h.Class("font-mono text-lg font-black tracking-tight")],
-            ["SLOP", h.span([h.Class("text-[var(--blue)]")], ["COP"])],
+            [h.Class("font-mono text-xs font-black uppercase tracking-widest")],
+            ["Desk status"],
+          ),
+          h.p(
+            [h.Class("mt-3 text-sm text-[var(--muted-ink)]")],
+            [
+              "This station is stubbed while the repositories directory is brought online.",
+            ],
+          ),
+        ],
+      ),
+    ],
+  )
+}
+
+const routeView = (model: Model): Html => {
+  const h = html<Message>()
+  switch (model.route._tag) {
+    case "Dashboard":
+      return stubView(
+        "Watch tower",
+        "Repository automation, under control.",
+        "Monitor SlopCop operations across your GitHub App installations from one dispatch console.",
+      )
+    case "Repositories":
+      return repositoriesView(model)
+    case "RepositoryWorkspace":
+      return h.section(
+        [h.Class("mx-auto max-w-6xl px-4 py-10 sm:px-6 lg:px-8")],
+        [
+          h.a(
+            [
+              h.Href(repositoriesRouter()),
+              h.Class(
+                "font-mono text-xs font-bold uppercase tracking-wider text-[var(--blue-dark)] hover:underline",
+              ),
+            ],
+            ["Back to repositories"],
           ),
           h.p(
             [
               h.Class(
-                "text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--muted-ink)]",
+                "mt-8 font-mono text-[10px] font-bold uppercase tracking-[0.22em] text-[var(--green-dark)]",
               ),
             ],
-            ["Repository operations"],
+            ["Repository workspace"],
+          ),
+          h.h1(
+            [
+              h.Class(
+                "mt-2 break-all font-mono text-3xl font-black sm:text-4xl",
+              ),
+            ],
+            [`${model.route.owner}/${model.route.repo}`],
+          ),
+          h.div(
+            [
+              h.Class(
+                "mt-8 border border-[var(--line)] bg-[var(--card)] p-6 shadow-[7px_7px_0_var(--shadow)]",
+              ),
+            ],
+            [
+              h.h2([h.Class("text-xl font-black")], ["Workspace coming next"]),
+              h.p(
+                [h.Class("mt-2 text-sm leading-6 text-[var(--muted-ink)]")],
+                [
+                  "Summary, labeling, decisions, events, audit, and settings will live here.",
+                ],
+              ),
+            ],
           ),
         ],
-      ),
-    ],
-  )
-}
-
-const statusRow = (label: string, value: string): Html => {
-  const h = html<Message>()
-  return h.div(
-    [
-      h.Class(
-        "grid gap-1 border-b border-[var(--line)] px-5 py-4 last:border-b-0 sm:grid-cols-[11rem_1fr] sm:gap-4",
-      ),
-    ],
-    [
-      h.p(
-        [h.Class("font-mono text-xs font-bold uppercase tracking-wider")],
-        [label],
-      ),
-      h.p([h.Class("text-sm text-[var(--muted-ink)]")], [value]),
-    ],
-  )
-}
-
-export const view = (_model: Model): Document => {
-  const h = html<Message>()
-  return {
-    title: "Dashboard | SlopCop",
-    body: h.main(
-      [
-        h.Class(
-          "records-texture min-h-svh bg-[var(--khaki)] px-5 py-8 sm:px-8 lg:px-12 lg:py-10",
-        ),
-      ],
-      [
-        h.div(
-          [h.Class("mx-auto max-w-5xl")],
-          [
-            h.header(
-              [h.Class("flex items-center justify-between gap-6")],
-              [
-                brand(),
-                h.button(
-                  [
-                    h.OnClick(ClickedLogout()),
-                    h.Class(
-                      "border border-[var(--line)] bg-[var(--paper)] px-4 py-2 font-mono text-xs font-bold uppercase tracking-wider hover:border-[var(--blue)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--blue)]",
-                    ),
-                  ],
-                  ["Sign out"],
-                ),
-              ],
-            ),
-            h.section(
-              [h.Class("py-16 sm:py-24")],
-              [
-                h.p(
-                  [
-                    h.Class(
-                      "font-mono text-xs font-bold uppercase tracking-[0.22em] text-[var(--green-dark)]",
-                    ),
-                  ],
-                  ["Access verified / Effectful-Tech"],
-                ),
-                h.h1(
-                  [
-                    h.Class(
-                      "mt-4 max-w-3xl text-4xl font-black leading-[1.03] tracking-tight sm:text-6xl",
-                    ),
-                  ],
-                  ["Repository automation, under control."],
-                ),
-                h.p(
-                  [
-                    h.Class(
-                      "mt-6 max-w-2xl text-base leading-7 text-[var(--muted-ink)] sm:text-lg",
-                    ),
-                  ],
-                  [
-                    "Cloudflare Access confirmed your Effectful-Tech membership. You can administer SlopCop for every repository attached to the GitHub App.",
-                  ],
-                ),
-              ],
-            ),
-            h.section(
-              [
-                h.AriaLabel("Security status"),
-                h.Class(
-                  "border border-black/15 bg-[var(--paper)] shadow-[8px_8px_0_rgba(45,38,30,0.08)]",
-                ),
-              ],
-              [
-                h.div(
-                  [h.Class("border-b border-[var(--line)] px-5 py-4")],
-                  [
-                    h.h2(
-                      [
-                        h.Class(
-                          "font-mono text-sm font-black uppercase tracking-widest",
-                        ),
-                      ],
-                      ["Control desk"],
-                    ),
-                  ],
-                ),
-                statusRow("Identity", "Cloudflare Access"),
-                statusRow(
-                  "Authorization",
-                  "Effectful-Tech organization member",
-                ),
-                statusRow("Repository scope", "GitHub App installations"),
-                statusRow("API exposure", "Private service binding"),
-              ],
-            ),
-          ],
-        ),
-      ],
-    ),
+      )
+    case "Activity":
+      return stubView(
+        "Dispatch log",
+        "Activity",
+        "A chronological feed of labeling decisions and repository events.",
+      )
+    case "Reviews":
+      return stubView(
+        "Preview",
+        "Reviews",
+        "Review automation and provenance will be available here.",
+      )
+    case "SlopDetection":
+      return stubView(
+        "Preview",
+        "Slop detection",
+        "Detection policies and findings will be available here.",
+      )
+    case "Commands":
+      return stubView(
+        "Coming soon",
+        "Commands",
+        "Repository command workflows will be available here.",
+      )
+    case "Settings":
+      return stubView(
+        "Control desk",
+        "Settings",
+        "Organization and account controls will be available here.",
+      )
+    case "NotFound":
+      return stubView(
+        "404",
+        "Page not found",
+        `No dashboard station exists at ${model.route.path}.`,
+      )
   }
 }
+
+export const view = (model: Model): Document => ({
+  title: `${model.route._tag === "Dashboard" ? "Overview" : model.route._tag} | SlopCop`,
+  body: shellView(model, routeView(model)),
+})

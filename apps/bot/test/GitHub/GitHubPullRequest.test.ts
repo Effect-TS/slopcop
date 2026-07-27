@@ -70,12 +70,14 @@ const makeLayer = (result: Option.Option<GitHubRepository.GitHubRepository>) =>
   GitHubPullRequest.layerNoDeps.pipe(
     Layer.provide([
       Layer.succeed(GitHubRepositoriesRepo, {
+        list: () => Effect.die("Unexpected repository listing"),
         findBySlug: () => Effect.die("Expected lookup by GitHub ID"),
         findByGitHubId: () => Effect.succeed(result),
         findById: () => Effect.die("Unexpected repository lookup"),
         getRulesRevision: () => Effect.die("Unexpected revision lookup"),
         incrementRulesRevision: () =>
           Effect.die("Unexpected revision increment"),
+        updateEnabled: () => Effect.die("Unexpected repository update"),
       }),
       Layer.succeed(GitHubClient, {
         getRepositoryLabel: () => unavailable,

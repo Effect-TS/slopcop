@@ -14,11 +14,13 @@ export class GitHubRepositoriesRepoError extends Data.TaggedError(
   "GitHubRepositoriesRepoError",
 )<{
   readonly operation:
+    | "List"
     | "FindByName"
     | "FindByGitHubId"
     | "FindById"
     | "GetRulesRevision"
     | "IncrementRulesRevision"
+    | "UpdateEnabled"
   readonly cause: RepositoryErrorCause
 }> {}
 
@@ -31,9 +33,18 @@ const IncrementRulesRevisionRequest = Schema.Struct({
   expectedRevision: Schema.Int,
 })
 
+const UpdateEnabledRequest = Schema.Struct({
+  ...GitHubRepository.GitHubRepositorySlug.fields,
+  enabled: Schema.Boolean,
+})
+
 export class GitHubRepositoriesRepo extends Context.Service<
   GitHubRepositoriesRepo,
   {
+    readonly list: () => Effect.Effect<
+      ReadonlyArray<GitHubRepository.GitHubRepository>,
+      GitHubRepositoriesRepoError
+    >
     readonly findBySlug: (
       slug: GitHubRepository.GitHubRepositorySlug,
     ) => Effect.Effect<
@@ -59,10 +70,28 @@ export class GitHubRepositoriesRepo extends Context.Service<
       id: GitHubRepository.GitHubRepository["id"],
       expectedRevision: number,
     ) => Effect.Effect<number, GitHubRepositoriesRepoError>
+    readonly updateEnabled: (
+      slug: GitHubRepository.GitHubRepositorySlug,
+      enabled: boolean,
+    ) => Effect.Effect<
+      Option.Option<GitHubRepository.GitHubRepository>,
+      GitHubRepositoriesRepoError
+    >
   }
 >()("@slopcop/bot/GitHub/repositories/GitHubRepositoriesRepo", {
   make: Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
+
+    const list = SqlSchema.findAll({
+      Request: Schema.Void,
+      Result: GitHubRepository.GitHubRepository,
+      execute: () => sql`
+        SELECT *
+        FROM "github_repositories"
+        WHERE "deleted_at" IS NULL
+        ORDER BY "owner" ASC, "repo" ASC
+      `,
+    })
 
     const findBySlug = SqlSchema.findOneOption({
       Request: GitHubRepository.GitHubRepositorySlug,
@@ -113,6 +142,21 @@ export class GitHubRepositoriesRepo extends Context.Service<
       `,
     })
 
+    const updateEnabled = SqlSchema.findOneOption({
+      Request: UpdateEnabledRequest,
+      Result: GitHubRepository.GitHubRepository,
+      execute: ({ owner, repo, enabled }) => sql`
+        UPDATE "github_repositories"
+        SET
+          "enabled" = ${enabled},
+          "updated_at" = unixepoch() * 1000
+        WHERE "owner" = ${owner}
+          AND "repo" = ${repo}
+          AND "deleted_at" IS NULL
+        RETURNING *
+      `,
+    })
+
     const toGitHubRepositoriesRepoError =
       (operation: GitHubRepositoriesRepoError["operation"]) =>
       (cause: GitHubRepositoriesRepoError | RepositoryErrorCause) =>
@@ -135,6 +179,10 @@ export class GitHubRepositoriesRepo extends Context.Service<
         })
 
     return {
+      list: () =>
+        list(undefined).pipe(
+          Effect.mapError(toGitHubRepositoriesRepoError("List")),
+        ),
       findBySlug: (slug) =>
         findBySlug(slug).pipe(
           Effect.mapError(toGitHubRepositoriesRepoError("FindByName")),
@@ -160,6 +208,10 @@ export class GitHubRepositoriesRepo extends Context.Service<
           Effect.mapError(
             toGitHubRepositoriesRepoError("IncrementRulesRevision"),
           ),
+        ),
+      updateEnabled: (slug, enabled) =>
+        updateEnabled({ ...slug, enabled }).pipe(
+          Effect.mapError(toGitHubRepositoriesRepoError("UpdateEnabled")),
         ),
     }
   }),

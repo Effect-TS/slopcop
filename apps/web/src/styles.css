@@ -20,6 +20,8 @@
   --coral-soft: #f7e5df;
   --line: #cfc5b1;
   --shadow: rgba(45, 38, 30, 0.1);
+  --sidebar: #2d2822;
+  --sidebar-deep: #1f1b17;
   font-family: "Public Sans", "Avenir Next", Avenir, system-ui, sans-serif;
   background: var(--paper);
   color: var(--ink);
@@ -76,6 +78,8 @@ a {
     --coral-soft: #442d2e;
     --line: #44505d;
     --shadow: rgba(0, 0, 0, 0.24);
+    --sidebar: #101c29;
+    --sidebar-deep: #0b141e;
   }
 }
 

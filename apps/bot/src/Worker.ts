@@ -8,6 +8,7 @@ import * as HttpRouter from "effect/unstable/http/HttpRouter"
 import { ApiDocsLayer, ApiHandlersLayer } from "./Api.ts"
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient"
 import { LabelingRules } from "./Labeling/LabelingRules.ts"
+import { Repositories } from "./GitHub/Repositories.ts"
 import { DatabaseLayer } from "./Sql.ts"
 
 export default Cloudflare.Worker(
@@ -28,6 +29,7 @@ export default Cloudflare.Worker(
     const HttpLayer = Layer.mergeAll(ApiHandlersLayer, ApiDocsLayer).pipe(
       Layer.provide(FetchHttpClient.layer),
       Layer.provide(LabelingRules.layer),
+      Layer.provide(Repositories.layer),
       Layer.provide([Etag.layer, HttpPlatformStubLayer, Path.layer]),
     )
 

@@ -14,9 +14,23 @@ const url = (pathname: string): Url => ({
 })
 
 describe("route", () => {
-  test("parses the dashboard route", () => {
-    expect(urlToAppRoute(url("/"))).toEqual({
-      _tag: "Dashboard",
+  test.each([
+    ["/", "Dashboard"],
+    ["/repositories", "Repositories"],
+    ["/activity", "Activity"],
+    ["/reviews", "Reviews"],
+    ["/slop-detection", "SlopDetection"],
+    ["/commands", "Commands"],
+    ["/settings", "Settings"],
+  ])("parses %s", (pathname, tag) => {
+    expect(urlToAppRoute(url(pathname))._tag).toBe(tag)
+  })
+
+  test("parses a repository workspace", () => {
+    expect(urlToAppRoute(url("/repositories/Effect-TS/effect"))).toEqual({
+      _tag: "RepositoryWorkspace",
+      owner: "Effect-TS",
+      repo: "effect",
     })
   })
 
