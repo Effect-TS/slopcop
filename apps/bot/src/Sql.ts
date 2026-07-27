@@ -1,5 +1,5 @@
 import * as Cloudflare from "alchemy/Cloudflare"
-import * as SQL from "alchemy/SQL"
+import { D1 } from "alchemy/SQL/D1"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as String from "effect/String"
@@ -16,7 +16,7 @@ export const DatabaseLayer = Layer.effect(
   Effect.gen(function* () {
     const resource = yield* D1Database
     const d1 = yield* Cloudflare.D1.QueryDatabase(resource)
-    return yield* SQL.D1(d1, {
+    return yield* D1(d1, {
       transformQueryNames: String.camelToSnake,
       transformResultNames: String.snakeToCamel,
     })

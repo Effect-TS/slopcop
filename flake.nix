@@ -16,7 +16,7 @@
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
           packages = with pkgs; [
-            corepack
+            (corepack.override { nodejs-slim = nodejs-slim_26; })
             nodejs_26
           ];
         };

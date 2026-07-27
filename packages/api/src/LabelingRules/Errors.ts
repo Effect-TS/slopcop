@@ -7,12 +7,6 @@ export class Unauthenticated extends Schema.TaggedErrorClass<Unauthenticated>()(
   { httpApiStatus: 401 },
 ) {}
 
-export class Forbidden extends Schema.TaggedErrorClass<Forbidden>()(
-  "Forbidden",
-  { message: Schema.String },
-  { httpApiStatus: 403 },
-) {}
-
 export class RepositoryNotConfigured extends Schema.TaggedErrorClass<RepositoryNotConfigured>()(
   "RepositoryNotConfigured",
   { repository: Schema.String, message: Schema.String },

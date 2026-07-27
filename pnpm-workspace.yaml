@@ -6,20 +6,32 @@ packages:
 catalogMode: prefer
 
 catalog:
-  "@effect/ai-openai": 4.0.0-beta.100
-  "@effect/openapi-generator": 4.0.0-beta.100
-  "@effect/platform-node": 4.0.0-beta.100
-  "@effect/sql-d1": 4.0.0-beta.100
+  "@effect/ai-openai": 4.0.0-beta.101
+  "@effect/openapi-generator": 4.0.0-beta.101
+  "@effect/platform-browser": 4.0.0-beta.101
+  "@effect/platform-node": 4.0.0-beta.101
+  "@effect/sql-d1": 4.0.0-beta.101
   "@effect/tsgo": ^0.24.1
-  "@effect/vitest": 4.0.0-beta.100
+  "@effect/vitest": 4.0.0-beta.101
+  "@foldkit/devtools": 0.132.0
+  "@foldkit/devtools-mcp": 0.13.4
+  "@foldkit/ui": 0.132.0
+  "@foldkit/vite-plugin": 0.11.1
+  "@tailwindcss/vite": 4.3.3
   "@types/node": ^24
-  alchemy: https://pkg.ing/alchemy/b9f0c1c
-  effect: 4.0.0-beta.100
+  alchemy: 2.0.0-beta.64
+  effect: 4.0.0-beta.101
+  foldkit: 0.132.0
+  happy-dom: 20.11.1
+  jose: 6.2.4
+  tailwindcss: 4.3.3
   typescript: 7.1.0-dev.20260715.1
   vite: npm:@voidzero-dev/vite-plus-core@0.2.4
   vite-plus: 0.2.4
+  vitest: 4.1.10
 
 overrides:
+  "@effect/sql-d1": "catalog:"
   vite: "catalog:"
 
 peerDependencyRules:
@@ -35,7 +47,7 @@ minimumReleaseAgeExclude:
   - "@distilled.cloud/core@0.29.1 || 0.30.0"
   - "@distilled.cloud/neon@0.29.1 || 0.30.0"
   - "@distilled.cloud/planetscale@0.29.1 || 0.30.0"
-  - alchemy@2.0.0-beta.63
+  - alchemy@2.0.0-beta.64
   - "@distilled.cloud/cloudflare-rolldown-plugin@0.13.8"
   - "@distilled.cloud/cloudflare-runtime@0.13.8"
   - "@distilled.cloud/cloudflare-vite-plugin@0.13.8"
