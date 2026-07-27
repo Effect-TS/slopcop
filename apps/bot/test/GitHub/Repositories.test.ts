@@ -53,10 +53,10 @@ describe("Repositories", () => {
     }).pipe(Effect.provide(layer(Option.some(repository)))),
   )
 
-  it.effect("returns the updated patrol state", () =>
+  it.effect("returns the updated enabled state", () =>
     Effect.gen(function* () {
       const repositories = yield* Repositories
-      const result = yield* repositories.updatePatrol(
+      const result = yield* repositories.updateEnabled(
         { owner: repository.owner, repo: repository.repo },
         false,
       )
@@ -91,7 +91,7 @@ describe("Repositories", () => {
     Effect.gen(function* () {
       const repositories = yield* Repositories
       const error = yield* Effect.flip(
-        repositories.updatePatrol(
+        repositories.updateEnabled(
           { owner: "Effect-TS", repo: "missing" },
           true,
         ),

@@ -19,7 +19,7 @@ import { RepositoriesRoute, initialDashboardRoute } from "./route"
 import {
   LoadAccessLogout,
   LoadRepositories,
-  UpdateRepositoryPatrol,
+  UpdateRepositoryEnabled,
   update,
 } from "./update"
 
@@ -85,7 +85,7 @@ describe("dashboard update", () => {
           enabled: true,
         }),
       ),
-      Story.Command.expectHas(UpdateRepositoryPatrol),
+      Story.Command.expectHas(UpdateRepositoryEnabled),
       Story.model((model) => {
         expect(model.repositories._tag).toBe("Ready")
         if (model.repositories._tag === "Ready") {
@@ -94,7 +94,7 @@ describe("dashboard update", () => {
         }
       }),
       Story.Command.resolve(
-        UpdateRepositoryPatrol,
+        UpdateRepositoryEnabled,
         FailedToUpdateRepositoryPatrol({
           owner: "Effect-TS",
           repo: "effect",

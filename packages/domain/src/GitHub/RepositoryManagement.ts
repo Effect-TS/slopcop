@@ -15,8 +15,8 @@ export const ListRepositoriesResponse = Schema.Struct({
   repositories: Schema.Array(RepositorySummary),
 })
 
-export const UpdateRepositoryPatrolRequest = Schema.Struct({
+export const UpdateRepositoryEnabledRequest = Schema.Struct({
   enabled: Schema.Boolean,
 })
-export type UpdateRepositoryPatrolRequest =
-  typeof UpdateRepositoryPatrolRequest.Type
+export type UpdateRepositoryEnabledRequest =
+  typeof UpdateRepositoryEnabledRequest.Type

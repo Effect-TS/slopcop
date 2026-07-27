@@ -17,7 +17,7 @@ const mapError = (error: RepositoriesError) =>
     ? Effect.fail(
         new RepositoryNotFound({
           repository: error.repository,
-          message: `${error.repository} is not configured in SlopCop. No patrol setting was changed.`,
+          message: `${error.repository} is not configured in SlopCop. Its enabled state was not changed.`,
         }),
       )
     : internalFailure(error)
@@ -34,9 +34,9 @@ export const RepositoriesApiHandlersLayer = HttpApiBuilder.group(
           Effect.map((items) => ({ repositories: items })),
           Effect.catch(internalFailure),
         ),
-      updateRepositoryPatrol: ({ params, payload }) =>
+      updateRepositoryEnabled: ({ params, payload }) =>
         repositories
-          .updatePatrol(params, payload.enabled)
+          .updateEnabled(params, payload.enabled)
           .pipe(Effect.catch(mapError)),
     })
   }),

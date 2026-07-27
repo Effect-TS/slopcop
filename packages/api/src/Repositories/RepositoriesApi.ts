@@ -10,11 +10,11 @@ export class RepositoriesApi extends HttpApiGroup.make("repositories")
       success: RepositoryManagement.ListRepositoriesResponse,
     }),
     HttpApiEndpoint.patch(
-      "updateRepositoryPatrol",
-      "/repositories/:owner/:repo/patrol",
+      "updateRepositoryEnabled",
+      "/repositories/:owner/:repo/enabled",
       {
         params: RepositoryManagement.RepositoryPath,
-        payload: RepositoryManagement.UpdateRepositoryPatrolRequest,
+        payload: RepositoryManagement.UpdateRepositoryEnabledRequest,
         success: RepositoryManagement.RepositorySummary,
         error: RepositoryNotFound,
       },

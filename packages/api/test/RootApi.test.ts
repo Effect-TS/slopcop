@@ -18,12 +18,12 @@ describe("RootApi", () => {
     ).toEqual([{ access: [] }])
   })
 
-  test("exposes authenticated repository patrol endpoints", () => {
+  test("exposes authenticated repository management endpoints", () => {
     expect(specification.paths["/api/v1/repositories"]?.get?.security).toEqual([
       { access: [] },
     ])
     expect(
-      specification.paths["/api/v1/repositories/{owner}/{repo}/patrol"]?.patch
+      specification.paths["/api/v1/repositories/{owner}/{repo}/enabled"]?.patch
         ?.security,
     ).toEqual([{ access: [] }])
   })

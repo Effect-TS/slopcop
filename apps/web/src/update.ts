@@ -77,17 +77,17 @@ export const LoadRepositories = Command.define(
   FailedToLoadRepositories,
 )(Effect.provide(loadRepositoriesEffect, Http.layer))
 
-const updateRepositoryPatrolEffect = (
+const updateRepositoryEnabledEffect = (
   owner: string,
   repo: string,
   enabled: boolean,
 ) =>
   Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient
-    const url = `/api/v1/repositories/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/patrol`
+    const url = `/api/v1/repositories/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/enabled`
     const request = yield* HttpClientRequest.patch(url).pipe(
       HttpClientRequest.schemaBodyJson(
-        RepositoryManagement.UpdateRepositoryPatrolRequest,
+        RepositoryManagement.UpdateRepositoryEnabledRequest,
       )({ enabled }),
     )
     const response = yield* client.execute(request)
@@ -98,7 +98,7 @@ const updateRepositoryPatrolEffect = (
           owner,
           repo,
           enabled,
-          message: `The patrol update returned HTTP ${response.status}.`,
+          message: `The repository enabled-state update returned HTTP ${response.status}.`,
         }),
       )
     }
@@ -122,8 +122,8 @@ const updateRepositoryPatrolEffect = (
     ),
   )
 
-export const UpdateRepositoryPatrol = Command.define(
-  "UpdateRepositoryPatrol",
+export const UpdateRepositoryEnabled = Command.define(
+  "UpdateRepositoryEnabled",
   {
     ...RepositoryManagement.RepositoryPath.fields,
     enabled: S.Boolean,
@@ -132,7 +132,7 @@ export const UpdateRepositoryPatrol = Command.define(
   FailedToUpdateRepositoryPatrol,
 )(({ owner, repo, enabled }) =>
   Effect.provide(
-    updateRepositoryPatrolEffect(owner, repo, enabled),
+    updateRepositoryEnabledEffect(owner, repo, enabled),
     Http.layer,
   ),
 )
@@ -235,7 +235,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
                 : state,
             patrolNotice: () => NoPatrolNotice.make({}),
           }),
-          [UpdateRepositoryPatrol({ owner, repo, enabled })],
+          [UpdateRepositoryEnabled({ owner, repo, enabled })],
         ]
       },
       UpdatedRepositoryPatrol: ({ repository }) => [

@@ -29,7 +29,7 @@ export class Repositories extends Context.Service<
       ReadonlyArray<RepositoryManagement.RepositorySummary>,
       GitHubRepositoriesRepoError
     >
-    readonly updatePatrol: (
+    readonly updateEnabled: (
       slug: GitHubRepository.GitHubRepositorySlug,
       enabled: boolean,
     ) => Effect.Effect<
@@ -46,7 +46,7 @@ export class Repositories extends Context.Service<
         rows
           .list()
           .pipe(Effect.map((repositories) => repositories.map(summarize))),
-      updatePatrol: (slug, enabled) =>
+      updateEnabled: (slug, enabled) =>
         rows.updateEnabled(slug, enabled).pipe(
           Effect.flatMap(
             Option.match({
