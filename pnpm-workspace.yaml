@@ -23,6 +23,7 @@ catalog:
   effect: 4.0.0-beta.101
   foldkit: 0.132.0
   happy-dom: 20.11.1
+  jose: 6.2.4
   tailwindcss: 4.3.3
   typescript: 7.1.0-dev.20260715.1
   vite: npm:@voidzero-dev/vite-plus-core@0.2.4

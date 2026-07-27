@@ -1,77 +1,19 @@
 import { Story } from "foldkit"
-import { describe, expect, test } from "vite-plus/test"
+import { describe, test } from "vite-plus/test"
 
-import {
-  ClickedDecrement,
-  ClickedIncrement,
-  ClickedReset,
-  type Model,
-  update,
-} from "./main"
+import { ClickedLogout, CompletedLoadExternal } from "./message"
+import { Model } from "./model"
+import { initialDashboardRoute } from "./route"
+import { LoadAccessLogout, update } from "./update"
 
-const initialModel: Model = { count: 0 }
-
-describe("update", () => {
-  test("ClickedIncrement adds one to the count", () => {
+describe("dashboard update", () => {
+  test("signs out through Cloudflare Access", () => {
     Story.story(
       update,
-      Story.with(initialModel),
-      Story.message(ClickedIncrement()),
-      Story.Command.expectNone(),
-      Story.model((model) => {
-        expect(model.count).toBe(1)
-      }),
-    )
-  })
-
-  test("ClickedDecrement subtracts one from the count", () => {
-    Story.story(
-      update,
-      Story.with({ count: 5 }),
-      Story.message(ClickedDecrement()),
-      Story.model((model) => {
-        expect(model.count).toBe(4)
-      }),
-    )
-  })
-
-  test("ClickedDecrement past zero produces a negative count", () => {
-    Story.story(
-      update,
-      Story.with(initialModel),
-      Story.message(ClickedDecrement()),
-      Story.model((model) => {
-        expect(model.count).toBe(-1)
-      }),
-    )
-  })
-
-  test("ClickedReset sets the count back to zero", () => {
-    Story.story(
-      update,
-      Story.with({ count: 99 }),
-      Story.message(ClickedReset()),
-      Story.model((model) => {
-        expect(model.count).toBe(0)
-      }),
-    )
-  })
-
-  test("successive Messages accumulate as expected", () => {
-    Story.story(
-      update,
-      Story.with(initialModel),
-      Story.message(ClickedIncrement()),
-      Story.message(ClickedIncrement()),
-      Story.message(ClickedIncrement()),
-      Story.message(ClickedDecrement()),
-      Story.model((model) => {
-        expect(model.count).toBe(2)
-      }),
-      Story.message(ClickedReset()),
-      Story.model((model) => {
-        expect(model.count).toBe(0)
-      }),
+      Story.with(Model.make({ route: initialDashboardRoute })),
+      Story.message(ClickedLogout()),
+      Story.Command.expectHas(LoadAccessLogout),
+      Story.Command.resolve(LoadAccessLogout, CompletedLoadExternal()),
     )
   })
 })

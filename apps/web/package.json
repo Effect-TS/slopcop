@@ -14,9 +14,11 @@
     "@effect/platform-browser": "catalog:",
     "@foldkit/devtools": "catalog:",
     "@foldkit/ui": "catalog:",
+    "@slopcop/domain": "workspace:*",
     "@tailwindcss/vite": "catalog:",
     "effect": "catalog:",
     "foldkit": "catalog:",
+    "jose": "catalog:",
     "tailwindcss": "catalog:"
   },
   "devDependencies": {

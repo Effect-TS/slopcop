@@ -6,16 +6,16 @@ import * as Etag from "effect/unstable/http/Etag"
 import * as HttpPlatform from "effect/unstable/http/HttpPlatform"
 import * as HttpRouter from "effect/unstable/http/HttpRouter"
 import { ApiDocsLayer, ApiHandlersLayer } from "./Api.ts"
-import { GitHubEventProcessors } from "./GitHub/GitHubEventProcessors.ts"
-import { GitHubEvents } from "./GitHub/GitHubEvents.ts"
+import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient"
 import { LabelingRules } from "./Labeling/LabelingRules.ts"
-import { PullRequestLabelingProcessorLayer } from "./Labeling/PullRequestLabelingProcessor.ts"
 import { DatabaseLayer } from "./Sql.ts"
 
 export default Cloudflare.Worker(
   "SlopCop",
   {
+    name: "slopcop-api",
     main: import.meta.url,
+    url: false,
     compatibility: { flags: ["nodejs_compat"] },
   },
   Effect.gen(function* () {
@@ -26,31 +26,15 @@ export default Cloudflare.Worker(
     })
 
     const HttpLayer = Layer.mergeAll(ApiHandlersLayer, ApiDocsLayer).pipe(
+      Layer.provide(FetchHttpClient.layer),
       Layer.provide(LabelingRules.layer),
       Layer.provide([Etag.layer, HttpPlatformStubLayer, Path.layer]),
-      Layer.provide(HttpRouter.cors()),
     )
 
-    const GitHubEventProcessingLayer = Layer.mergeAll(
-      GitHubEvents.layer,
-      PullRequestLabelingProcessorLayer,
-    ).pipe(Layer.provide(GitHubEventProcessors.layer))
-
-    const MainLayer = HttpLayer.pipe(
-      Layer.provide(GitHubEventProcessingLayer),
-      Layer.provide(DatabaseLayer),
-      Layer.orDie,
-    )
+    const MainLayer = HttpLayer.pipe(Layer.provide(DatabaseLayer), Layer.orDie)
 
     const handler = yield* HttpRouter.toHttpEffect(MainLayer)
 
     return { fetch: handler }
-  }).pipe(
-    Effect.provide([
-      Cloudflare.D1.QueryDatabaseBinding,
-      Cloudflare.Queues.EventSourceLive,
-      Cloudflare.Queues.WriteQueueBinding,
-      Cloudflare.Workers.CronEventSourceLive,
-    ]),
-  ),
+  }).pipe(Effect.provide([Cloudflare.D1.QueryDatabaseBinding])),
 )

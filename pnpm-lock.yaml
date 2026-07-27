@@ -253,6 +253,9 @@ catalogs:
     happy-dom:
       specifier: 20.11.1
       version: 20.11.1
+    jose:
+      specifier: 6.2.4
+      version: 6.2.4
     tailwindcss:
       specifier: 4.3.3
       version: 4.3.3
@@ -353,6 +356,9 @@ importers:
       '@foldkit/ui':
         specifier: 'catalog:'
         version: 0.132.0(effect@4.0.0-beta.101)(foldkit@0.132.0(@effect/platform-browser@4.0.0-beta.101(effect@4.0.0-beta.101))(effect@4.0.0-beta.101))
+      '@slopcop/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
       '@tailwindcss/vite':
         specifier: 'catalog:'
         version: 4.3.3(@voidzero-dev/vite-plus-core@0.2.4(@types/node@26.1.1)(jiti@2.7.0)(typescript@7.1.0-dev.20260715.1)(yaml@2.9.0))
@@ -362,6 +368,9 @@ importers:
       foldkit:
         specifier: 'catalog:'
         version: 0.132.0(@effect/platform-browser@4.0.0-beta.101(effect@4.0.0-beta.101))(effect@4.0.0-beta.101)
+      jose:
+        specifier: 'catalog:'
+        version: 6.2.4
       tailwindcss:
         specifier: 'catalog:'
         version: 4.3.3
