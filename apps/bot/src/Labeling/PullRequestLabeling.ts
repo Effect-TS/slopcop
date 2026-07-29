@@ -44,13 +44,17 @@ export class PullRequestLabeling extends Context.Service<
 >()("@slopcop/bot/Labeling/PullRequestLabeling", {
   make: Effect.gen(function* () {
     const labelingModel = yield* Config.string("LABELING_AI_MODEL").pipe(
-      Config.withDefault("gpt-4.1-mini"),
+      Config.withDefault("gpt-5.6-luna"),
     )
 
     const pullRequests = yield* GitHubPullRequest
     const rules = yield* LabelingRules
     const classify = yield* makeLabelClassifier.pipe(
-      Effect.provide(OpenAiLanguageModel.model(labelingModel)),
+      Effect.provide(
+        OpenAiLanguageModel.model(labelingModel, {
+          reasoning: { effort: "low" },
+        }),
+      ),
     )
     const decisions = yield* LabelingDecisionsRepo
     const confidenceThreshold = yield* Config.schema(
