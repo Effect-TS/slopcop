@@ -94,6 +94,8 @@ const testLayer = (activeRules: boolean) => {
       applyLabels: () => unavailable,
     }),
     Layer.succeed(LabelingRules, {
+      listAudit: () => Effect.die("Unexpected audit request"),
+      listActivity: () => Effect.die("Unexpected activity request"),
       list: () => unavailable,
       get: () => unavailable,
       create: () => unavailable,

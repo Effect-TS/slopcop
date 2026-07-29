@@ -33,6 +33,12 @@ export class LabelingRulesApi extends HttpApiGroup.make("labelingRules")
       success: LabelingRuleManagement.ListLabelingRulesResponse,
       error: allErrors,
     }),
+    HttpApiEndpoint.get("listRuleAudit", "/labeling-rules/audit", {
+      params: LabelingRuleManagement.RepositoryPath,
+      query: LabelingRuleManagement.ListLabelingRuleAuditQuery,
+      success: LabelingRuleManagement.ListLabelingRuleAuditResponse,
+      error: allErrors,
+    }),
     HttpApiEndpoint.get("getRule", "/labeling-rules/:ruleId", {
       params: LabelingRuleManagement.RulePath,
       success: LabelingRuleManagement.PublicLabelingRule,

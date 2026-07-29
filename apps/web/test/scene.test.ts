@@ -3,7 +3,11 @@ import { describe, test } from "vite-plus/test"
 
 import { Dashboard } from "../src/layout/index.ts"
 import { Model } from "../src/model.ts"
-import { Repositories } from "../src/page/index.ts"
+import {
+  Activity,
+  Repositories,
+  RepositoryWorkspace,
+} from "../src/page/index.ts"
 import { RepositoriesRoute } from "../src/route.ts"
 import { update } from "../src/update.ts"
 import { view } from "../src/view.ts"
@@ -21,6 +25,17 @@ const repositoriesModel = Model.make({
       pendingPatrols: [],
     }),
     patrolNotice: Repositories.NoPatrolNotice.make({}),
+  }),
+  repositoryWorkspace: RepositoryWorkspace.WorkspaceInactive.make({
+    generation: 0,
+  }),
+  activity: Activity.Model.make({
+    repository: null,
+    operation: "all",
+    requestId: 0,
+    repositories: [],
+    loadMoreError: null,
+    activity: Activity.ActivityNotAsked.make({}),
   }),
 })
 

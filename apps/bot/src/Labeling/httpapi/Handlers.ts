@@ -11,6 +11,7 @@ import {
 } from "@slopcop/api/LabelingRules/Errors"
 import { LabelingAdminIdentity } from "@slopcop/api/LabelingRules/Security"
 import * as LabelingRule from "@slopcop/domain/Labeling/LabelingRule"
+import * as LabelingRuleAuditEntry from "@slopcop/domain/Labeling/LabelingRuleAuditEntry"
 import * as LabelingRuleManagement from "@slopcop/domain/Labeling/LabelingRuleManagement"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
@@ -19,13 +20,71 @@ import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder"
 import { LabelingRules, type LabelingRulesError } from "../LabelingRules.ts"
 import { LabelingAdminMiddlewareLayer } from "./Security.ts"
 
-const encodeDomainRule = Schema.encodeEffect(LabelingRule.LabelingRule.json)
-const decodeApiRule = Schema.decodeUnknownEffect(
-  LabelingRuleManagement.PublicLabelingRule,
+const decodeApiRule = Schema.decodeEffect(
+  Schema.toType(LabelingRuleManagement.PublicLabelingRule),
 )
 
-const encodeRule = (rule: LabelingRule.LabelingRule) =>
-  encodeDomainRule(rule).pipe(Effect.flatMap(decodeApiRule), Effect.orDie)
+export const toPublicRule = (rule: LabelingRule.LabelingRule) =>
+  decodeApiRule(rule).pipe(Effect.orDie)
+
+const decodePublicAuditEntry = Schema.decodeEffect(
+  Schema.toType(LabelingRuleManagement.PublicLabelingRuleAuditEntry),
+)
+
+const publicAuditValue = (
+  value: LabelingRuleAuditEntry.LabelingRuleAuditValue | null,
+) => {
+  if (value === null) return null
+  const { repositoryId: _repositoryId, ...publicValue } = value
+  return publicValue
+}
+
+export const toPublicAuditEntry = (
+  entry: LabelingRuleAuditEntry.LabelingRuleAuditEntry,
+) => {
+  const ruleId = entry.after?.id ?? entry.before?.id
+  if (ruleId === undefined) {
+    return Effect.die(
+      `Audit entry '${entry.id}' has neither a before nor an after snapshot.`,
+    )
+  }
+  return decodePublicAuditEntry({
+    id: entry.id,
+    ruleId,
+    actor: entry.actor,
+    operation: entry.operation,
+    before: publicAuditValue(entry.before),
+    after: publicAuditValue(entry.after),
+    createdAt: entry.createdAt,
+  }).pipe(Effect.orDie)
+}
+
+export const parseAuditCursor = (
+  cursor:
+    | typeof LabelingRuleManagement.LabelingRuleAuditCursor.Type
+    | undefined,
+) => {
+  if (cursor === undefined) return Effect.succeed(null)
+  const separator = cursor.indexOf(":")
+  return Schema.decodeUnknownEffect(
+    Schema.Struct({
+      createdAt: Schema.NumberFromString,
+      id: LabelingRuleAuditEntry.LabelingRuleAuditEntryId,
+    }),
+  )({
+    createdAt: cursor.slice(0, separator),
+    id: cursor.slice(separator + 1),
+  }).pipe(Effect.orDie)
+}
+
+export const formatAuditCursor = (
+  cursor: { readonly createdAt: number; readonly id: string } | null,
+) =>
+  cursor === null
+    ? Effect.succeed(null)
+    : Schema.decodeUnknownEffect(
+        LabelingRuleManagement.LabelingRuleAuditCursor,
+      )(`${cursor.createdAt}:${cursor.id}`).pipe(Effect.orDie)
 
 const internalFailure = (error: LabelingRulesError) =>
   Effect.logError("Labeling rules operation failed", error).pipe(
@@ -50,7 +109,7 @@ const mapRuleError = (
       return Effect.fail(
         new ApiRepositoryNotConfigured({
           repository: error.repository,
-          message: `${error.repository} is not an enabled SlopCop repository. Configure and enable it before managing labeling rules.`,
+          message: `${error.repository} is not a configured SlopCop repository. Configure it before managing labeling rules.`,
         }),
       )
     case "LabelingRuleNotFound":
@@ -87,7 +146,7 @@ const mapRuleError = (
     case "InvalidLabelingRule":
       return Effect.fail(new ApiInvalidLabelingRule({ message: error.message }))
     case "LabelingRuleConflict":
-      return encodeRule(error.currentRule).pipe(
+      return toPublicRule(error.currentRule).pipe(
         Effect.flatMap((currentRule) =>
           Effect.fail(
             new ApiLabelingRuleConflict({
@@ -116,7 +175,7 @@ const mapRuleError = (
 
 const publicRule = (
   effect: Effect.Effect<LabelingRule.LabelingRule, LabelingRulesError>,
-) => effect.pipe(Effect.catch(mapRuleError), Effect.flatMap(encodeRule))
+) => effect.pipe(Effect.catch(mapRuleError), Effect.flatMap(toPublicRule))
 
 export const LabelingRulesApiHandlersLayer = HttpApiBuilder.group(
   RootApi,
@@ -132,11 +191,29 @@ export const LabelingRulesApiHandlersLayer = HttpApiBuilder.group(
             { includeDisabled: query.includeDisabled ?? false },
           )
           .pipe(Effect.catch(mapRuleError))
-        const encoded = yield* Effect.forEach(result.rules, encodeRule)
+        const encoded = yield* Effect.forEach(result.rules, toPublicRule)
         return {
           repository: result.repository,
           revision: result.revision,
           rules: encoded,
+        }
+      }),
+      listRuleAudit: Effect.fnUntraced(function* ({ params, query }) {
+        const cursor = yield* parseAuditCursor(query.cursor)
+        const result = yield* rules
+          .listAudit(
+            { owner: params.owner, repo: params.repo },
+            {
+              ruleId: query.ruleId ?? null,
+              operation: query.operation ?? null,
+              cursor,
+              limit: query.limit ?? 50,
+            },
+          )
+          .pipe(Effect.catch(mapRuleError))
+        return {
+          entries: yield* Effect.forEach(result.entries, toPublicAuditEntry),
+          nextCursor: yield* formatAuditCursor(result.nextCursor),
         }
       }),
       getRule: ({ params }) =>

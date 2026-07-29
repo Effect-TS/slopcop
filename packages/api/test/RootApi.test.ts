@@ -16,6 +16,14 @@ describe("RootApi", () => {
       specification.paths["/api/v1/repositories/{owner}/{repo}/labeling-rules"]
         ?.get?.security,
     ).toEqual([{ access: [] }])
+    expect(
+      specification.paths[
+        "/api/v1/repositories/{owner}/{repo}/labeling-rules/audit"
+      ]?.get?.security,
+    ).toEqual([{ access: [] }])
+    expect(
+      specification.paths["/api/v1/activity/labeling-rules"]?.get?.security,
+    ).toEqual([{ access: [] }])
   })
 
   test("exposes authenticated repository management endpoints", () => {

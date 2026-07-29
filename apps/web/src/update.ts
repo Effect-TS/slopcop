@@ -8,12 +8,14 @@ import { Dashboard } from "./layout"
 import {
   CompletedLoadExternal,
   CompletedNavigateInternal,
+  GotActivityMessage,
   GotDashboardMessage,
   GotRepositoriesMessage,
+  GotRepositoryWorkspaceMessage,
   type Message,
 } from "./message"
 import type { Model } from "./model"
-import { Repositories } from "./page"
+import { Activity, Repositories, RepositoryWorkspace } from "./page"
 import { urlToAppRoute } from "./route"
 
 const NavigateInternal = Command.define(
@@ -44,11 +46,24 @@ export const update = (model: Model, message: Message): UpdateReturn =>
           route._tag === "Repositories"
             ? Repositories.informRouteChanged(model.repositories)
             : [model.repositories, []]
+        const [repositoryWorkspace, repositoryWorkspaceCommands] =
+          RepositoryWorkspace.informRouteChanged(
+            model.repositoryWorkspace,
+            route._tag === "RepositoryWorkspace"
+              ? { owner: route.owner, repo: route.repo }
+              : undefined,
+          )
+        const [activity, activityCommands] =
+          route._tag === "Activity"
+            ? Activity.informRouteChanged(model.activity)
+            : [model.activity, []]
         return [
           evo(model, {
             route: () => route,
             dashboard: () => dashboard,
             repositories: () => repositories,
+            repositoryWorkspace: () => repositoryWorkspace,
+            activity: () => activity,
           }),
           [
             ...Command.mapMessages(dashboardCommands, (message) =>
@@ -56,6 +71,12 @@ export const update = (model: Model, message: Message): UpdateReturn =>
             ),
             ...Command.mapMessages(repositoriesCommands, (message) =>
               GotRepositoriesMessage({ message }),
+            ),
+            ...Command.mapMessages(repositoryWorkspaceCommands, (message) =>
+              GotRepositoryWorkspaceMessage({ message }),
+            ),
+            ...Command.mapMessages(activityCommands, (message) =>
+              GotActivityMessage({ message }),
             ),
           ],
         ]
@@ -89,6 +110,27 @@ export const update = (model: Model, message: Message): UpdateReturn =>
           evo(model, { repositories: () => repositories }),
           Command.mapMessages(commands, (message) =>
             GotRepositoriesMessage({ message }),
+          ),
+        ]
+      },
+      GotRepositoryWorkspaceMessage: ({ message }) => {
+        const [repositoryWorkspace, commands] = RepositoryWorkspace.update(
+          model.repositoryWorkspace,
+          message,
+        )
+        return [
+          evo(model, { repositoryWorkspace: () => repositoryWorkspace }),
+          Command.mapMessages(commands, (message) =>
+            GotRepositoryWorkspaceMessage({ message }),
+          ),
+        ]
+      },
+      GotActivityMessage: ({ message }) => {
+        const [activity, commands] = Activity.update(model.activity, message)
+        return [
+          evo(model, { activity: () => activity }),
+          Command.mapMessages(commands, (message) =>
+            GotActivityMessage({ message }),
           ),
         ]
       },

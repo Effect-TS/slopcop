@@ -3,7 +3,6 @@ import * as Context from "effect/Context"
 import * as Data from "effect/Data"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
-import type * as Scope from "effect/Scope"
 
 export class DuplicateGitHubEventProcessor extends Data.TaggedError(
   "DuplicateGitHubEventProcessor",
@@ -31,7 +30,7 @@ export class GitHubEventProcessors extends Context.Service<
   {
     readonly register: (
       processor: GitHubEventProcessor,
-    ) => Effect.Effect<void, DuplicateGitHubEventProcessor, Scope.Scope>
+    ) => Effect.Effect<void, DuplicateGitHubEventProcessor>
     readonly dispatch: (
       event: GitHubWebhookEvent.GitHubWebhookEvent,
     ) => Effect.Effect<void, GitHubEventProcessorError>
@@ -49,12 +48,6 @@ export class GitHubEventProcessors extends Context.Service<
         }
 
         processors.set(processor.id, processor)
-
-        yield* Effect.addFinalizer(() =>
-          Effect.sync(() => {
-            processors.delete(processor.id)
-          }),
-        )
       },
     )
 

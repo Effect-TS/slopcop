@@ -3,12 +3,13 @@ import { type Document, type Html, html } from "foldkit/html"
 import { Dashboard } from "./layout"
 import {
   GotDashboardMessage,
+  GotActivityMessage,
   GotRepositoriesMessage,
+  GotRepositoryWorkspaceMessage,
   type Message,
 } from "./message"
 import type { Model } from "./model"
-import { Repositories } from "./page"
-import { repositoriesRouter } from "./route"
+import { Activity, Repositories, RepositoryWorkspace } from "./page"
 
 const stubView = (
   eyebrow: string,
@@ -79,58 +80,20 @@ const routeView = (model: Model): Html => {
         toParentMessage: (message) => GotRepositoriesMessage({ message }),
       })
     case "RepositoryWorkspace":
-      return h.section(
-        [h.Class("mx-auto max-w-6xl px-4 py-10 sm:px-6 lg:px-8")],
-        [
-          h.a(
-            [
-              h.Href(repositoriesRouter()),
-              h.Class(
-                "font-mono text-xs font-bold uppercase tracking-wider text-[var(--blue-dark)] hover:underline",
-              ),
-            ],
-            ["Back to repositories"],
-          ),
-          h.p(
-            [
-              h.Class(
-                "mt-8 font-mono text-[10px] font-bold uppercase tracking-[0.22em] text-[var(--green-dark)]",
-              ),
-            ],
-            ["Repository workspace"],
-          ),
-          h.h1(
-            [
-              h.Class(
-                "mt-2 break-all font-mono text-3xl font-black sm:text-4xl",
-              ),
-            ],
-            [`${model.route.owner}/${model.route.repo}`],
-          ),
-          h.div(
-            [
-              h.Class(
-                "mt-8 border border-[var(--line)] bg-[var(--card)] p-6 shadow-[7px_7px_0_var(--shadow)]",
-              ),
-            ],
-            [
-              h.h2([h.Class("text-xl font-black")], ["Workspace coming next"]),
-              h.p(
-                [h.Class("mt-2 text-sm leading-6 text-[var(--muted-ink)]")],
-                [
-                  "Summary, labeling, decisions, events, audit, and settings will live here.",
-                ],
-              ),
-            ],
-          ),
-        ],
-      )
+      return h.submodel({
+        slotId: "repository-workspace",
+        model: model.repositoryWorkspace,
+        view: RepositoryWorkspace.view,
+        toParentMessage: (message) =>
+          GotRepositoryWorkspaceMessage({ message }),
+      })
     case "Activity":
-      return stubView(
-        "Dispatch log",
-        "Activity",
-        "A chronological feed of labeling decisions and repository events.",
-      )
+      return h.submodel({
+        slotId: "activity",
+        model: model.activity,
+        view: Activity.view,
+        toParentMessage: (message) => GotActivityMessage({ message }),
+      })
     case "Reviews":
       return stubView(
         "Preview",
