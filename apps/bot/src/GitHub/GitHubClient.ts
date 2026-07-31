@@ -571,27 +571,39 @@ export class GitHubClient extends Context.Service<
         repository: GitHubRepository.GitHubRepository,
         branch: string,
       ) {
-        const operation = "GitHubClient.listRequiredChecks"
-        const response = yield* execute(
-          repository,
-          operation,
-          HttpClientRequest.get(
-            `${GITHUB_API_URL}${repositoryPath(repository)}/rules/branches/${encodeURIComponent(branch)}`,
-          ),
-        )
-        yield* requireStatus(operation, response, 200)
-        const rules = yield* decodeRequiredRules(response).pipe(
-          mapResponseDecodeError(operation, response),
-        )
-        return rules.flatMap((rule) =>
-          rule.type !== "required_status_checks" ||
-          rule.parameters === undefined
-            ? []
-            : rule.parameters.required_status_checks.map((check) => ({
-                context: check.context,
-                integrationId: check.integration_id ?? null,
-              })),
-        )
+        return yield* Stream.paginate(1, (pageNumber) =>
+          Effect.gen(function* () {
+            const operation = "GitHubClient.listRequiredChecks"
+            const response = yield* execute(
+              repository,
+              operation,
+              HttpClientRequest.get(
+                `${GITHUB_API_URL}${repositoryPath(repository)}/rules/branches/${encodeURIComponent(branch)}`,
+              ).pipe(
+                HttpClientRequest.setUrlParams({
+                  per_page: PAGE_SIZE,
+                  page: pageNumber,
+                }),
+              ),
+            )
+            yield* requireStatus(operation, response, 200)
+            const rules = yield* decodeRequiredRules(response).pipe(
+              mapResponseDecodeError(operation, response),
+            )
+            return [
+              rules.flatMap((rule) =>
+                rule.type !== "required_status_checks" ||
+                rule.parameters === undefined
+                  ? []
+                  : rule.parameters.required_status_checks.map((check) => ({
+                      context: check.context,
+                      integrationId: check.integration_id ?? null,
+                    })),
+              ),
+              nextPage(pageNumber, response),
+            ] as const
+          }),
+        ).pipe(Stream.runCollect)
       },
     )
 

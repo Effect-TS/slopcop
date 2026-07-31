@@ -2,13 +2,14 @@ import * as GitHubRepository from "@slopcop/domain/GitHub/GitHubRepository"
 import * as GitHubWebhookEvent from "@slopcop/domain/GitHub/GitHubWebhookEvent"
 import * as LabelingRule from "@slopcop/domain/Labeling/LabelingRule"
 import { describe, expect, it } from "@effect/vitest"
-import * as ConfigProvider from "effect/ConfigProvider"
 import * as DateTime from "effect/DateTime"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
 import * as Stream from "effect/Stream"
+import { RepositoryNotConfigured } from "../../src/GitHub/Errors.ts"
+import { GitHubAppAuth } from "../../src/GitHub/GitHubAppAuth.ts"
 import {
   type CheckRun,
   type CommitStatus,
@@ -103,6 +104,7 @@ Add the new behavior.
 `
 
 interface State {
+  repositoryConfigured: boolean
   summary: PullRequestSummary
   files: ReadonlyArray<{
     readonly filename: string
@@ -119,9 +121,11 @@ interface State {
     remove: ReadonlyArray<string>
   }>
   evidenceCalls: number
+  contentCalls: number
 }
 
 const initialState = (): State => ({
+  repositoryConfigured: true,
   summary: {
     number: 42,
     title: "Add behavior",
@@ -146,6 +150,7 @@ const initialState = (): State => ({
   labels: new Set(),
   labelCalls: [],
   evidenceCalls: 0,
+  contentCalls: 0,
 })
 
 const unavailable = Effect.die("Unexpected test service call")
@@ -167,13 +172,28 @@ const layer = (state: State) =>
           removeItemLabel: () => unavailable,
           listPullRequestsForCommit: () => Effect.succeed([state.summary]),
           listPullRequestReviews: () => Effect.succeed(state.reviews),
-          getFileContent: () => Effect.succeed(state.content),
+          getFileContent: () =>
+            Effect.sync(() => {
+              state.contentCalls++
+              return state.content
+            }),
           listRequiredChecks: () => Effect.succeed(state.requiredChecks),
           listCheckRuns: () => Effect.succeed(state.checkRuns),
           listCommitStatuses: () => Effect.succeed(state.statuses),
         }),
+        Layer.succeed(GitHubAppAuth, {
+          appId: 999,
+          getInstallationToken: () => unavailable,
+        }),
         Layer.succeed(GitHubPullRequest, {
-          resolveRepository: () => Effect.succeed(repository),
+          resolveRepository: () =>
+            state.repositoryConfigured
+              ? Effect.succeed(repository)
+              : Effect.fail(
+                  new RepositoryNotConfigured({
+                    repository: repository.slug,
+                  }),
+                ),
           resolveWebhook: () => unavailable,
           getEvidence: () => unavailable,
           getLabels: () => Effect.succeed(new Set(state.labels)),
@@ -219,7 +239,6 @@ const layer = (state: State) =>
         }),
       ),
     ),
-    Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({}))),
   )
 
 const run = (
@@ -251,6 +270,28 @@ describe("ReadyForReview", () => {
     state.files = []
     return Effect.gen(function* () {
       yield* run(state)
+      expect(state.labelCalls).toEqual([])
+    })
+  })
+
+  it.effect("stops reading changesets after the first valid one", () => {
+    const state = initialState()
+    state.files = [
+      { filename: ".changeset/first.md", status: "added" },
+      { filename: ".changeset/second.md", status: "added" },
+    ]
+    return Effect.gen(function* () {
+      yield* run(state)
+      expect(state.contentCalls).toBe(1)
+    })
+  })
+
+  it.effect("skips events for repositories that are not configured", () => {
+    const state = initialState()
+    state.repositoryConfigured = false
+    return Effect.gen(function* () {
+      yield* run(state)
+      expect(state.evidenceCalls).toBe(0)
       expect(state.labelCalls).toEqual([])
     })
   })

@@ -14,6 +14,10 @@ when its latest check run concludes `success`, `neutral`, or `skipped`, or when
 its legacy commit status is `success`. Queued, in-progress, pending, missing,
 cancelled, and failing checks are not passing. A required check owned by
 SlopCop's configured `GITHUB_APP_ID` is excluded to prevent a self-deadlock.
+The effective-rules endpoint covers ruleset-derived requirements; SlopCop does
+not currently query classic branch protection. Do not enable this rule for a
+repository whose required checks are configured only through classic branch
+protection.
 
 Configure this through the labeling-rules HTTP API with:
 

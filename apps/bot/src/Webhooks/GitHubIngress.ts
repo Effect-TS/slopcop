@@ -128,7 +128,10 @@ export const handleGitHubWebhook = <R>(
     )({ id: deliveryId, name: eventName, payload }).pipe(
       Effect.catch((cause) =>
         Effect.annotateLogs(
-          Effect.logError("Ignored malformed GitHub webhook event", cause),
+          Effect.logDebug(
+            "Ignored GitHub webhook event outside supported schema",
+            cause,
+          ),
           { id: deliveryId, event: eventName },
         ).pipe(Effect.as(undefined)),
       ),

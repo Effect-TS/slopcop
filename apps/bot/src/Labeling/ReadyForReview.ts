@@ -2,14 +2,15 @@ import * as GitHubEvent from "@slopcop/domain/GitHub/GitHubEvent"
 import type * as DomainGitHubPullRequest from "@slopcop/domain/GitHub/GitHubPullRequest"
 import * as GitHubWebhookEvent from "@slopcop/domain/GitHub/GitHubWebhookEvent"
 import * as LabelingDecision from "@slopcop/domain/Labeling/LabelingDecision"
-import * as Config from "effect/Config"
 import * as Context from "effect/Context"
 import * as Data from "effect/Data"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
+import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
 import * as Stream from "effect/Stream"
 import { parseDocument } from "yaml"
+import { GitHubAppAuth } from "../GitHub/GitHubAppAuth.ts"
 import {
   type CheckRun,
   type CommitStatus,
@@ -172,12 +173,7 @@ export class ReadyForReview extends Context.Service<
     const pullRequests = yield* GitHubPullRequest
     const rules = yield* LabelingRules
     const decisions = yield* LabelingDecisionsRepo
-    const configuredAppId = yield* Config.option(Config.string("GITHUB_APP_ID"))
-    const parsedAppId =
-      configuredAppId._tag === "Some"
-        ? Number(configuredAppId.value)
-        : Number.NaN
-    const ownAppId = Number.isSafeInteger(parsedAppId) ? parsedAppId : null
+    const { appId: ownAppId } = yield* GitHubAppAuth
 
     const hasValidChangeset = Effect.fn("ReadyForReview.hasValidChangeset")(
       function* (
@@ -189,21 +185,18 @@ export class ReadyForReview extends Context.Service<
             file.status === "added" && isChangesetCandidate(file.filename),
         )
         return yield* Stream.fromIterable(candidates).pipe(
-          Stream.mapEffect(
-            (file) =>
-              github
-                .getFileContent(
-                  pullRequest.repository,
-                  file.filename,
-                  pullRequest.headSha,
-                )
-                .pipe(Effect.map(isValidChangesetContent)),
-            { concurrency: 4 },
+          Stream.rechunk(1),
+          Stream.filterEffect((file) =>
+            github
+              .getFileContent(
+                pullRequest.repository,
+                file.filename,
+                pullRequest.headSha,
+              )
+              .pipe(Effect.map(isValidChangesetContent)),
           ),
-          Stream.runFold(
-            () => false,
-            (valid, next) => valid || next,
-          ),
+          Stream.runHead,
+          Effect.map(Option.isSome),
         )
       },
     )
@@ -337,10 +330,19 @@ export class ReadyForReview extends Context.Service<
     ) {
       const source = eventSource(event)
       if (source === null) return
-      const repository = yield* pullRequests.resolveRepository(
-        source.repository,
-        source.installation,
-      )
+      const repository = yield* pullRequests
+        .resolveRepository(source.repository, source.installation)
+        .pipe(
+          Effect.catchTag("RepositoryNotConfigured", (error) =>
+            Effect.annotateLogs(
+              Effect.logInfo(
+                "Skipped ready-for-review event for unconfigured repository",
+              ),
+              { deliveryId: event.id, repository: error.repository },
+            ).pipe(Effect.as(null)),
+          ),
+        )
+      if (repository === null) return
       const candidates = yield* github.listPullRequestsForCommit(
         repository,
         source.sha,
@@ -375,6 +377,7 @@ export class ReadyForReview extends Context.Service<
   static readonly layerNoDeps = Layer.effect(this, this.make)
   static readonly layer = this.layerNoDeps.pipe(
     Layer.provide([
+      GitHubAppAuth.layer,
       GitHubClient.layer,
       GitHubPullRequest.layer,
       LabelingRules.layer,
