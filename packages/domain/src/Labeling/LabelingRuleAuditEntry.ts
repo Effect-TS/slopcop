@@ -6,6 +6,7 @@ import {
   LabelingRuleExclusiveGroup,
   LabelingRuleId,
   LabelingRuleInstructions,
+  LabelingRuleKind,
   LabelingRuleMode,
   LabelingRuleValidationStatus,
 } from "./LabelingRule.ts"
@@ -26,6 +27,7 @@ export const LabelingRuleAuditValue = Schema.Struct({
   id: LabelingRuleId,
   repositoryId: GitHubRepositoryId,
   label: GitHubLabel.GitHubLabelName,
+  kind: Schema.optionalKey(LabelingRuleKind),
   instructions: LabelingRuleInstructions,
   mode: LabelingRuleMode,
   exclusiveGroup: LabelingRuleExclusiveGroup,

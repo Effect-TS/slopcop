@@ -35,6 +35,13 @@ export class LabelingDecisionsRepo extends Context.Service<
       Result: LabelingDecision.LabelingDecision.select,
       execute: (decision) => sql`
         INSERT INTO "labeling_decisions" ${sql.insert(decision)}
+        ON CONFLICT (
+          "delivery_id",
+          "repository_id",
+          "subject_type",
+          "subject_number",
+          "prompt_version"
+        ) DO UPDATE SET "id" = "labeling_decisions"."id"
         RETURNING *
       `,
     })

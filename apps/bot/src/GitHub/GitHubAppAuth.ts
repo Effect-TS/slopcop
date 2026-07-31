@@ -37,13 +37,17 @@ interface CachedInstallationToken {
 export class GitHubAppAuth extends Context.Service<
   GitHubAppAuth,
   {
+    readonly appId: number
     readonly getInstallationToken: (
       installationId: GitHubRepository.GitHubInstallationId,
     ) => Effect.Effect<Redacted.Redacted<string>, GitHubAppAuthError>
   }
 >()("@slopcop/bot/GitHub/GitHubAppAuth", {
   make: Effect.gen(function* () {
-    const appId = yield* Config.redacted("GITHUB_APP_ID")
+    const appId = yield* Config.schema(
+      Schema.Int.check(Schema.isGreaterThan(0)),
+      "GITHUB_APP_ID",
+    )
     const privateKeyBase64 = yield* Config.redacted(
       "GITHUB_APP_PRIVATE_KEY_BASE64",
     )
@@ -84,7 +88,7 @@ export class GitHubAppAuth extends Context.Service<
           encodeJwtPayload({
             iat: nowSeconds - 60,
             exp: nowSeconds + 540,
-            iss: Redacted.value(appId),
+            iss: String(appId),
           }),
         ),
       )
@@ -197,7 +201,7 @@ export class GitHubAppAuth extends Context.Service<
       )
     })
 
-    return { getInstallationToken }
+    return { appId, getInstallationToken }
   }),
 }) {
   static readonly layerNoDeps = Layer.effect(this, this.make)

@@ -65,11 +65,26 @@ export const PullRequestEdited = Schema.Struct({
 })
 export type PullRequestEdited = typeof PullRequestEdited.Type
 
+export const PullRequestReadyForReview = Schema.Struct({
+  ...BasePullRequestPayload.fields,
+  action: Schema.Literal("ready_for_review"),
+})
+export type PullRequestReadyForReview = typeof PullRequestReadyForReview.Type
+
+export const PullRequestConvertedToDraft = Schema.Struct({
+  ...BasePullRequestPayload.fields,
+  action: Schema.Literal("converted_to_draft"),
+})
+export type PullRequestConvertedToDraft =
+  typeof PullRequestConvertedToDraft.Type
+
 export const PullRequestWebhookPayload = Schema.Union([
   PullRequestOpened,
   PullRequestReopened,
   PullRequestSynchronized,
   PullRequestEdited,
+  PullRequestReadyForReview,
+  PullRequestConvertedToDraft,
 ])
   .annotate({ message: "Unsupported or malformed pull request webhook action" })
   .pipe(Schema.toTaggedUnion("action"))
