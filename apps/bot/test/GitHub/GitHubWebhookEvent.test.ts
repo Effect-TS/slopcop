@@ -10,6 +10,41 @@ const decodeResult = Schema.decodeUnknownResult(
 )
 
 describe("GitHubWebhookEvent", () => {
+  it.each([
+    {
+      name: "check_suite",
+      payload: {
+        action: "completed",
+        check_suite: { head_sha: "abc123" },
+      },
+    },
+    {
+      name: "check_run",
+      payload: {
+        action: "completed",
+        check_run: { head_sha: "abc123" },
+      },
+    },
+    {
+      name: "status",
+      payload: { sha: "abc123", state: "success" },
+    },
+  ])("decodes $name events", ({ name, payload }) => {
+    expect(
+      Option.isSome(
+        decode({
+          id: "delivery-1",
+          name,
+          payload: {
+            ...payload,
+            repository: { id: 2, full_name: "Effect-TS/effect" },
+            installation: { id: 3 },
+          },
+        }),
+      ),
+    ).toBe(true)
+  })
+
   it("normalizes GitHub repository and installation IDs to strings", () => {
     const event = Schema.decodeUnknownSync(
       GitHubWebhookEvent.GitHubWebhookEvent,

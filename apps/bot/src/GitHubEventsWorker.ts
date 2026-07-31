@@ -5,6 +5,7 @@ import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse"
 import { GitHubEventProcessors } from "./GitHub/GitHubEventProcessors.ts"
 import { GitHubEventsConsumerLayer } from "./GitHub/GitHubEvents.ts"
 import { PullRequestLabelingProcessorLayer } from "./Labeling/PullRequestLabelingProcessor.ts"
+import { ReadyForReviewProcessorLayer } from "./Labeling/ReadyForReviewProcessor.ts"
 import { DatabaseLayer } from "./Sql.ts"
 
 export default Cloudflare.Worker(
@@ -17,7 +18,10 @@ export default Cloudflare.Worker(
   },
   Effect.gen(function* () {
     const MainLayer = GitHubEventsConsumerLayer.pipe(
-      Layer.provide(PullRequestLabelingProcessorLayer),
+      Layer.provide([
+        PullRequestLabelingProcessorLayer,
+        ReadyForReviewProcessorLayer,
+      ]),
       Layer.provide(GitHubEventProcessors.layer),
       Layer.provide(DatabaseLayer),
       Layer.orDie,

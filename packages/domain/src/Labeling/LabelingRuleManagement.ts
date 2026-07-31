@@ -5,6 +5,7 @@ import {
   LabelingRuleExclusiveGroup,
   LabelingRuleId,
   LabelingRuleInstructions,
+  LabelingRuleKind,
   LabelingRuleMode,
   LabelingRuleValidationStatus,
 } from "./LabelingRule.ts"
@@ -19,6 +20,7 @@ export const RulePath = Schema.Struct({
 export const PublicLabelingRule = Schema.Struct({
   id: LabelingRuleId,
   label: GitHubLabel.GitHubLabelName,
+  kind: LabelingRuleKind,
   instructions: LabelingRuleInstructions,
   mode: LabelingRuleMode,
   exclusiveGroup: LabelingRuleExclusiveGroup,
@@ -53,6 +55,7 @@ export const ValidateCandidateLabelResponse =
 
 export const CreateLabelingRuleRequest = Schema.Struct({
   label: GitHubLabel.GitHubLabelName,
+  kind: Schema.optionalKey(LabelingRuleKind),
   instructions: LabelingRuleInstructions,
   mode: LabelingRuleMode,
   exclusiveGroup: LabelingRuleExclusiveGroup,
@@ -63,6 +66,7 @@ export type CreateLabelingRuleRequest = typeof CreateLabelingRuleRequest.Type
 
 export const PatchLabelingRuleRequest = Schema.Struct({
   label: Schema.optionalKey(GitHubLabel.GitHubLabelName),
+  kind: Schema.optionalKey(LabelingRuleKind),
   instructions: Schema.optionalKey(LabelingRuleInstructions),
   mode: Schema.optionalKey(LabelingRuleMode),
   exclusiveGroup: Schema.optionalKey(LabelingRuleExclusiveGroup),

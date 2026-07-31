@@ -117,6 +117,13 @@ const boundFile = (
 export class GitHubPullRequest extends Context.Service<
   GitHubPullRequest,
   {
+    readonly resolveRepository: (
+      target: PullRequestWebhookEvent.Repository,
+      installation: PullRequestWebhookEvent.BasePullRequestPayload["installation"],
+    ) => Effect.Effect<
+      GitHubRepository.GitHubRepository,
+      ResolveGitHubPullRequestError
+    >
     readonly resolveWebhook: (
       event: PullRequestWebhookEvent.PullRequestWebhookEvent,
     ) => Effect.Effect<
@@ -148,9 +155,11 @@ export class GitHubPullRequest extends Context.Service<
     const repositories = yield* GitHubRepositoriesRepo
     const client = yield* GitHubClient
 
-    const resolveWebhook = Effect.fn("GitHubPullRequest.resolveWebhook")(
-      function* (event: PullRequestWebhookEvent.PullRequestWebhookEvent) {
-        const target = event.payload.repository
+    const resolveRepository = Effect.fn("GitHubPullRequest.resolveRepository")(
+      function* (
+        target: PullRequestWebhookEvent.Repository,
+        installation: PullRequestWebhookEvent.BasePullRequestPayload["installation"],
+      ) {
         const result = yield* repositories.findByGitHubId(target.id)
         if (Option.isNone(result) || !result.value.enabled) {
           return yield* new RepositoryNotConfigured({
@@ -159,11 +168,11 @@ export class GitHubPullRequest extends Context.Service<
         }
 
         const repository = result.value
-        if (repository.installationId !== event.payload.installation.id) {
+        if (repository.installationId !== installation.id) {
           return yield* new RepositoryInstallationMismatch({
             repository: repository.slug,
             expectedInstallationId: repository.installationId,
-            actualInstallationId: event.payload.installation.id,
+            actualInstallationId: installation.id,
           })
         }
 
@@ -178,7 +187,16 @@ export class GitHubPullRequest extends Context.Service<
             actual: target.slug,
           })
         }
+        return repository
+      },
+    )
 
+    const resolveWebhook = Effect.fn("GitHubPullRequest.resolveWebhook")(
+      function* (event: PullRequestWebhookEvent.PullRequestWebhookEvent) {
+        const repository = yield* resolveRepository(
+          event.payload.repository,
+          event.payload.installation,
+        )
         return {
           deliveryId: event.id,
           repository,
@@ -299,7 +317,13 @@ export class GitHubPullRequest extends Context.Service<
       return { added: additions, removed }
     })
 
-    return { resolveWebhook, getEvidence, getLabels, applyLabels }
+    return {
+      resolveRepository,
+      resolveWebhook,
+      getEvidence,
+      getLabels,
+      applyLabels,
+    }
   }),
 }) {
   static readonly layerNoDeps = Layer.effect(this, this.make)

@@ -45,7 +45,7 @@ const validationError = (message: string) =>
 
 const CHANGE_KIND_EXCLUSIVE_GROUP = "change-kind"
 
-const isChangesetsReleaseArtifact = (filename: string) =>
+export const isChangesetsReleaseArtifact = (filename: string) =>
   filename === ".changeset/pre.json" ||
   /^packages\/.+\/(?:CHANGELOG\.md|package\.json)$/.test(filename)
 
