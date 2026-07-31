@@ -29,6 +29,23 @@ describe("GitHubWebhookEvent", () => {
       name: "status",
       payload: { sha: "abc123", state: "success" },
     },
+    {
+      name: "pull_request_review",
+      payload: {
+        action: "submitted",
+        pull_request: {
+          id: 1,
+          node_id: "PR_1",
+          number: 42,
+          title: "Fix behavior",
+          body: null,
+          draft: false,
+          user: { login: "octocat" },
+          head: { sha: "abc123" },
+          base: { ref: "main" },
+        },
+      },
+    },
   ])("decodes $name events", ({ name, payload }) => {
     expect(
       Option.isSome(

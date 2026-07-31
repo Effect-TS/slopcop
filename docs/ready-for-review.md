@@ -5,7 +5,8 @@ GitHub label when a non-draft pull request:
 
 - has at least one valid added `.changeset/*.md` file; and
 - has passing results for every status check required by the rules applying to
-  the pull request's base branch.
+  the pull request's base branch; and
+- has no reviewer's latest decisive review requesting changes.
 
 The rule reads the effective repository rules for the base branch instead of
 treating optional or advisory jobs as required. A required check is passing
@@ -20,7 +21,7 @@ Configure this through the labeling-rules HTTP API with:
 {
   "label": "ready for review",
   "kind": "ready-for-review",
-  "instructions": "All required checks pass and a valid changeset is present.",
+  "instructions": "Required checks pass, a valid changeset is present, and no reviewer requests changes.",
   "mode": "reconcile",
   "exclusiveGroup": null,
   "enabled": true
@@ -28,8 +29,8 @@ Configure this through the labeling-rules HTTP API with:
 ```
 
 As with AI rules, the label must already exist in GitHub before the API will
-enable the rule. As of 2026-07-31, `Effect-TS/effect` does not have a label named
-`ready for review`; create it there before adding this configuration.
+enable the rule. `Effect-TS/effect` has the exact `ready for review` label, so it
+can be selected when adding this configuration.
 
 ## GitHub App configuration
 
@@ -47,16 +48,16 @@ Subscribe the App to:
 - Check run
 - Check suite
 - Pull request
+- Pull request review
 - Status
 
 After changing permissions or subscriptions, each installation must accept the
 new permissions. SlopCop cannot make these GitHub App registration changes at
 deploy time.
 
-The rule removes its label when a PR is converted back to draft. Review
-approvals and change requests are deliberately not inputs: the Effect
-repository's active merge rules do not require approving reviews, and this
-policy is limited to required CI plus Changesets validity.
+The rule removes its label when a PR is converted back to draft or a reviewer's
+latest decisive review requests changes. A later approval by that reviewer or
+dismissal of the change-request review clears the review block.
 
 Reconciliation uses the configured label as bot-owned state. GitHub's current
 label API and the decision log cannot distinguish a maintainer removing and

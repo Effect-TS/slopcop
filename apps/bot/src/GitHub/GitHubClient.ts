@@ -28,6 +28,7 @@ const GitHubClientOperation = Schema.Literals([
   "GitHubClient.addItemLabels",
   "GitHubClient.removeItemLabel",
   "GitHubClient.listPullRequestsForCommit",
+  "GitHubClient.listPullRequestReviews",
   "GitHubClient.getFileContent",
   "GitHubClient.listRequiredChecks",
   "GitHubClient.listCheckRuns",
@@ -80,6 +81,17 @@ export interface CheckRun {
 export interface CommitStatus {
   readonly context: string
   readonly state: "error" | "failure" | "pending" | "success"
+}
+
+export interface PullRequestReview {
+  readonly id: number
+  readonly reviewer: string
+  readonly state:
+    | "APPROVED"
+    | "CHANGES_REQUESTED"
+    | "COMMENTED"
+    | "DISMISSED"
+    | "PENDING"
 }
 
 const RequiredRules = Schema.Array(
@@ -136,6 +148,20 @@ const FileContentResponse = Schema.Struct({
   content: Schema.String,
 })
 
+const PullRequestReviewsResponse = Schema.Array(
+  Schema.Struct({
+    id: Schema.Finite,
+    user: Schema.NullOr(Schema.Struct({ login: Schema.String })),
+    state: Schema.Literals([
+      "APPROVED",
+      "CHANGES_REQUESTED",
+      "COMMENTED",
+      "DISMISSED",
+      "PENDING",
+    ]),
+  }),
+)
+
 export class GitHubClient extends Context.Service<
   GitHubClient,
   {
@@ -177,6 +203,10 @@ export class GitHubClient extends Context.Service<
       repository: GitHubRepository.GitHubRepository,
       sha: string,
     ) => Effect.Effect<ReadonlyArray<PullRequestSummary>, GitHubClientError>
+    readonly listPullRequestReviews: (
+      repository: GitHubRepository.GitHubRepository,
+      number: number,
+    ) => Effect.Effect<ReadonlyArray<PullRequestReview>, GitHubClientError>
     readonly getFileContent: (
       repository: GitHubRepository.GitHubRepository,
       path: string,
@@ -220,6 +250,9 @@ export class GitHubClient extends Context.Service<
     )
     const decodePullRequestSummaries = HttpClientResponse.schemaBodyJson(
       Schema.Array(PullRequestSummary),
+    )
+    const decodePullRequestReviews = HttpClientResponse.schemaBodyJson(
+      PullRequestReviewsResponse,
     )
     const decodeRequiredRules = HttpClientResponse.schemaBodyJson(RequiredRules)
     const decodeCheckRuns = HttpClientResponse.schemaBodyJson(CheckRunsResponse)
@@ -471,6 +504,43 @@ export class GitHubClient extends Context.Service<
       )
     })
 
+    const listPullRequestReviews = Effect.fn(
+      "GitHubClient.listPullRequestReviews",
+    )(function* (
+      repository: GitHubRepository.GitHubRepository,
+      number: number,
+    ) {
+      return yield* Stream.paginate(1, (pageNumber) =>
+        Effect.gen(function* () {
+          const operation = "GitHubClient.listPullRequestReviews"
+          const response = yield* execute(
+            repository,
+            operation,
+            HttpClientRequest.get(
+              `${GITHUB_API_URL}${repositoryPath(repository)}/pulls/${number}/reviews`,
+            ).pipe(
+              HttpClientRequest.setUrlParams({
+                per_page: PAGE_SIZE,
+                page: pageNumber,
+              }),
+            ),
+          )
+          yield* requireStatus(operation, response, 200)
+          const reviews = yield* decodePullRequestReviews(response).pipe(
+            mapResponseDecodeError(operation, response),
+          )
+          return [
+            reviews.map((review) => ({
+              id: review.id,
+              reviewer: review.user?.login ?? `deleted:${review.id}`,
+              state: review.state,
+            })),
+            nextPage(pageNumber, response),
+          ] as const
+        }),
+      ).pipe(Stream.runCollect)
+    })
+
     const getFileContent = Effect.fn("GitHubClient.getFileContent")(function* (
       repository: GitHubRepository.GitHubRepository,
       path: string,
@@ -597,6 +667,7 @@ export class GitHubClient extends Context.Service<
       addItemLabels,
       removeItemLabel,
       listPullRequestsForCommit,
+      listPullRequestReviews,
       getFileContent,
       listRequiredChecks,
       listCheckRuns,

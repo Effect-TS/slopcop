@@ -14,7 +14,13 @@ export const ReadyForReviewProcessorLayerNoDeps = Layer.effectDiscard(
     const readyForReview = yield* ReadyForReview
     yield* registry.register({
       id: PROCESSOR_ID,
-      events: ["pull_request", "check_suite", "check_run", "status"],
+      events: [
+        "pull_request",
+        "pull_request_review",
+        "check_suite",
+        "check_run",
+        "status",
+      ],
       accepts: (event) =>
         event.name !== "pull_request" ||
         event.payload.action === "opened" ||

@@ -13,11 +13,13 @@ import {
   type CheckRun,
   type CommitStatus,
   GitHubClient,
+  type PullRequestReview,
   type PullRequestSummary,
   type RequiredCheck,
 } from "../../src/GitHub/GitHubClient.ts"
 import { GitHubPullRequest } from "../../src/GitHub/GitHubPullRequest.ts"
 import {
+  hasChangesRequested,
   isValidChangesetContent,
   ReadyForReview,
   requiredChecksPass,
@@ -70,6 +72,29 @@ const event = Schema.decodeUnknownSync(GitHubWebhookEvent.GitHubWebhookEvent)({
   },
 })
 
+const reviewEvent = Schema.decodeUnknownSync(
+  GitHubWebhookEvent.GitHubWebhookEvent,
+)({
+  id: "review-delivery-1",
+  name: "pull_request_review",
+  payload: {
+    action: "submitted",
+    pull_request: {
+      id: 1,
+      node_id: "PR_1",
+      number: 42,
+      title: "Add behavior",
+      body: null,
+      draft: false,
+      user: { login: "octocat" },
+      head: { sha: "current-sha" },
+      base: { ref: "main" },
+    },
+    repository: { id: 2, full_name: "Effect-TS/effect" },
+    installation: { id: 3 },
+  },
+})
+
 const validChangeset = `---
 "effect": minor
 ---
@@ -87,6 +112,7 @@ interface State {
   requiredChecks: ReadonlyArray<RequiredCheck>
   checkRuns: ReadonlyArray<CheckRun>
   statuses: ReadonlyArray<CommitStatus>
+  reviews: ReadonlyArray<PullRequestReview>
   labels: Set<string>
   labelCalls: Array<{
     add: ReadonlyArray<string>
@@ -116,6 +142,7 @@ const initialState = (): State => ({
     },
   ],
   statuses: [],
+  reviews: [],
   labels: new Set(),
   labelCalls: [],
   evidenceCalls: 0,
@@ -139,6 +166,7 @@ const layer = (state: State) =>
           addItemLabels: () => unavailable,
           removeItemLabel: () => unavailable,
           listPullRequestsForCommit: () => Effect.succeed([state.summary]),
+          listPullRequestReviews: () => Effect.succeed(state.reviews),
           getFileContent: () => Effect.succeed(state.content),
           listRequiredChecks: () => Effect.succeed(state.requiredChecks),
           listCheckRuns: () => Effect.succeed(state.checkRuns),
@@ -194,10 +222,13 @@ const layer = (state: State) =>
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({}))),
   )
 
-const run = (state: State) =>
+const run = (
+  state: State,
+  triggeringEvent: GitHubWebhookEvent.GitHubWebhookEvent = event,
+) =>
   Effect.gen(function* () {
     const ready = yield* ReadyForReview
-    yield* ready.process(event)
+    yield* ready.process(triggeringEvent)
   }).pipe(Effect.provide(layer(state)))
 
 describe("ReadyForReview", () => {
@@ -244,6 +275,24 @@ describe("ReadyForReview", () => {
     return Effect.gen(function* () {
       yield* run(state)
       expect(state.labelCalls).toEqual([])
+    })
+  })
+
+  it.effect("removes the label as soon as a review requests changes", () => {
+    const state = initialState()
+    state.labels.add("ready for review")
+    state.reviews = [
+      {
+        id: 1,
+        reviewer: "contributor",
+        state: "CHANGES_REQUESTED",
+      },
+    ]
+    return Effect.gen(function* () {
+      yield* run(state, reviewEvent)
+      expect(state.labelCalls).toEqual([
+        { add: [], remove: ["ready for review"] },
+      ])
     })
   })
 
@@ -316,6 +365,46 @@ describe("ReadyForReview", () => {
 })
 
 describe("ready-for-review policy", () => {
+  it("uses each reviewer's latest decisive review state", () => {
+    expect(
+      hasChangesRequested([
+        {
+          id: 1,
+          reviewer: "contributor",
+          state: "CHANGES_REQUESTED",
+        },
+        {
+          id: 2,
+          reviewer: "contributor",
+          state: "COMMENTED",
+        },
+      ]),
+    ).toBe(true)
+    expect(
+      hasChangesRequested([
+        {
+          id: 1,
+          reviewer: "contributor",
+          state: "CHANGES_REQUESTED",
+        },
+        {
+          id: 2,
+          reviewer: "contributor",
+          state: "APPROVED",
+        },
+      ]),
+    ).toBe(false)
+    expect(
+      hasChangesRequested([
+        {
+          id: 1,
+          reviewer: "contributor",
+          state: "DISMISSED",
+        },
+      ]),
+    ).toBe(false)
+  })
+
   it("treats neutral and skipped conclusions as passing", () => {
     expect(
       requiredChecksPass({

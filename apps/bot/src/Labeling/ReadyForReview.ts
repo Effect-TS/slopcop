@@ -14,6 +14,7 @@ import {
   type CheckRun,
   type CommitStatus,
   GitHubClient,
+  type PullRequestReview,
   type PullRequestSummary,
   type RequiredCheck,
 } from "../GitHub/GitHubClient.ts"
@@ -60,6 +61,19 @@ export const requiredChecksPass = (input: {
         )
       )
     })
+
+export const hasChangesRequested = (
+  reviews: ReadonlyArray<PullRequestReview>,
+) => {
+  const latestByReviewer = new Map<string, PullRequestReview["state"]>()
+  for (const review of [...reviews].sort((left, right) => left.id - right.id)) {
+    if (review.state === "COMMENTED" || review.state === "PENDING") continue
+    latestByReviewer.set(review.reviewer.toLowerCase(), review.state)
+  }
+  return [...latestByReviewer.values()].some(
+    (state) => state === "CHANGES_REQUESTED",
+  )
+}
 
 const CHANGESET_PATH = /^\.changeset\/[^/]+\.md$/
 
@@ -111,6 +125,13 @@ const eventSource = (event: GitHubWebhookEvent.GitHubWebhookEvent) => {
         installation: event.payload.installation,
         sha: event.payload.pull_request.head.sha,
         number: event.payload.number,
+      }
+    case "pull_request_review":
+      return {
+        repository: event.payload.repository,
+        installation: event.payload.installation,
+        sha: event.payload.pull_request.head.sha,
+        number: event.payload.pull_request.number,
       }
     case "check_suite":
       return {
@@ -259,10 +280,19 @@ export class ReadyForReview extends Context.Service<
           !summary.draft &&
           files !== null &&
           (yield* Effect.all(
-            [hasValidChangeset(pullRequest, files), checksPass(pullRequest)],
-            { concurrency: 2 },
+            [
+              hasValidChangeset(pullRequest, files),
+              checksPass(pullRequest),
+              github
+                .listPullRequestReviews(repository, summary.number)
+                .pipe(Effect.map((reviews) => !hasChangesRequested(reviews))),
+            ],
+            { concurrency: 3 },
           ).pipe(
-            Effect.map(([validChangeset, green]) => validChangeset && green),
+            Effect.map(
+              ([validChangeset, green, reviewsClear]) =>
+                validChangeset && green && reviewsClear,
+            ),
           ))
 
         const currentLabels = yield* pullRequests.getLabels(pullRequest)
@@ -294,7 +324,7 @@ export class ReadyForReview extends Context.Service<
             selectedRuleIds: selectedRules.map((rule) => rule.id),
             selectedLabels: selectedRules.map((rule) => rule.label),
             model: "deterministic",
-            promptVersion: "ready-for-review-v1",
+            promptVersion: "ready-for-review-v2",
             labelsAdded: applied.added,
             labelsRemoved: applied.removed,
           }),
