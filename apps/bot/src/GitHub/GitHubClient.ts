@@ -566,46 +566,47 @@ export class GitHubClient extends Context.Service<
       )
     })
 
-    const listRequiredChecks = Effect.fn("GitHubClient.listRequiredChecks")(
-      function* (
-        repository: GitHubRepository.GitHubRepository,
-        branch: string,
-      ) {
-        return yield* Stream.paginate(1, (pageNumber) =>
-          Effect.gen(function* () {
-            const operation = "GitHubClient.listRequiredChecks"
-            const response = yield* execute(
-              repository,
-              operation,
-              HttpClientRequest.get(
-                `${GITHUB_API_URL}${repositoryPath(repository)}/rules/branches/${encodeURIComponent(branch)}`,
-              ).pipe(
-                HttpClientRequest.setUrlParams({
-                  per_page: PAGE_SIZE,
-                  page: pageNumber,
-                }),
-              ),
-            )
-            yield* requireStatus(operation, response, 200)
-            const rules = yield* decodeRequiredRules(response).pipe(
-              mapResponseDecodeError(operation, response),
-            )
-            return [
-              rules.flatMap((rule) =>
-                rule.type !== "required_status_checks" ||
-                rule.parameters === undefined
-                  ? []
-                  : rule.parameters.required_status_checks.map((check) => ({
-                      context: check.context,
-                      integrationId: check.integration_id ?? null,
-                    })),
-              ),
-              nextPage(pageNumber, response),
-            ] as const
-          }),
-        ).pipe(Stream.runCollect)
-      },
-    )
+    const listRequiredChecks = (
+      repository: GitHubRepository.GitHubRepository,
+      branch: string,
+    ) =>
+      Stream.paginate(
+        1,
+        Effect.fnUntraced(function* (pageNumber) {
+          const operation = "GitHubClient.listRequiredChecks"
+          const response = yield* execute(
+            repository,
+            operation,
+            HttpClientRequest.get(
+              `${GITHUB_API_URL}${repositoryPath(repository)}/rules/branches/${encodeURIComponent(branch)}`,
+            ).pipe(
+              HttpClientRequest.setUrlParams({
+                per_page: PAGE_SIZE,
+                page: pageNumber,
+              }),
+            ),
+          )
+          yield* requireStatus(operation, response, 200)
+          const rules = yield* decodeRequiredRules(response).pipe(
+            mapResponseDecodeError(operation, response),
+          )
+          return [
+            rules.flatMap((rule) =>
+              rule.type !== "required_status_checks" ||
+              rule.parameters === undefined
+                ? []
+                : rule.parameters.required_status_checks.map((check) => ({
+                    context: check.context,
+                    integrationId: check.integration_id ?? null,
+                  })),
+            ),
+            nextPage(pageNumber, response),
+          ] as const
+        }),
+      ).pipe(
+        Stream.runCollect,
+        Effect.withSpan("GitHubClient.listRequiredChecks"),
+      )
 
     const listCheckRuns = Effect.fn("GitHubClient.listCheckRuns")(function* (
       repository: GitHubRepository.GitHubRepository,
