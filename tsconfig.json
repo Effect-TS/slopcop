@@ -22,7 +22,9 @@
       "@slopcop/api": ["./packages/api/src/index.ts"],
       "@slopcop/api/*": ["./packages/api/src/*"],
       "@slopcop/domain": ["./packages/domain/src/index.ts"],
-      "@slopcop/domain/*": ["./packages/domain/src/*"]
+      "@slopcop/domain/*": ["./packages/domain/src/*"],
+      "@slopcop/ui": ["./packages/ui/src/index.ts"],
+      "@slopcop/ui/*": ["./packages/ui/src/*"]
     },
     "plugins": [
       {
