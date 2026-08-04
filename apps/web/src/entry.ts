@@ -1,23 +1,43 @@
-import { Runtime } from "foldkit"
+import * as Effect from "effect/Effect"
+import * as BrowserKeyValueStore from "@effect/platform-browser/BrowserKeyValueStore"
+import * as Layer from "effect/Layer"
+import * as Runtime from "foldkit/runtime"
 
 import { overlay } from "@foldkit/devtools"
 
-import { init } from "./main"
-import { ChangedUrl, ClickedLink, Message } from "./message"
-import { Model } from "./model"
-import { update } from "./update"
-import { view } from "./view"
-
-const application = Runtime.makeApplication({
+import {
+  type AppResources,
+  Flags,
+  Message,
   Model,
+  init,
+  flags,
+  subscriptions,
+  update,
+  view,
+} from "./main"
+import { ApiClient } from "./api-client"
+
+const AppLayer = Layer.mergeAll(
+  BrowserKeyValueStore.layerLocalStorage,
+  ApiClient.layer,
+)
+
+const application = Runtime.makeApplication<
+  Model,
+  Message,
+  Flags,
+  AppResources
+>({
+  Model,
+  Flags,
+  flags: Effect.provide(flags, AppLayer),
   init,
   update,
   view,
+  subscriptions,
+  resources: AppLayer,
   container: document.getElementById("root"),
-  routing: {
-    onUrlRequest: (request) => ClickedLink({ request }),
-    onUrlChange: (url) => ChangedUrl({ url }),
-  },
   devTools: {
     overlay,
     Message,

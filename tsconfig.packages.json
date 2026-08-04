@@ -3,9 +3,15 @@
   "extends": "./tsconfig.base.json",
   "include": [],
   "references": [
-    { "path": "apps/bot" },
+    { "path": "apps/api" },
+    { "path": "apps/github-events" },
+    { "path": "apps/webhook-ingress" },
     { "path": "apps/web" },
     { "path": "packages/api" },
-    { "path": "packages/domain" }
+    { "path": "packages/domain" },
+    { "path": "packages/github" },
+    { "path": "packages/infra" },
+    { "path": "packages/labeling" },
+    { "path": "packages/ui" }
   ]
 }

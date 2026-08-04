@@ -4,7 +4,11 @@
     "foldkit": {
       "enabled": true,
       "type": "local",
-      "command": ["pnpm", "exec", "foldkit-devtools-mcp"]
+      "command": [
+        "pnpm",
+        "exec",
+        "foldkit-devtools-mcp"
+      ]
     }
   },
   "references": {

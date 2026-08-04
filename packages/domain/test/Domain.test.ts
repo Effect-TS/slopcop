@@ -3,6 +3,7 @@ import * as GitHubAppAuth from "@slopcop/domain/GitHub/GitHubAppAuth"
 import * as GitHubEvent from "@slopcop/domain/GitHub/GitHubEvent"
 import * as GitHubLabel from "@slopcop/domain/GitHub/GitHubLabel"
 import * as GitHubWebhookEvent from "@slopcop/domain/GitHub/GitHubWebhookEvent"
+import * as RepositoryManagement from "@slopcop/domain/GitHub/RepositoryManagement"
 import * as LabelClassification from "@slopcop/domain/Labeling/LabelClassification"
 import * as Option from "effect/Option"
 import { describe, expect, it } from "vite-plus/test"
@@ -63,6 +64,22 @@ describe("domain schemas", () => {
         rationale: "Matches the configured rule.",
       }),
     ).toBe(false)
+  })
+
+  it("encodes repository summaries without internal identities", () => {
+    expect(
+      Schema.encodeSync(RepositoryManagement.RepositorySummary)({
+        owner: "Effect-TS",
+        repo: "effect",
+        isPrivate: false,
+        enabled: true,
+      }),
+    ).toEqual({
+      owner: "Effect-TS",
+      repo: "effect",
+      isPrivate: false,
+      enabled: true,
+    })
   })
 
   it("accepts edited pull request events with an installation id", () => {

@@ -12,13 +12,17 @@
         );
     in
     {
-      formatter = forAllSystems (pkgs: pkgs.alejandra);
+      formatter = forAllSystems (pkgs: pkgs.nixfmt-tree);
       devShells = forAllSystems (pkgs: {
-        default = pkgs.mkShell {
+        default = pkgs.mkShellNoCC {
           packages = with pkgs; [
+            cloudflared
             (corepack.override { nodejs-slim = nodejs-slim_26; })
             nodejs_26
+            playwright-driver.browsers
           ];
+          PLAYWRIGHT_BROWSERS_PATH = pkgs.playwright-driver.browsers;
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = true;
         };
       });
     };

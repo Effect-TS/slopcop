@@ -1,39 +1,59 @@
 import * as Alchemy from "alchemy"
 import * as Cloudflare from "alchemy/Cloudflare"
+import * as Command from "alchemy/Command"
+import * as Output from "alchemy/Output"
+import { adopt } from "alchemy/AdoptPolicy"
 import * as Effect from "effect/Effect"
 import * as Config from "effect/Config"
+import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
-import Worker from "./apps/bot/src/Worker.ts"
-import GitHubEventsWorker from "./apps/bot/src/GitHubEventsWorker.ts"
-import { WebhookWorker } from "./apps/bot/src/WebhookWorker.ts"
-import { D1Database } from "./apps/bot/src/Sql.ts"
-import {
-  GitHubEventsQueue,
-  GitHubEventsDeadLetterQueue,
-} from "./apps/bot/src/GitHub/GitHubEventQueue.ts"
+import { makeWorker } from "./apps/api/src/Worker.ts"
+import { makeGitHubEventsWorker } from "./apps/github-events/src/Worker.ts"
+import { WebhookWorker } from "./apps/webhook-ingress/src/Worker.ts"
+import { makeD1Database } from "./packages/infra/src/Sql.ts"
+import * as CloudflareResourceNames from "./packages/infra/src/CloudflareResourceNames.ts"
+import { makeGitHubEventQueueResources } from "./packages/infra/src/GitHubEventQueueResources.ts"
 
 const State = Cloudflare.state()
 const CLOUDFLARE_ACCESS_ISSUER = "https://effectful.cloudflareaccess.com"
+const DEV_TUNNEL_ZONE_NAME = "effectful.co"
+const DEV_TUNNEL_HOSTNAME_SUFFIX = "slopcop.effectful.co"
+const DEV_WEBHOOK_PORT = 8788
+
+const makeDevHostnameLabel = (value: string) => {
+  const label = value.toLowerCase().replace(/[^a-z0-9-]+/g, "-")
+  const trimmed = label.replace(/^-+|-+$/g, "")
+  return trimmed === "" ? "local" : trimmed
+}
 
 export default Alchemy.Stack(
   "SlopCop",
   {
-    providers: Cloudflare.providers(),
+    providers: Layer.mergeAll(Cloudflare.providers(), Command.providers()),
     state: State,
   },
   Effect.gen(function* () {
-    const appHostname = yield* Config.option(
+    const { dev } = yield* Alchemy.AlchemyContext
+    const stage = yield* Alchemy.Stage
+    const resourceNames = CloudflareResourceNames.make({ dev, stage })
+    const configuredAppHostname = yield* Config.option(
       Config.string("SLOPCOP_APP_HOSTNAME"),
     )
-    const webhookHostname = yield* Config.option(
+    const configuredWebhookHostname = yield* Config.option(
       Config.string("SLOPCOP_WEBHOOK_HOSTNAME"),
     )
-    const accessIdpId = yield* Config.option(
+    const configuredAccessIdpId = yield* Config.option(
       Config.string("CLOUDFLARE_ACCESS_IDP_ID"),
     )
-    const accessGitHubOrganization = yield* Config.option(
+    const configuredAccessGitHubOrganization = yield* Config.option(
       Config.string("CLOUDFLARE_ACCESS_GITHUB_ORGANIZATION"),
     )
+    const appHostname = dev ? Option.none() : configuredAppHostname
+    const webhookHostname = dev ? Option.none() : configuredWebhookHostname
+    const accessIdpId = dev ? Option.none() : configuredAccessIdpId
+    const accessGitHubOrganization = dev
+      ? Option.none()
+      : configuredAccessGitHubOrganization
     const accessGitHubTeam = yield* Config.option(
       Config.string("CLOUDFLARE_ACCESS_GITHUB_TEAM"),
     )
@@ -60,17 +80,81 @@ export default Alchemy.Stack(
       accessIdpId,
       accessGitHubOrganization,
     })
-    const db = yield* D1Database
+    const database = makeD1Database(resourceNames)
+    const db = yield* database
 
-    const queue = yield* GitHubEventsQueue
-    const deadLetterQueue = yield* GitHubEventsDeadLetterQueue
+    const queueResources = makeGitHubEventQueueResources(resourceNames)
+    const queue = yield* queueResources.queue
+    const deadLetterQueue = yield* queueResources.deadLetterQueue
 
-    const worker = yield* Worker
-    yield* GitHubEventsWorker
+    const devWebhookTunnelHostname = yield* dev
+      ? Effect.gen(function* () {
+          const user = yield* Config.string("USER").pipe(
+            Config.withDefault("local"),
+          )
+          const hostname = `hooks-dev-${makeDevHostnameLabel(user)}.${DEV_TUNNEL_HOSTNAME_SUFFIX}`
+          const zone = yield* Cloudflare.Zone.Zone("SlopCopDevTunnelZone", {
+            name: DEV_TUNNEL_ZONE_NAME,
+          }).pipe(adopt(true))
+          const tunnel = yield* Cloudflare.Tunnel.Tunnel(
+            "SlopCopDevWebhookTunnel",
+            { name: resourceNames.name("slopcop-dev-webhook-tunnel") },
+          )
+          yield* Cloudflare.Tunnel.Configuration(
+            "SlopCopDevWebhookTunnelConfiguration",
+            {
+              tunnelId: tunnel.tunnelId,
+              ingress: [
+                {
+                  hostname,
+                  service: `http://localhost:${DEV_WEBHOOK_PORT}`,
+                },
+              ],
+            },
+          )
+          yield* Cloudflare.DNS.Record("SlopCopDevWebhookDns", {
+            zoneId: zone.zoneId,
+            name: hostname,
+            type: "CNAME",
+            content: Output.interpolate`${tunnel.tunnelId}.cfargotunnel.com`,
+            proxied: true,
+          })
+          yield* Command.Dev("SlopCopDevCloudflared", {
+            command: "cloudflared tunnel run --token $CLOUDFLARED_TUNNEL_TOKEN",
+            shell: true,
+            env: {
+              CLOUDFLARED_TUNNEL_TOKEN: tunnel.token,
+            },
+          })
+          return Option.some(hostname)
+        })
+      : Effect.succeed(Option.none<string>())
+
+    const worker = yield* makeWorker({ resourceNames, database })
+    yield* makeGitHubEventsWorker({
+      resourceNames,
+      database,
+      queue: queueResources.queue,
+      deadLetterQueueName: queueResources.deadLetterQueueName,
+    })
     const webhook = yield* WebhookWorker(
       Option.match(webhookHostname, {
-        onNone: () => ({ url: true }),
-        onSome: (domain) => ({ url: false, domain }),
+        onNone: () => ({
+          resourceNames,
+          queue: queueResources.queue,
+          url: true,
+          ...(dev
+            ? {
+                worker: { dev: { port: DEV_WEBHOOK_PORT, strictPort: true } },
+              }
+            : {}),
+        }),
+        onSome: (domain) => ({
+          resourceNames,
+          queue: queueResources.queue,
+          url: false,
+          domain,
+        }),
       }),
     )
     const accessApplication = yield* Option.match(productionAccessConfig, {
@@ -91,7 +175,9 @@ export default Alchemy.Stack(
           const policy = yield* Cloudflare.Access.Policy(
             "SlopCopDashboardAllow",
             {
-              name: `SlopCop Dashboard - Allow ${config.accessGitHubOrganization} GitHub Organization`,
+              name: resourceNames.name(
+                `SlopCop Dashboard - Allow ${config.accessGitHubOrganization} GitHub Organization`,
+              ),
               decision: "allow",
               include: [{ githubOrganization }],
               sessionDuration: "24h",
@@ -101,7 +187,7 @@ export default Alchemy.Stack(
             "SlopCopDashboardAccess",
             {
               type: "self_hosted",
-              name: "SlopCop Dashboard",
+              name: resourceNames.name("SlopCop Dashboard"),
               domain: config.appHostname,
               allowedIdps: [config.accessIdpId],
               autoRedirectToIdentity: true,
@@ -113,7 +199,7 @@ export default Alchemy.Stack(
         }),
     })
     const web = yield* Cloudflare.Website.Vite("SlopCopWeb", {
-      name: "slopcop-web",
+      name: resourceNames.name("slopcop-web"),
       rootDir: "apps/web",
       main: "worker.ts",
       ...Option.match(appHostname, {
@@ -151,7 +237,11 @@ export default Alchemy.Stack(
         onSome: (hostname) => `https://${hostname}`,
       }),
       webhookUrl: Option.match(webhookHostname, {
-        onNone: () => webhook.url,
+        onNone: () =>
+          Option.match(devWebhookTunnelHostname, {
+            onNone: () => webhook.url,
+            onSome: (hostname) => `https://${hostname}`,
+          }),
         onSome: (hostname) => `https://${hostname}`,
       }),
     }

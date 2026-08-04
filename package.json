@@ -9,7 +9,8 @@
     "build:web": "pnpm --filter @slopcop/web build",
     "deploy": "alchemy deploy",
     "destroy": "alchemy destroy",
-    "dev": "alchemy dev",
+    "dev": "pnpm run \"/^dev:(alchemy|web)$/\"",
+    "dev:alchemy": "alchemy dev",
     "dev:web": "pnpm --filter @slopcop/web dev",
     "ready": "vp check",
     "prepare": "effect-tsgo patch"
@@ -23,7 +24,7 @@
     "alchemy": "catalog:",
     "effect": "catalog:",
     "typescript": "catalog:",
-    "vite": "catalog:",
+    "vite": "npm:@voidzero-dev/vite-plus-core@0.2.4",
     "vite-plus": "catalog:"
   },
   "engines": {

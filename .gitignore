@@ -9,7 +9,8 @@ coverage/
 
 # Local configuration
 .direnv/
-.env
+.env*
+!.env.example
 *.local
 
 # Logs

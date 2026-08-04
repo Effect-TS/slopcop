@@ -70,6 +70,7 @@ export class GitHubRepository extends Model.Class<GitHubRepository>(
   githubId: GitHubRepositoryExternalId,
   owner: Schema.NonEmptyString,
   repo: Schema.NonEmptyString,
+  isPrivate: Model.BooleanSqlite,
   installationId: GitHubInstallationId,
   enabled: Model.BooleanSqlite,
   rulesRevision: Schema.Int,

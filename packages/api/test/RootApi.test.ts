@@ -16,6 +16,33 @@ describe("RootApi", () => {
       specification.paths["/api/v1/repositories/{owner}/{repo}/labeling-rules"]
         ?.get?.security,
     ).toEqual([{ access: [] }])
+    expect(
+      specification.paths[
+        "/api/v1/repositories/{owner}/{repo}/labeling-rules/audit"
+      ]?.get?.security,
+    ).toEqual([{ access: [] }])
+    expect(
+      specification.paths["/api/v1/activity/labeling-rules"]?.get?.security,
+    ).toEqual([{ access: [] }])
+  })
+
+  test("exposes authenticated repository management endpoints", () => {
+    expect(specification.paths["/api/v1/repositories"]?.get?.security).toEqual([
+      { access: [] },
+    ])
+    expect(
+      specification.paths["/api/v1/repositories/{owner}/{repo}/enabled"]?.patch
+        ?.security,
+    ).toEqual([{ access: [] }])
+  })
+
+  test("exposes authenticated setup endpoints", () => {
+    expect(specification.paths["/api/v1/setup"]?.get?.security).toEqual([
+      { access: [] },
+    ])
+    expect(
+      specification.paths["/api/v1/setup/refresh"]?.post?.security,
+    ).toEqual([{ access: [] }])
   })
 
   test("does not expose custom OAuth or session endpoints", () => {
