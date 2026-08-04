@@ -8,6 +8,7 @@ import * as CloudflareResourceNames from "@slopcop/infra/CloudflareResourceNames
 import { GitHubEventProcessors } from "./GitHub/GitHubEventProcessors.ts"
 import { makeGitHubEventsConsumerLayer } from "./GitHub/GitHubEvents.ts"
 import { PullRequestLabelingProcessorLayer } from "./Labeling/PullRequestLabelingProcessor.ts"
+import { ReadyForReviewProcessorLayer } from "./Labeling/ReadyForReviewProcessor.ts"
 import { GitHubSetupProcessorLayer } from "./GitHub/GitHubSetupProcessor.ts"
 
 export const makeGitHubEventsWorker = (options: {
@@ -30,6 +31,7 @@ export const makeGitHubEventsWorker = (options: {
         deadLetterQueueName: options.deadLetterQueueName,
       }).pipe(
         Layer.provide(PullRequestLabelingProcessorLayer),
+        Layer.provide(ReadyForReviewProcessorLayer),
         Layer.provide(GitHubSetupProcessorLayer),
         Layer.provide(GitHubEventProcessors.layer),
         Layer.provide(makeDatabaseLayer(options.database)),

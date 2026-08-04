@@ -13,6 +13,8 @@ export const LabelingRuleInstructions = Schema.String.check(
 
 export const LabelingRuleMode = Schema.Literals(["add-only", "reconcile"])
 
+export const LabelingRuleKind = Schema.Literals(["ai", "ready-for-review"])
+
 export const LabelingRuleExclusiveGroup = Schema.NullOr(
   Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
 )
@@ -27,6 +29,7 @@ export class LabelingRule extends Model.Class<LabelingRule>("LabelingRule")({
   id: Model.UuidV7Insert(LabelingRuleId),
   repositoryId: GitHubRepositoryId,
   label: GitHubLabel.GitHubLabelName,
+  kind: LabelingRuleKind,
   instructions: LabelingRuleInstructions,
   mode: LabelingRuleMode,
   exclusiveGroup: LabelingRuleExclusiveGroup,

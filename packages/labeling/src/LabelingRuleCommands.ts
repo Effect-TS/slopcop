@@ -42,6 +42,7 @@ type ExistingMutation = {
 
 export interface LabelingRuleChanges {
   readonly label?: string
+  readonly kind?: "ai" | "ready-for-review"
   readonly instructions?: string
   readonly mode?: "add-only" | "reconcile"
   readonly exclusiveGroup?: string | null
@@ -90,6 +91,7 @@ const auditValue = (
   id: rule.id,
   repositoryId: rule.repositoryId,
   label: rule.label,
+  kind: rule.kind,
   instructions: rule.instructions,
   mode: rule.mode,
   exclusiveGroup: rule.exclusiveGroup,
@@ -138,6 +140,7 @@ export const makeLabelingRuleCommands = Effect.gen(function* () {
       repository: string,
       candidate: {
         readonly label: string
+        readonly kind: "ai" | "ready-for-review"
         readonly mode: "add-only" | "reconcile"
         readonly exclusiveGroup: string | null
         readonly enabled: boolean
@@ -169,6 +172,14 @@ export const makeLabelingRuleCommands = Effect.gen(function* () {
       if (candidate.enabled && candidate.validationStatus !== "valid") {
         return yield* new InvalidLabelingRule({
           message: "An enabled labeling rule must have a valid GitHub label.",
+        })
+      }
+      if (
+        candidate.kind === "ready-for-review" &&
+        candidate.mode !== "reconcile"
+      ) {
+        return yield* new InvalidLabelingRule({
+          message: "Ready-for-review rules must use reconcile mode.",
         })
       }
       if (candidate.exclusiveGroup !== null) {
@@ -276,6 +287,7 @@ export const makeLabelingRuleCommands = Effect.gen(function* () {
 
         const candidate = {
           label: command.input.label ?? before.label,
+          kind: command.input.kind ?? before.kind,
           mode: command.input.mode ?? before.mode,
           exclusiveGroup:
             command.input.exclusiveGroup === undefined
@@ -295,6 +307,7 @@ export const makeLabelingRuleCommands = Effect.gen(function* () {
           id: before.id,
           repositoryId: before.repositoryId,
           label: candidate.label,
+          kind: candidate.kind,
           instructions: command.input.instructions ?? before.instructions,
           mode: candidate.mode,
           exclusiveGroup: candidate.exclusiveGroup,

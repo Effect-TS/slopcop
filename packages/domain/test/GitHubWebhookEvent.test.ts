@@ -58,6 +58,58 @@ describe("GitHubWebhookEvent", () => {
     expect(repositories.name).toBe("installation_repositories")
   })
 
+  it.each([
+    {
+      name: "check_suite",
+      payload: {
+        action: "completed",
+        check_suite: { head_sha: "abc123" },
+      },
+    },
+    {
+      name: "check_run",
+      payload: {
+        action: "completed",
+        check_run: { head_sha: "abc123" },
+      },
+    },
+    {
+      name: "status",
+      payload: { sha: "abc123", state: "success" },
+    },
+    {
+      name: "pull_request_review",
+      payload: {
+        action: "submitted",
+        pull_request: {
+          id: 1,
+          node_id: "PR_1",
+          number: 42,
+          title: "Fix behavior",
+          body: null,
+          draft: false,
+          user: { login: "octocat" },
+          head: { sha: "abc123" },
+          base: { ref: "main" },
+        },
+      },
+    },
+  ])("decodes $name events", ({ name, payload }) => {
+    expect(
+      Option.isSome(
+        decode({
+          id: "delivery-1",
+          name,
+          payload: {
+            ...payload,
+            repository: { id: 2, full_name: "Effect-TS/effect" },
+            installation: { id: 3 },
+          },
+        }),
+      ),
+    ).toBe(true)
+  })
+
   it("normalizes GitHub repository and installation IDs to strings", () => {
     const event = Schema.decodeUnknownSync(
       GitHubWebhookEvent.GitHubWebhookEvent,

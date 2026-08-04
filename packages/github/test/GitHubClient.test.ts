@@ -41,6 +41,7 @@ const makeLayer = (
   GitHubClient.layerNoDeps.pipe(
     Layer.provide([
       Layer.succeed(GitHubAppAuth, {
+        appId: 123,
         getAppToken: () => Effect.die("Unexpected App token request"),
         getInstallationToken: () => Effect.succeed(Redacted.make("token")),
       }),
@@ -123,6 +124,54 @@ describe("GitHubClient retries", () => {
       expect(error.status).toBe(503)
       expect(error.retryable).toBe(true)
       expect(attempts).toHaveLength(3)
+    }).pipe(Effect.provide(layer))
+  })
+})
+
+describe("GitHubClient pagination", () => {
+  it.effect("collects required checks from every effective-rules page", () => {
+    const attempts: Array<number> = []
+    const layer = makeLayer(
+      [
+        Response.json(
+          [
+            {
+              type: "required_status_checks",
+              parameters: {
+                required_status_checks: [
+                  { context: "Build", integration_id: 1 },
+                ],
+              },
+            },
+          ],
+          {
+            headers: {
+              link: '<https://api.github.com/repositories/123/rules/branches/main?page=2>; rel="next"',
+            },
+          },
+        ),
+        Response.json([
+          {
+            type: "required_status_checks",
+            parameters: {
+              required_status_checks: [
+                { context: "Test", integration_id: null },
+              ],
+            },
+          },
+        ]),
+      ],
+      attempts,
+    )
+
+    return Effect.gen(function* () {
+      const client = yield* GitHubClient
+      const checks = yield* client.listRequiredChecks(repository, "main")
+      expect(checks).toEqual([
+        { context: "Build", integrationId: 1 },
+        { context: "Test", integrationId: null },
+      ])
+      expect(attempts).toHaveLength(2)
     }).pipe(Effect.provide(layer))
   })
 })

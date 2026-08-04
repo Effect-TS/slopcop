@@ -371,6 +371,9 @@ importers:
       effect:
         specifier: 'catalog:'
         version: 4.0.0-beta.102
+      yaml:
+        specifier: ^2.9.0
+        version: 2.9.0
     devDependencies:
       '@effect/vitest':
         specifier: 'catalog:'
@@ -433,58 +436,6 @@ importers:
       tw-animate-css:
         specifier: 'catalog:'
         version: 1.4.0
-      vite:
-        specifier: npm:@voidzero-dev/vite-plus-core@0.2.4
-        version: '@voidzero-dev/vite-plus-core@0.2.4(@types/node@26.1.2)(jiti@2.7.0)(typescript@7.1.0-dev.20260722.1)(yaml@2.9.0)'
-      vite-plus:
-        specifier: 'catalog:'
-        version: 0.2.6(@types/node@26.1.2)(@voidzero-dev/vite-plus-core@0.2.4(@types/node@26.1.2)(jiti@2.7.0)(typescript@7.1.0-dev.20260722.1)(yaml@2.9.0))(happy-dom@20.11.1)(jiti@2.7.0)(typescript@7.1.0-dev.20260722.1)(yaml@2.9.0)
-      vitest:
-        specifier: 'catalog:'
-        version: 4.1.10(@types/node@26.1.2)(@vitest/browser-preview@4.1.10)(@voidzero-dev/vite-plus-core@0.2.4(@types/node@26.1.2)(jiti@2.7.0)(typescript@7.1.0-dev.20260722.1)(yaml@2.9.0))(happy-dom@20.11.1)
-
-  apps/web-old:
-    dependencies:
-      '@effect/platform-browser':
-        specifier: 'catalog:'
-        version: 4.0.0-beta.102(effect@4.0.0-beta.102)
-      '@foldkit/devtools':
-        specifier: 'catalog:'
-        version: 0.138.0(@effect/platform-browser@4.0.0-beta.102(effect@4.0.0-beta.102))(@foldkit/ui@0.138.0(effect@4.0.0-beta.102)(foldkit@0.138.0(@effect/platform-browser@4.0.0-beta.102(effect@4.0.0-beta.102))(effect@4.0.0-beta.102)))(effect@4.0.0-beta.102)(foldkit@0.138.0(@effect/platform-browser@4.0.0-beta.102(effect@4.0.0-beta.102))(effect@4.0.0-beta.102))
-      '@foldkit/ui':
-        specifier: 'catalog:'
-        version: 0.138.0(effect@4.0.0-beta.102)(foldkit@0.138.0(@effect/platform-browser@4.0.0-beta.102(effect@4.0.0-beta.102))(effect@4.0.0-beta.102))
-      '@slopcop/domain':
-        specifier: workspace:*
-        version: link:../../packages/domain
-      '@tailwindcss/vite':
-        specifier: 'catalog:'
-        version: 4.3.3(@voidzero-dev/vite-plus-core@0.2.4(@types/node@26.1.2)(jiti@2.7.0)(typescript@7.1.0-dev.20260722.1)(yaml@2.9.0))
-      effect:
-        specifier: 'catalog:'
-        version: 4.0.0-beta.102
-      foldkit:
-        specifier: 'catalog:'
-        version: 0.138.0(@effect/platform-browser@4.0.0-beta.102(effect@4.0.0-beta.102))(effect@4.0.0-beta.102)
-      jose:
-        specifier: 'catalog:'
-        version: 6.2.5
-      tailwindcss:
-        specifier: 'catalog:'
-        version: 4.3.3
-    devDependencies:
-      '@foldkit/devtools-mcp':
-        specifier: 'catalog:'
-        version: 0.14.0(effect@4.0.0-beta.102)(foldkit@0.138.0(@effect/platform-browser@4.0.0-beta.102(effect@4.0.0-beta.102))(effect@4.0.0-beta.102))(zod@4.4.3)
-      '@foldkit/vite-plugin':
-        specifier: 'catalog:'
-        version: 0.11.3(@voidzero-dev/vite-plus-core@0.2.4(@types/node@26.1.2)(jiti@2.7.0)(typescript@7.1.0-dev.20260722.1)(yaml@2.9.0))(effect@4.0.0-beta.102)(foldkit@0.138.0(@effect/platform-browser@4.0.0-beta.102(effect@4.0.0-beta.102))(effect@4.0.0-beta.102))
-      happy-dom:
-        specifier: 'catalog:'
-        version: 20.11.1
-      typescript:
-        specifier: 'catalog:'
-        version: 7.1.0-dev.20260722.1
       vite:
         specifier: npm:@voidzero-dev/vite-plus-core@0.2.4
         version: '@voidzero-dev/vite-plus-core@0.2.4(@types/node@26.1.2)(jiti@2.7.0)(typescript@7.1.0-dev.20260722.1)(yaml@2.9.0)'

@@ -173,6 +173,7 @@ export class LabelingRulesRepo extends Context.Service<
         UPDATE "labeling_rules"
         SET
           "label" = ${input.label},
+          "kind" = ${input.kind},
           "instructions" = ${input.instructions},
           "mode" = ${input.mode},
           "exclusive_group" = ${input.exclusiveGroup},

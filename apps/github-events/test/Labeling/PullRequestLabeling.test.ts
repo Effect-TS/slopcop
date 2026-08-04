@@ -39,6 +39,7 @@ const rule = new LabelingRule.LabelingRule({
   id: Schema.decodeUnknownSync(LabelingRule.LabelingRuleId)("rule-1"),
   repositoryId: repository.id,
   label: "bug",
+  kind: "ai",
   instructions: "Apply to bug fixes.",
   mode: "add-only",
   exclusiveGroup: null,
@@ -80,6 +81,7 @@ const openAiClientLayer = OpenAiClient.layer({}).pipe(
 const testLayer = (activeRules: boolean) => {
   const dependencies = Layer.mergeAll(
     Layer.succeed(GitHubPullRequest, {
+      resolveRepository: () => unavailable,
       resolveWebhook: () =>
         Effect.succeed({
           deliveryId: event.id,

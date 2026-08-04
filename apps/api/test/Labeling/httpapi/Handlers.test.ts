@@ -21,6 +21,7 @@ const rule = new LabelingRule.LabelingRule({
     "repository-1",
   ),
   label: "bug",
+  kind: "ai",
   instructions: "The pull request fixes a defect.",
   mode: "add-only",
   exclusiveGroup: null,

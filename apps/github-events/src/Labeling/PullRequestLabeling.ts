@@ -67,7 +67,8 @@ export class PullRequestLabeling extends Context.Service<
         const pullRequest = yield* pullRequests.resolveWebhook(event)
         const repository = pullRequest.repository
         const snapshot = yield* rules.getActiveSnapshot(repository.id)
-        if (snapshot.rules.length === 0) return
+        const aiRules = snapshot.rules.filter((rule) => rule.kind === "ai")
+        if (aiRules.length === 0) return
 
         const boundedEvidence = yield* pullRequests.getEvidence(pullRequest)
         const input = yield* decodeClassificationInput({
@@ -87,7 +88,7 @@ export class PullRequestLabeling extends Context.Service<
           },
           ruleSet: {
             revision: snapshot.revision,
-            rules: snapshot.rules.map((rule) => ({
+            rules: aiRules.map((rule) => ({
               id: rule.id,
               label: rule.label,
               instructions: rule.instructions,
@@ -98,7 +99,7 @@ export class PullRequestLabeling extends Context.Service<
         const classification = yield* classify(input)
         const currentLabels = yield* pullRequests.getLabels(pullRequest)
         const plan = planLabels({
-          rules: snapshot.rules,
+          rules: aiRules,
           decisions: classification.decisions,
           currentLabels,
           confidenceThreshold,

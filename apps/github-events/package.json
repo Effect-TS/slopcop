@@ -14,7 +14,8 @@
     "@slopcop/infra": "workspace:*",
     "@slopcop/labeling": "workspace:*",
     "alchemy": "catalog:",
-    "effect": "catalog:"
+    "effect": "catalog:",
+    "yaml": "^2.9.0"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

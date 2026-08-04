@@ -27,6 +27,12 @@ const GitHubClientOperation = Schema.Literals([
   "GitHubClient.listItemLabels",
   "GitHubClient.addItemLabels",
   "GitHubClient.removeItemLabel",
+  "GitHubClient.listPullRequestsForCommit",
+  "GitHubClient.listPullRequestReviews",
+  "GitHubClient.getFileContent",
+  "GitHubClient.listRequiredChecks",
+  "GitHubClient.listCheckRuns",
+  "GitHubClient.listCommitStatuses",
 ])
 type GitHubClientOperation = typeof GitHubClientOperation.Type
 
@@ -39,6 +45,122 @@ export class GitHubClientError extends Schema.TaggedErrorClass<GitHubClientError
     message: Schema.String,
   },
 ) {}
+
+const PullRequestSummary = Schema.Struct({
+  number: Schema.Int,
+  title: Schema.String,
+  body: Schema.NullOr(Schema.String),
+  draft: Schema.Boolean,
+  head: Schema.Struct({ sha: Schema.String }),
+  base: Schema.Struct({ ref: Schema.String }),
+})
+export type PullRequestSummary = typeof PullRequestSummary.Type
+
+export interface RequiredCheck {
+  readonly context: string
+  readonly integrationId: number | null
+}
+
+export interface CheckRun {
+  readonly name: string
+  readonly status: "queued" | "in_progress" | "completed"
+  readonly conclusion:
+    | "action_required"
+    | "cancelled"
+    | "failure"
+    | "neutral"
+    | "skipped"
+    | "stale"
+    | "startup_failure"
+    | "success"
+    | "timed_out"
+    | null
+  readonly appId: number | null
+}
+
+export interface CommitStatus {
+  readonly context: string
+  readonly state: "error" | "failure" | "pending" | "success"
+}
+
+export interface PullRequestReview {
+  readonly id: number
+  readonly reviewer: string
+  readonly state:
+    | "APPROVED"
+    | "CHANGES_REQUESTED"
+    | "COMMENTED"
+    | "DISMISSED"
+    | "PENDING"
+}
+
+const RequiredRules = Schema.Array(
+  Schema.Struct({
+    type: Schema.String,
+    parameters: Schema.optionalKey(
+      Schema.Struct({
+        required_status_checks: Schema.Array(
+          Schema.Struct({
+            context: Schema.String,
+            integration_id: Schema.optionalKey(Schema.NullOr(Schema.Finite)),
+          }),
+        ),
+      }),
+    ),
+  }),
+)
+
+const CheckRunsResponse = Schema.Struct({
+  check_runs: Schema.Array(
+    Schema.Struct({
+      name: Schema.String,
+      status: Schema.Literals(["queued", "in_progress", "completed"]),
+      conclusion: Schema.NullOr(
+        Schema.Literals([
+          "action_required",
+          "cancelled",
+          "failure",
+          "neutral",
+          "skipped",
+          "stale",
+          "startup_failure",
+          "success",
+          "timed_out",
+        ]),
+      ),
+      app: Schema.NullOr(Schema.Struct({ id: Schema.Finite })),
+    }),
+  ),
+})
+
+const CombinedStatusResponse = Schema.Struct({
+  statuses: Schema.Array(
+    Schema.Struct({
+      context: Schema.String,
+      state: Schema.Literals(["error", "failure", "pending", "success"]),
+    }),
+  ),
+})
+
+const FileContentResponse = Schema.Struct({
+  type: Schema.Literal("file"),
+  encoding: Schema.Literal("base64"),
+  content: Schema.String,
+})
+
+const PullRequestReviewsResponse = Schema.Array(
+  Schema.Struct({
+    id: Schema.Finite,
+    user: Schema.NullOr(Schema.Struct({ login: Schema.String })),
+    state: Schema.Literals([
+      "APPROVED",
+      "CHANGES_REQUESTED",
+      "COMMENTED",
+      "DISMISSED",
+      "PENDING",
+    ]),
+  }),
+)
 
 export class GitHubClient extends Context.Service<
   GitHubClient,
@@ -77,6 +199,31 @@ export class GitHubClient extends Context.Service<
       number: number,
       label: GitHubLabel.GitHubLabelName,
     ) => Effect.Effect<boolean, GitHubClientError>
+    readonly listPullRequestsForCommit: (
+      repository: GitHubRepository.GitHubRepository,
+      sha: string,
+    ) => Effect.Effect<ReadonlyArray<PullRequestSummary>, GitHubClientError>
+    readonly listPullRequestReviews: (
+      repository: GitHubRepository.GitHubRepository,
+      number: number,
+    ) => Effect.Effect<ReadonlyArray<PullRequestReview>, GitHubClientError>
+    readonly getFileContent: (
+      repository: GitHubRepository.GitHubRepository,
+      path: string,
+      ref: string,
+    ) => Effect.Effect<string, GitHubClientError>
+    readonly listRequiredChecks: (
+      repository: GitHubRepository.GitHubRepository,
+      branch: string,
+    ) => Effect.Effect<ReadonlyArray<RequiredCheck>, GitHubClientError>
+    readonly listCheckRuns: (
+      repository: GitHubRepository.GitHubRepository,
+      sha: string,
+    ) => Effect.Effect<ReadonlyArray<CheckRun>, GitHubClientError>
+    readonly listCommitStatuses: (
+      repository: GitHubRepository.GitHubRepository,
+      sha: string,
+    ) => Effect.Effect<ReadonlyArray<CommitStatus>, GitHubClientError>
   }
 >()("@slopcop/github/GitHubClient", {
   make: Effect.gen(function* () {
@@ -100,6 +247,22 @@ export class GitHubClient extends Context.Service<
     )
     const decodeGitHubPullRequestFiles = HttpClientResponse.schemaBodyJson(
       Schema.Array(GitHubPullRequest.GitHubPullRequestFile),
+    )
+    const decodePullRequestSummaries = HttpClientResponse.schemaBodyJson(
+      Schema.Array(PullRequestSummary),
+    )
+    const decodePullRequestReviews = HttpClientResponse.schemaBodyJson(
+      PullRequestReviewsResponse,
+    )
+    const decodeRequiredRules = HttpClientResponse.schemaBodyJson(RequiredRules)
+    const decodeCheckRuns = HttpClientResponse.schemaBodyJson(CheckRunsResponse)
+    const decodeCombinedStatus = HttpClientResponse.schemaBodyJson(
+      CombinedStatusResponse,
+    )
+    const decodeFileContent =
+      HttpClientResponse.schemaBodyJson(FileContentResponse)
+    const decodeFileContentText = Schema.decodeUnknownEffect(
+      Schema.StringFromBase64,
     )
 
     const execute = Effect.fn("GitHubClient.execute")(function* (
@@ -324,6 +487,202 @@ export class GitHubClient extends Context.Service<
       },
     )
 
+    const listPullRequestsForCommit = Effect.fn(
+      "GitHubClient.listPullRequestsForCommit",
+    )(function* (repository: GitHubRepository.GitHubRepository, sha: string) {
+      const operation = "GitHubClient.listPullRequestsForCommit"
+      const response = yield* execute(
+        repository,
+        operation,
+        HttpClientRequest.get(
+          `${GITHUB_API_URL}${repositoryPath(repository)}/commits/${encodeURIComponent(sha)}/pulls`,
+        ).pipe(
+          HttpClientRequest.setUrlParams({ per_page: PAGE_SIZE }),
+          HttpClientRequest.setHeader("accept", "application/vnd.github+json"),
+        ),
+      )
+      yield* requireStatus(operation, response, 200)
+      return yield* decodePullRequestSummaries(response).pipe(
+        mapResponseDecodeError(operation, response),
+      )
+    })
+
+    const listPullRequestReviews = Effect.fn(
+      "GitHubClient.listPullRequestReviews",
+    )(function* (
+      repository: GitHubRepository.GitHubRepository,
+      number: number,
+    ) {
+      return yield* Stream.paginate(1, (pageNumber) =>
+        Effect.gen(function* () {
+          const operation = "GitHubClient.listPullRequestReviews"
+          const response = yield* execute(
+            repository,
+            operation,
+            HttpClientRequest.get(
+              `${GITHUB_API_URL}${repositoryPath(repository)}/pulls/${number}/reviews`,
+            ).pipe(
+              HttpClientRequest.setUrlParams({
+                per_page: PAGE_SIZE,
+                page: pageNumber,
+              }),
+            ),
+          )
+          yield* requireStatus(operation, response, 200)
+          const reviews = yield* decodePullRequestReviews(response).pipe(
+            mapResponseDecodeError(operation, response),
+          )
+          return [
+            reviews.map((review) => ({
+              id: review.id,
+              reviewer: review.user?.login ?? `deleted:${review.id}`,
+              state: review.state,
+            })),
+            nextPage(pageNumber, response),
+          ] as const
+        }),
+      ).pipe(Stream.runCollect)
+    })
+
+    const getFileContent = Effect.fn("GitHubClient.getFileContent")(function* (
+      repository: GitHubRepository.GitHubRepository,
+      path: string,
+      ref: string,
+    ) {
+      const operation = "GitHubClient.getFileContent"
+      const response = yield* execute(
+        repository,
+        operation,
+        HttpClientRequest.get(
+          `${GITHUB_API_URL}${repositoryPath(repository)}/contents/${path
+            .split("/")
+            .map(encodeURIComponent)
+            .join("/")}`,
+        ).pipe(HttpClientRequest.setUrlParam("ref", ref)),
+      )
+      yield* requireStatus(operation, response, 200)
+      const file = yield* decodeFileContent(response).pipe(
+        mapResponseDecodeError(operation, response),
+      )
+      return yield* decodeFileContentText(file.content.replace(/\s/g, "")).pipe(
+        Effect.mapError(
+          () =>
+            new GitHubClientError({
+              operation,
+              status: response.status,
+              retryable: false,
+              message: `GitHub returned invalid base64 content for '${path}' in ${repository.slug}.`,
+            }),
+        ),
+      )
+    })
+
+    const listRequiredChecks = (
+      repository: GitHubRepository.GitHubRepository,
+      branch: string,
+    ) =>
+      Stream.paginate(
+        1,
+        Effect.fnUntraced(function* (pageNumber) {
+          const operation = "GitHubClient.listRequiredChecks"
+          const response = yield* execute(
+            repository,
+            operation,
+            HttpClientRequest.get(
+              `${GITHUB_API_URL}${repositoryPath(repository)}/rules/branches/${encodeURIComponent(branch)}`,
+            ).pipe(
+              HttpClientRequest.setUrlParams({
+                per_page: PAGE_SIZE,
+                page: pageNumber,
+              }),
+            ),
+          )
+          yield* requireStatus(operation, response, 200)
+          const rules = yield* decodeRequiredRules(response).pipe(
+            mapResponseDecodeError(operation, response),
+          )
+          return [
+            rules.flatMap((rule) =>
+              rule.type !== "required_status_checks" ||
+              rule.parameters === undefined
+                ? []
+                : rule.parameters.required_status_checks.map((check) => ({
+                    context: check.context,
+                    integrationId: check.integration_id ?? null,
+                  })),
+            ),
+            nextPage(pageNumber, response),
+          ] as const
+        }),
+      ).pipe(
+        Stream.runCollect,
+        Effect.withSpan("GitHubClient.listRequiredChecks"),
+      )
+
+    const listCheckRuns = Effect.fn("GitHubClient.listCheckRuns")(function* (
+      repository: GitHubRepository.GitHubRepository,
+      sha: string,
+    ) {
+      return yield* Stream.paginate(1, (pageNumber) =>
+        Effect.gen(function* () {
+          const operation = "GitHubClient.listCheckRuns"
+          const response = yield* execute(
+            repository,
+            operation,
+            HttpClientRequest.get(
+              `${GITHUB_API_URL}${repositoryPath(repository)}/commits/${encodeURIComponent(sha)}/check-runs`,
+            ).pipe(
+              HttpClientRequest.setUrlParams({
+                per_page: PAGE_SIZE,
+                page: pageNumber,
+                filter: "latest",
+              }),
+            ),
+          )
+          yield* requireStatus(operation, response, 200)
+          const result = yield* decodeCheckRuns(response).pipe(
+            mapResponseDecodeError(operation, response),
+          )
+          return [
+            result.check_runs.map((check) => ({
+              name: check.name,
+              status: check.status,
+              conclusion: check.conclusion,
+              appId: check.app?.id ?? null,
+            })),
+            nextPage(pageNumber, response),
+          ] as const
+        }),
+      ).pipe(Stream.runCollect)
+    })
+
+    const listCommitStatuses = Effect.fn("GitHubClient.listCommitStatuses")(
+      function* (repository: GitHubRepository.GitHubRepository, sha: string) {
+        return yield* Stream.paginate(1, (pageNumber) =>
+          Effect.gen(function* () {
+            const operation = "GitHubClient.listCommitStatuses"
+            const response = yield* execute(
+              repository,
+              operation,
+              HttpClientRequest.get(
+                `${GITHUB_API_URL}${repositoryPath(repository)}/commits/${encodeURIComponent(sha)}/status`,
+              ).pipe(
+                HttpClientRequest.setUrlParams({
+                  per_page: PAGE_SIZE,
+                  page: pageNumber,
+                }),
+              ),
+            )
+            yield* requireStatus(operation, response, 200)
+            const result = yield* decodeCombinedStatus(response).pipe(
+              mapResponseDecodeError(operation, response),
+            )
+            return [result.statuses, nextPage(pageNumber, response)] as const
+          }),
+        ).pipe(Stream.runCollect)
+      },
+    )
+
     return {
       getRepositoryLabel,
       listRepositoryLabels,
@@ -331,6 +690,12 @@ export class GitHubClient extends Context.Service<
       listItemLabels,
       addItemLabels,
       removeItemLabel,
+      listPullRequestsForCommit,
+      listPullRequestReviews,
+      getFileContent,
+      listRequiredChecks,
+      listCheckRuns,
+      listCommitStatuses,
     }
   }),
 }) {

@@ -393,6 +393,7 @@ export class LabelingRules extends Context.Service<
             input: LabelingRule.LabelingRule.insert.make({
               repositoryId: repository.id,
               label: label.name,
+              kind: input.kind ?? "ai",
               instructions: input.instructions,
               mode: input.mode,
               exclusiveGroup: input.exclusiveGroup,
