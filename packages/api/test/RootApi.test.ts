@@ -36,6 +36,15 @@ describe("RootApi", () => {
     ).toEqual([{ access: [] }])
   })
 
+  test("exposes authenticated setup endpoints", () => {
+    expect(specification.paths["/api/v1/setup"]?.get?.security).toEqual([
+      { access: [] },
+    ])
+    expect(
+      specification.paths["/api/v1/setup/refresh"]?.post?.security,
+    ).toEqual([{ access: [] }])
+  })
+
   test("does not expose custom OAuth or session endpoints", () => {
     expect(
       Object.keys(specification.paths).some((path) =>

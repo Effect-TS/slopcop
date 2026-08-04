@@ -23,6 +23,9 @@
       "@slopcop/api/*": ["./packages/api/src/*"],
       "@slopcop/domain": ["./packages/domain/src/index.ts"],
       "@slopcop/domain/*": ["./packages/domain/src/*"],
+      "@slopcop/github/*": ["./packages/github/src/*"],
+      "@slopcop/infra/*": ["./packages/infra/src/*"],
+      "@slopcop/labeling/*": ["./packages/labeling/src/*"],
       "@slopcop/ui": ["./packages/ui/src/index.ts"],
       "@slopcop/ui/*": ["./packages/ui/src/*"]
     },

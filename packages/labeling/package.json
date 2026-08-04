@@ -1,0 +1,26 @@
+{
+  "name": "@slopcop/labeling",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./package.json": "./package.json",
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "check": "vp check",
+    "test": "vp test --run --passWithNoTests"
+  },
+  "dependencies": {
+    "@slopcop/domain": "workspace:*",
+    "@slopcop/github": "workspace:*",
+    "@slopcop/infra": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "typescript": "catalog:",
+    "vite": "npm:@voidzero-dev/vite-plus-core@0.2.4",
+    "vite-plus": "catalog:"
+  }
+}

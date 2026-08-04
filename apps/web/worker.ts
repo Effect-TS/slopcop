@@ -4,6 +4,9 @@ interface Env {
   readonly API: {
     readonly fetch: (request: Request) => Promise<Response>
   }
+  readonly ASSETS: {
+    readonly fetch: (request: Request) => Promise<Response>
+  }
   readonly SLOPCOP_ACCESS_MODE: "cloudflare-access" | "local-development"
   readonly CLOUDFLARE_ACCESS_AUD?: string
   readonly CLOUDFLARE_ACCESS_ISSUER?: string
@@ -68,6 +71,6 @@ export default {
     const url = new URL(request.url)
     return url.pathname.startsWith("/api/")
       ? forwardApiRequest(request, env)
-      : new Response("Not Found", { status: 404 })
+      : env.ASSETS.fetch(request)
   },
 }

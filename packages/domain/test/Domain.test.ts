@@ -71,9 +71,15 @@ describe("domain schemas", () => {
       Schema.encodeSync(RepositoryManagement.RepositorySummary)({
         owner: "Effect-TS",
         repo: "effect",
+        isPrivate: false,
         enabled: true,
       }),
-    ).toEqual({ owner: "Effect-TS", repo: "effect", enabled: true })
+    ).toEqual({
+      owner: "Effect-TS",
+      repo: "effect",
+      isPrivate: false,
+      enabled: true,
+    })
   })
 
   it("accepts edited pull request events with an installation id", () => {

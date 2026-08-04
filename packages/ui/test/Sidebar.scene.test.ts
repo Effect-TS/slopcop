@@ -8,9 +8,9 @@ import { Dialog } from "@foldkit/ui"
 import { Sidebar } from "../src/index.ts"
 
 const initWithoutAnimation = (
-  config: Sidebar.InitConfig = {},
+  config: Partial<Sidebar.InitConfig> = {},
 ): Sidebar.Model => {
-  const model = Sidebar.init(config)
+  const model = Sidebar.init({ id: "sidebar", ...config })
   return {
     ...model,
     dialog: Dialog.init({ id: model.dialog.id }),
@@ -104,7 +104,7 @@ describe("Sidebar view", () => {
   it("collapses the desktop panel through the published button", () => {
     Scene.scene(
       { update: Sidebar.update, view: sceneView },
-      Scene.given(Sidebar.init()),
+      Scene.given(Sidebar.init({ id: "sidebar" })),
       Scene.click(button),
       Scene.expect(layout).toHaveAttr("data-collapsed", ""),
       Scene.expect(layout).not.toHaveAttr("data-expanded"),
@@ -167,7 +167,7 @@ describe("Sidebar view", () => {
   })
 
   it("forwards Dialog enter and leave transition attributes", () => {
-    const initial = Sidebar.init({ mode: "Mobile" })
+    const initial = Sidebar.init({ id: "sidebar", mode: "Mobile" })
     const [entering] = Sidebar.open(initial)
     const openIdle = {
       ...initial,

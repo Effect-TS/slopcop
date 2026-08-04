@@ -6,9 +6,9 @@ import { Dialog } from "@foldkit/ui"
 import { Sidebar } from "../src/index.ts"
 
 const initWithoutAnimation = (
-  config: Sidebar.InitConfig = {},
+  config: Partial<Sidebar.InitConfig> = {},
 ): Sidebar.Model => {
-  const model = Sidebar.init(config)
+  const model = Sidebar.init({ id: "sidebar", ...config })
   return {
     ...model,
     dialog: Dialog.init({ id: model.dialog.id }),
@@ -17,7 +17,7 @@ const initWithoutAnimation = (
 
 describe("Sidebar", () => {
   it("defaults to an expanded desktop sidebar", () => {
-    const model = Sidebar.init()
+    const model = Sidebar.init({ id: "sidebar" })
 
     expect(model.mode).toBe("Desktop")
     expect(model.desktopState).toBe("Expanded")
@@ -29,7 +29,7 @@ describe("Sidebar", () => {
   it("opens and closes the current desktop mode", () => {
     Story.story(
       Sidebar.update,
-      Story.given(Sidebar.init()),
+      Story.given(Sidebar.init({ id: "sidebar" })),
       Story.message(Sidebar.RequestedClose()),
       Story.model((model) => {
         expect(model.desktopState).toBe("Collapsed")
@@ -77,7 +77,7 @@ describe("Sidebar", () => {
   })
 
   it("preserves desktop state and closes mobile state across mode changes", () => {
-    const [collapsed] = Sidebar.close(Sidebar.init())
+    const [collapsed] = Sidebar.close(Sidebar.init({ id: "sidebar" }))
     const [mobile] = Sidebar.changeMode(collapsed, "Mobile")
     const [openMobile] = Sidebar.open(mobile)
 
@@ -99,9 +99,11 @@ describe("Sidebar", () => {
   })
 
   it("programmatic helpers act on the current mode", () => {
-    const [collapsed] = Sidebar.close(Sidebar.init())
+    const [collapsed] = Sidebar.close(Sidebar.init({ id: "desktop" }))
     const [expanded] = Sidebar.open(collapsed)
-    const [openMobile] = Sidebar.open(Sidebar.init({ mode: "Mobile" }))
+    const [openMobile] = Sidebar.open(
+      Sidebar.init({ id: "mobile", mode: "Mobile" }),
+    )
     const [closedMobile] = Sidebar.close(openMobile)
 
     expect(expanded.desktopState).toBe("Expanded")
@@ -110,7 +112,10 @@ describe("Sidebar", () => {
   })
 
   it("changes mode through the programmatic API", () => {
-    const [mobile] = Sidebar.changeMode(Sidebar.init(), "Mobile")
+    const [mobile] = Sidebar.changeMode(
+      Sidebar.init({ id: "sidebar" }),
+      "Mobile",
+    )
     const [desktop] = Sidebar.changeMode(mobile, "Desktop")
 
     expect(mobile.mode).toBe("Mobile")

@@ -14,7 +14,9 @@
     "@effect/platform-browser": "catalog:",
     "@foldkit/devtools": "catalog:",
     "@foldkit/ui": "catalog:",
+    "@slopcop/api": "workspace:*",
     "@slopcop/domain": "workspace:*",
+    "@slopcop/ui": "workspace:*",
     "@tailwindcss/vite": "catalog:",
     "effect": "catalog:",
     "foldkit": "catalog:",
@@ -25,7 +27,7 @@
     "@foldkit/devtools-mcp": "catalog:",
     "@foldkit/vite-plugin": "catalog:",
     "happy-dom": "catalog:",
-    "typescript": "catalog:",
+    "tw-animate-css": "catalog:",
     "vite": "catalog:",
     "vite-plus": "catalog:",
     "vitest": "catalog:"

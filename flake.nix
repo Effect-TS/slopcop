@@ -16,6 +16,7 @@
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShellNoCC {
           packages = with pkgs; [
+            cloudflared
             (corepack.override { nodejs-slim = nodejs-slim_26; })
             nodejs_26
             playwright-driver.browsers

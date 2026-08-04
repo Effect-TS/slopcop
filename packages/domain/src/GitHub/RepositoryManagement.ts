@@ -7,6 +7,7 @@ export type RepositoryPath = typeof RepositoryPath.Type
 export const RepositorySummary = Schema.Struct({
   owner: Schema.NonEmptyString,
   repo: Schema.NonEmptyString,
+  isPrivate: Schema.Boolean,
   enabled: Schema.Boolean,
 })
 export type RepositorySummary = typeof RepositorySummary.Type

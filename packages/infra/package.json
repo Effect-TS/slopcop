@@ -1,0 +1,24 @@
+{
+  "name": "@slopcop/infra",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./package.json": "./package.json",
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "check": "vp check",
+    "test": "vp test --run --passWithNoTests"
+  },
+  "dependencies": {
+    "@effect/sql-d1": "catalog:",
+    "alchemy": "catalog:",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "typescript": "catalog:",
+    "vite": "npm:@voidzero-dev/vite-plus-core@0.2.4",
+    "vite-plus": "catalog:"
+  }
+}
