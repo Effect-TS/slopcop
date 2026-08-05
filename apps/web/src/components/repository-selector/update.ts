@@ -6,7 +6,11 @@ import * as FoldkitCommand from "foldkit/command"
 import { evo } from "foldkit/struct"
 import type { Command } from "./command"
 import { GotCommandMessage, GotPopoverMessage, type Message } from "./message"
-import { RepositoryLoadState, type Model } from "./model"
+import {
+  reconcileSelectedRepository,
+  RepositoryLoadState,
+  type Model,
+} from "./model"
 
 export type UpdateReturn = readonly [Model, ReadonlyArray<Command>]
 
@@ -19,7 +23,8 @@ export const update = (model: Model, message: Message): UpdateReturn =>
         evo(model, {
           repositories: () =>
             RepositoryLoadState.cases.RepositoriesLoaded.make({ repositories }),
-          selected: () => selectedRepository(model.selected, repositories),
+          selected: () =>
+            reconcileSelectedRepository(model.selected, repositories),
         }),
         [],
       ],
@@ -35,29 +40,6 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       GotPopoverMessage: ({ message }) => delegateToPopover(model, message),
     }),
   )
-
-const repositoryValue = (repository: {
-  readonly owner: string
-  readonly repo: string
-}): string => `${repository.owner}/${repository.repo}`
-
-const selectedRepository = (
-  current: string | null,
-  repositories: ReadonlyArray<{
-    readonly owner: string
-    readonly repo: string
-  }>,
-): string | null => {
-  if (
-    current !== null &&
-    repositories.some((repository) => repositoryValue(repository) === current)
-  ) {
-    return current
-  }
-
-  const first = repositories[0]
-  return first === undefined ? null : repositoryValue(first)
-}
 
 const selectRepository = (model: Model, value: string): UpdateReturn => {
   const [nextPopover, popoverCommands] = Popover.close(model.popover)

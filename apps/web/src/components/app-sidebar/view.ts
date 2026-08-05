@@ -1,4 +1,5 @@
 import * as Sidebar from "@slopcop/ui/Sidebar"
+import * as Option from "effect/Option"
 import {
   type ChildAttribute,
   type Html,
@@ -16,12 +17,36 @@ import {
   GotThemeMessage,
 } from "./message"
 import type { Model } from "./model"
+import type * as Router from "../../router"
 
 export interface RenderInfo {
   readonly trigger: ReadonlyArray<ChildAttribute>
 }
 
+export type NavigationValue = Exclude<Router.AppRoute["_tag"], "NotFound">
+
+export type NavigationItem = Readonly<{
+  value: NavigationValue
+  label: string
+  description: string
+  icon: Html
+}>
+
+export type NavigationGroup = Readonly<{
+  label: string
+  items: ReadonlyArray<NavigationItem>
+}>
+
+export type NavigationConfig = Readonly<{
+  groups: ReadonlyArray<NavigationGroup>
+  toHref: (value: NavigationValue) => string
+  isItemCurrent: (value: NavigationValue) => boolean
+}>
+
 export type ViewInputs = Readonly<{
+  navigationGroups: ReadonlyArray<NavigationGroup>
+  toNavigationHref: (value: NavigationValue) => string
+  isNavigationItemCurrent: (value: NavigationValue) => boolean
   toView: (render: RenderInfo) => Html
 }>
 
@@ -58,14 +83,29 @@ type DesktopSidebarProps = Sidebar.DesktopRenderInfo &
 const desktopSidebar = (
   h: HtmlBuilder<Message>,
   model: Model,
-  { button, layout, panel, toView, isCollapsed }: DesktopSidebarProps,
+  {
+    button,
+    isNavigationItemCurrent,
+    isCollapsed,
+    layout,
+    navigationGroups,
+    panel,
+    toNavigationHref,
+    toView,
+  }: DesktopSidebarProps,
 ): Html => {
   const content = toView({ trigger: button })
-  const main = mainContent(h, model, {
+
+  const main = sidebarMain(h, model, {
     content,
     sidebarTrigger: button,
   })
-  const sidebar = sidebarContent(h, model, isCollapsed)
+
+  const aside = sidebarAside(h, model, isCollapsed, {
+    groups: navigationGroups,
+    toHref: toNavigationHref,
+    isItemCurrent: isNavigationItemCurrent,
+  })
 
   return h.div(
     [...layout, h.Class("flex min-h-svh")],
@@ -75,10 +115,10 @@ const desktopSidebar = (
           ...panel,
           ...(isCollapsed ? [h.DataAttribute("collapsed", "")] : []),
           h.Class(
-            `group/sidebar sticky top-0 shrink-0 flex flex-col h-svh bg-sidebar border-r border-sidebar-border text-white overflow-hidden transition-[width] duration-200 ${isCollapsed ? "w-[4.5rem]" : "w-64"}`,
+            `group/sidebar sticky top-0 shrink-0 flex flex-col h-svh bg-sidebar border-r border-sidebar-border text-white overflow-hidden transition-[width] duration-200 ${isCollapsed ? "w-18" : "w-64"}`,
           ),
         ],
-        [sidebar],
+        [aside],
       ),
       main,
     ],
@@ -101,16 +141,19 @@ const mobileSidebar = (
     dialog,
     description,
     initialFocus,
+    isNavigationItemCurrent,
     isCollapsed,
     isVisible,
     layout,
+    navigationGroups,
     panel,
     title,
+    toNavigationHref,
     toView,
   }: MobileSidebarProps,
 ): Html => {
   const content = toView({ trigger: button })
-  const main = mainContent(h, model, {
+  const main = sidebarMain(h, model, {
     content,
     sidebarTrigger: button,
   })
@@ -128,7 +171,7 @@ const mobileSidebar = (
                   [
                     ...backdrop,
                     h.Class(
-                      "fixed inset-0 bg-black/60 data-[closed]:opacity-0 data-[transition]:transition-opacity data-[transition]:duration-200",
+                      "fixed inset-0 bg-black/60 data-closed:opacity-0 data-transition:transition-opacity data-transition:duration-200",
                     ),
                   ],
                   [],
@@ -137,7 +180,7 @@ const mobileSidebar = (
                   [
                     ...panel,
                     h.Class(
-                      "fixed inset-y-0 left-0 flex w-72 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground shadow-2xl data-[closed]:-translate-x-full data-[transition]:transition-transform data-[transition]:duration-200",
+                      "fixed inset-y-0 left-0 flex w-72 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground shadow-2xl data-closed:-translate-x-full data-transition:transition-transform data-transition:duration-200",
                     ),
                   ],
                   [
@@ -157,7 +200,11 @@ const mobileSidebar = (
                       ],
                       ["×"],
                     ),
-                    sidebarContent(h, model, isCollapsed),
+                    sidebarAside(h, model, isCollapsed, {
+                      groups: navigationGroups,
+                      toHref: toNavigationHref,
+                      isItemCurrent: isNavigationItemCurrent,
+                    }),
                   ],
                 ),
               ]
@@ -168,7 +215,7 @@ const mobileSidebar = (
   )
 }
 
-const mainContent = (
+const sidebarMain = (
   h: HtmlBuilder<Message>,
   model: Model,
   {
@@ -190,13 +237,27 @@ const mainContent = (
     ],
   )
 
-const sidebarContent = (
+const sidebarAside = (
+  h: HtmlBuilder<Message>,
+  model: Model,
+  isCollapsed: boolean,
+  navigation: NavigationConfig,
+): Html => {
+  const header = sidebarHeader(h, model, isCollapsed)
+
+  const content = sidebarContent(h, navigation)
+
+  return h.div(
+    [h.Class("flex h-full w-full shrink-0 flex-col")],
+    [header, content],
+  )
+}
+
+const sidebarHeader = (
   h: HtmlBuilder<Message>,
   model: Model,
   isCollapsed: boolean,
 ): Html => {
-  const header = sidebarHeader(isCollapsed)
-
   const repositorySelector = h.submodel({
     slotId: "repository-selector",
     model: model.repositorySelector,
@@ -204,15 +265,12 @@ const sidebarContent = (
     toParentMessage: (message) => GotRepositorySelectorMessage({ message }),
   })
 
-  return h.div(
-    [h.Class("flex h-full w-full shrink-0 flex-col")],
-    [header, repositorySelector],
-  )
-}
-
-const sidebarHeader = (isCollapsed: boolean): Html =>
-  ih.div(
-    [ih.Class("flex flex-col p-2 gap-3")],
+  return ih.div(
+    [
+      ih.Class(
+        `flex flex-col p-2 gap-3 ${isCollapsed ? "[&_[data-repository-selector]]:justify-center" : ""}`,
+      ),
+    ],
     [
       ih.div(
         [
@@ -256,8 +314,99 @@ const sidebarHeader = (isCollapsed: boolean): Html =>
               ]),
         ],
       ),
+      repositorySelector,
     ],
   )
+}
+
+const sidebarContent = (
+  h: HtmlBuilder<Message>,
+  navigation: NavigationConfig,
+): Html =>
+  h.div(
+    [h.Class("min-h-0 flex-1 flex flex-col overflow-auto no-scrollbar")],
+    navigation.groups.map((group) => sidebarGroup(h, group, navigation)),
+  )
+
+const sidebarGroup = (
+  h: HtmlBuilder<Message>,
+  group: NavigationGroup,
+  navigation: NavigationConfig,
+): Html =>
+  h.nav(
+    [
+      h.AriaLabel(group.label),
+      h.Class("relative w-full min-w-0 flex flex-col p-2"),
+    ],
+    [
+      h.div(
+        [
+          h.Class(
+            "flex h-8 shrink-0 items-center rounded-md px-2 text-xs font-medium text-sidebar-foreground/70 ring-sidebar-ring outline-hidden transition-[margin,opacity] duration-200 ease-linear group-data-[collapsed]/sidebar:-mt-8 group-data-[collapsed]/sidebar:opacity-0 focus-visible:ring-2 [&>svg]:size-4",
+          ),
+        ],
+        [group.label],
+      ),
+      sidebarGroupContent(h, group.items, navigation),
+    ],
+  )
+
+const sidebarGroupContent = (
+  h: HtmlBuilder<Message>,
+  items: ReadonlyArray<NavigationItem>,
+  navigation: NavigationConfig,
+): Html =>
+  h.div(
+    [h.Class("w-full text-sm")],
+    [
+      h.ul(
+        [h.Class("flex w-full min-w-0 flex-col gap-1")],
+        items.map((item) => sidebarNavigationItem(h, item, navigation)),
+      ),
+    ],
+  )
+
+const sidebarNavigationItem = (
+  h: HtmlBuilder<Message>,
+  item: NavigationItem,
+  navigation: NavigationConfig,
+): Html => {
+  const isCurrent = navigation.isItemCurrent(item.value)
+
+  return h.li(
+    [h.Class("group/menu-item relative")],
+    [
+      h.a(
+        [
+          h.Href(navigation.toHref(item.value)),
+          ...(isCurrent
+            ? [h.AriaCurrent("page"), h.DataAttribute("current", "")]
+            : []),
+          h.Class(
+            "peer/menu-button group/menu-button flex w-full h-auto items-center gap-2 overflow-hidden rounded-md px-2 py-1 text-left text-sm ring-sidebar-ring outline-hidden cursor-pointer transition-[width,height,padding] group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-data-[collapsed]/sidebar:mx-auto group-data-[collapsed]/sidebar:size-8! focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 data-open:hover:bg-sidebar-accent data-open:hover:text-sidebar-accent-foreground data-current:bg-sidebar-accent data-current:text-sidebar-accent-foreground data-current:font-medium [&_svg]:shrink-0 [&>span:last-child]:truncate hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+          ),
+        ],
+        [
+          item.icon,
+          h.span(
+            [h.Class("flex min-w-0 flex-col")],
+            [
+              h.span([h.Class("truncate text-sm leading-tight")], [item.label]),
+              h.span(
+                [
+                  h.Class(
+                    "truncate text-[10.5px] leading-tight text-muted-foreground",
+                  ),
+                ],
+                [item.description],
+              ),
+            ],
+          ),
+        ],
+      ),
+    ],
+  )
+}
 
 const mainHeader = (
   h: HtmlBuilder<Message>,
@@ -265,8 +414,16 @@ const mainHeader = (
   {
     sidebarTrigger,
   }: { readonly sidebarTrigger: ReadonlyArray<ChildAttribute> },
-): Html =>
-  h.header(
+): Html => {
+  const repository = Option.match(
+    RepositorySelector.selectedRepository(model.repositorySelector),
+    {
+      onNone: () => "No repository selected",
+      onSome: RepositorySelector.repositoryValue,
+    },
+  )
+
+  return h.header(
     [
       h.Class(
         "h-16 flex justify-between items-center px-6 md:px-4 bg-background/85 border-b border-border",
@@ -281,7 +438,7 @@ const mainHeader = (
               ...sidebarTrigger,
               ih.AriaLabel("Toggle sidebar"),
               ih.Class(
-                "px-3 py-2 bg-card hover:bg-muted dark:hover:bg-input/50 border border-border focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 rounded-lg cursor-pointer rounded-lg cursor-pointer transition-colors",
+                "px-3 py-2 bg-card hover:bg-muted dark:hover:bg-input/50 border border-border focus-visible:ring-3 focus-visible:ring-ring/50 rounded-lg cursor-pointer transition-colors",
               ),
             ],
             [Icon.menu()],
@@ -289,7 +446,7 @@ const mainHeader = (
           h.div(
             [],
             [
-              h.p([h.Class("text-xs font-medium")], ["effect/slopcop"]),
+              h.p([h.Class("text-xs font-medium")], [repository]),
               h.h1([h.Class("font-bold")], ["Overview"]),
             ],
           ),
@@ -303,3 +460,4 @@ const mainHeader = (
       }),
     ],
   )
+}
