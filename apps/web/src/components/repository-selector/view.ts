@@ -2,7 +2,7 @@ import * as UiCommand from "@slopcop/ui/Command"
 import * as Popover from "@foldkit/ui/popover"
 import type * as RepositoryManagement from "@slopcop/domain/GitHub/RepositoryManagement"
 import * as Option from "effect/Option"
-import type { Attribute, ChildAttribute, Html, HtmlBuilder } from "foldkit/html"
+import type { ChildAttribute, Html, HtmlBuilder } from "foldkit/html"
 import * as Submodel from "foldkit/submodel"
 import * as Icon from "../../features/icon"
 import {
@@ -12,46 +12,42 @@ import {
 } from "./model"
 import { GotCommandMessage, GotPopoverMessage, type Message } from "./message"
 
-export type ViewInputs = Readonly<{
-  trigger: ReadonlyArray<Attribute<never>>
-}>
+export const view = Submodel.defineView<Model, Message>((model, h) => {
+  const slotId = "repository-selector"
+  const labelId = `${slotId}-label`
 
-export const view = Submodel.defineView<Model, Message, ViewInputs>(
-  (model, inputs, h) => {
-    const slotId = "repository-selector"
-    const labelId = `${slotId}-label`
-
-    return h.submodel({
-      slotId,
-      model: model.popover,
-      view: Popover.view,
-      toParentMessage: (message) => GotPopoverMessage({ message }),
-      viewInputs: {
-        ariaLabelledBy: labelId,
-        focusSelector: `#${UiCommand.inputId(model.command.id)}`,
-        anchor: {
-          placement: "bottom-end",
-          gap: 6,
-          padding: 8,
-        },
-        toView: popoverView({ labelId, h, model, trigger: inputs.trigger }),
+  return h.submodel({
+    slotId,
+    model: model.popover,
+    view: Popover.view,
+    toParentMessage: (message) => GotPopoverMessage({ message }),
+    viewInputs: {
+      ariaLabelledBy: labelId,
+      focusSelector: `#${UiCommand.inputId(model.command.id)}`,
+      anchor: {
+        placement: "bottom-end",
+        gap: 6,
+        padding: 8,
       },
-    })
-  },
-)
+      toView: popoverView({ labelId, h, model }),
+    },
+  })
+})
 
 interface PopoverViewInputs {
-  readonly trigger: ReadonlyArray<Attribute<never>>
   readonly labelId: string
   readonly h: HtmlBuilder<Message>
   readonly model: Model
 }
 
 const popoverView =
-  ({ labelId, h, model, trigger }: PopoverViewInputs) =>
+  ({ labelId, h, model }: PopoverViewInputs) =>
   ({ backdrop, button, isVisible, panel }: Popover.RenderInfo): Html =>
     h.div(
-      [...trigger, h.Class("relative flex shrink-0 w-full items-center")],
+      [
+        h.DataAttribute("repository-selector", ""),
+        h.Class("relative flex shrink-0 w-full items-center"),
+      ],
       [
         selectorButton(h, model, labelId, button),
         ...selectorOverlay(h, model, isVisible, backdrop, panel),

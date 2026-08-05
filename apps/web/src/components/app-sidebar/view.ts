@@ -263,13 +263,14 @@ const sidebarHeader = (
     model: model.repositorySelector,
     view: RepositorySelector.view,
     toParentMessage: (message) => GotRepositorySelectorMessage({ message }),
-    viewInputs: {
-      trigger: isCollapsed ? [h.Class("justify-center")] : [],
-    },
   })
 
   return ih.div(
-    [ih.Class("flex flex-col p-2 gap-3")],
+    [
+      ih.Class(
+        `flex flex-col p-2 gap-3 ${isCollapsed ? "[&_[data-repository-selector]]:justify-center" : ""}`,
+      ),
+    ],
     [
       ih.div(
         [
@@ -382,7 +383,7 @@ const sidebarNavigationItem = (
             ? [h.AriaCurrent("page"), h.DataAttribute("current", "")]
             : []),
           h.Class(
-            "peer/menu-button group/menu-button flex w-full h-auto items-center gap-2 overflow-hidden rounded-md px-2 py-1 text-left text-sm ring-sidebar-ring outline-hidden cursor-pointer transition-[width,height,padding] group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-data-[collapsed]/sidebar:size-8! focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 data-open:hover:bg-sidebar-accent data-open:hover:text-sidebar-accent-foreground data-current:bg-sidebar-accent data-current:text-sidebar-accent-foreground data-current:font-medium [&_svg]:shrink-0 [&>span:last-child]:truncate hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+            "peer/menu-button group/menu-button flex w-full h-auto items-center gap-2 overflow-hidden rounded-md px-2 py-1 text-left text-sm ring-sidebar-ring outline-hidden cursor-pointer transition-[width,height,padding] group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-data-[collapsed]/sidebar:mx-auto group-data-[collapsed]/sidebar:size-8! focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 data-open:hover:bg-sidebar-accent data-open:hover:text-sidebar-accent-foreground data-current:bg-sidebar-accent data-current:text-sidebar-accent-foreground data-current:font-medium [&_svg]:shrink-0 [&>span:last-child]:truncate hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
           ),
         ],
         [
