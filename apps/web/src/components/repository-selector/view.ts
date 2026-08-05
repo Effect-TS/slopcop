@@ -1,121 +1,57 @@
 import * as UiCommand from "@slopcop/ui/Command"
 import * as Popover from "@foldkit/ui/popover"
 import type * as RepositoryManagement from "@slopcop/domain/GitHub/RepositoryManagement"
-import type { ChildAttribute, Html, HtmlBuilder } from "foldkit/html"
+import * as Option from "effect/Option"
+import type { Attribute, ChildAttribute, Html, HtmlBuilder } from "foldkit/html"
 import * as Submodel from "foldkit/submodel"
 import * as Icon from "../../features/icon"
-import type { Model } from "./model"
+import {
+  repositoryValue,
+  selectedRepository as getSelectedRepository,
+  type Model,
+} from "./model"
 import { GotCommandMessage, GotPopoverMessage, type Message } from "./message"
 
-type RepositoryOption = Readonly<{
-  value: string
-  owner: string
-  repo: string
-  isPrivate: boolean
-  enabled: boolean
+export type ViewInputs = Readonly<{
+  trigger: ReadonlyArray<Attribute<never>>
 }>
 
-const RepositoryCommand = UiCommand.create<RepositoryOption, string>()
+export const view = Submodel.defineView<Model, Message, ViewInputs>(
+  (model, inputs, h) => {
+    const slotId = "repository-selector"
+    const labelId = `${slotId}-label`
 
-const repositoryValue = (repository: {
-  readonly owner: string
-  readonly repo: string
-}): string => `${repository.owner}/${repository.repo}`
-
-const toRepositoryOption = (
-  repository: RepositoryManagement.RepositorySummary,
-): RepositoryOption => ({
-  value: repositoryValue(repository),
-  owner: repository.owner,
-  repo: repository.repo,
-  isPrivate: repository.isPrivate,
-  enabled: repository.enabled,
-})
-
-const repositoryOptions = (model: Model): ReadonlyArray<RepositoryOption> => {
-  switch (model.repositories._tag) {
-    case "RepositoriesLoaded":
-      return model.repositories.repositories.map(toRepositoryOption)
-    case "RepositoriesLoading":
-    case "RepositoriesFailed":
-      return []
-  }
-}
-
-const repositoryByValue = (
-  repositories: ReadonlyArray<RepositoryOption>,
-  value: string | null,
-): RepositoryOption | null =>
-  value === null
-    ? null
-    : (repositories.find((repository) => repository.value === value) ?? null)
-
-const repositoryInitials = (repository: RepositoryOption): string =>
-  repository.owner.slice(0, 2).toLocaleLowerCase()
-
-const selectorPlaceholder = (model: Model): string => {
-  switch (model.repositories._tag) {
-    case "RepositoriesLoading":
-      return "Loading repositories..."
-    case "RepositoriesFailed":
-      return "Repositories unavailable"
-    case "RepositoriesLoaded":
-      return "No repositories connected"
-  }
-}
-
-const commandEmptyContent = (
-  model: Model,
-  repositories: ReadonlyArray<RepositoryOption>,
-): string => {
-  if (model.repositories._tag === "RepositoriesFailed") {
-    return model.repositories.message
-  }
-  if (model.repositories._tag === "RepositoriesLoading") {
-    return "Loading repositories..."
-  }
-  return repositories.length === 0
-    ? "No repositories connected."
-    : "No repositories found."
-}
-
-export const view = Submodel.defineView<Model, Message>((model, h) => {
-  const slotId = "repository-selector"
-  const labelId = `${slotId}-label`
-
-  return h.submodel({
-    slotId,
-    model: model.popover,
-    view: Popover.view,
-    toParentMessage: (message) => GotPopoverMessage({ message }),
-    viewInputs: {
-      ariaLabelledBy: labelId,
-      focusSelector: `#${UiCommand.inputId(model.command.id)}`,
-      anchor: {
-        placement: "bottom-end",
-        gap: 6,
-        padding: 8,
+    return h.submodel({
+      slotId,
+      model: model.popover,
+      view: Popover.view,
+      toParentMessage: (message) => GotPopoverMessage({ message }),
+      viewInputs: {
+        ariaLabelledBy: labelId,
+        focusSelector: `#${UiCommand.inputId(model.command.id)}`,
+        anchor: {
+          placement: "bottom-end",
+          gap: 6,
+          padding: 8,
+        },
+        toView: popoverView({ labelId, h, model, trigger: inputs.trigger }),
       },
-      toView: popoverView({ labelId, h, model }),
-    },
-  })
-})
+    })
+  },
+)
 
 interface PopoverViewInputs {
+  readonly trigger: ReadonlyArray<Attribute<never>>
   readonly labelId: string
   readonly h: HtmlBuilder<Message>
   readonly model: Model
 }
 
 const popoverView =
-  ({ labelId, h, model }: PopoverViewInputs) =>
+  ({ labelId, h, model, trigger }: PopoverViewInputs) =>
   ({ backdrop, button, isVisible, panel }: Popover.RenderInfo): Html =>
     h.div(
-      [
-        h.Class(
-          "relative flex shrink-0 w-full p-2 items-center group-data-[collapsed]/sidebar:justify-center",
-        ),
-      ],
+      [...trigger, h.Class("relative flex shrink-0 w-full items-center")],
       [
         selectorButton(h, model, labelId, button),
         ...selectorOverlay(h, model, isVisible, backdrop, panel),
@@ -128,8 +64,9 @@ const selectorButton = (
   labelId: string,
   attributes: ReadonlyArray<ChildAttribute>,
 ): Html => {
-  const repositories = repositoryOptions(model)
-  const repository = repositoryByValue(repositories, model.selected)
+  const repository = Option.getOrNull(
+    Option.map(getSelectedRepository(model), toRepositoryOption),
+  )
   const label =
     repository === null
       ? `${selectorPlaceholder(model)}. Change repository`
@@ -475,3 +412,62 @@ const repositorySelectionSlot = (
     ],
     isSelected ? [Icon.check("size-3.5")] : [],
   )
+
+type RepositoryOption = Readonly<{
+  value: string
+  owner: string
+  repo: string
+  isPrivate: boolean
+  enabled: boolean
+}>
+
+const RepositoryCommand = UiCommand.create<RepositoryOption, string>()
+
+const toRepositoryOption = (
+  repository: RepositoryManagement.RepositorySummary,
+): RepositoryOption => ({
+  value: repositoryValue(repository),
+  owner: repository.owner,
+  repo: repository.repo,
+  isPrivate: repository.isPrivate,
+  enabled: repository.enabled,
+})
+
+const repositoryOptions = (model: Model): ReadonlyArray<RepositoryOption> => {
+  switch (model.repositories._tag) {
+    case "RepositoriesLoaded":
+      return model.repositories.repositories.map(toRepositoryOption)
+    case "RepositoriesLoading":
+    case "RepositoriesFailed":
+      return []
+  }
+}
+
+const repositoryInitials = (repository: RepositoryOption): string =>
+  repository.owner.slice(0, 2).toLocaleLowerCase()
+
+const selectorPlaceholder = (model: Model): string => {
+  switch (model.repositories._tag) {
+    case "RepositoriesLoading":
+      return "Loading repositories..."
+    case "RepositoriesFailed":
+      return "Repositories unavailable"
+    case "RepositoriesLoaded":
+      return "No repositories connected"
+  }
+}
+
+const commandEmptyContent = (
+  model: Model,
+  repositories: ReadonlyArray<RepositoryOption>,
+): string => {
+  if (model.repositories._tag === "RepositoriesFailed") {
+    return model.repositories.message
+  }
+  if (model.repositories._tag === "RepositoriesLoading") {
+    return "Loading repositories..."
+  }
+  return repositories.length === 0
+    ? "No repositories connected."
+    : "No repositories found."
+}

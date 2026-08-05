@@ -49,11 +49,12 @@ const openLoadedModel = (
 
 const commandInput = Scene.selector("#repository-selector-command-input")
 const popoverPanel = Scene.selector("#repository-selector-popover-panel")
+const sceneView = Scene.withViewInputs(RepositorySelector.view, { trigger: [] })
 
 describe("RepositorySelector", () => {
   it("lets the command input own focus without closing the popover", () => {
     Scene.scene(
-      { update: RepositorySelector.update, view: RepositorySelector.view },
+      { update: RepositorySelector.update, view: sceneView() },
       Scene.given(openModel()),
       Scene.expect(commandInput).toExist(),
       Scene.expect(popoverPanel).not.toHaveAttr("tabIndex"),
@@ -65,7 +66,7 @@ describe("RepositorySelector", () => {
 
   it("renders loaded repositories from the model", () => {
     Scene.scene(
-      { update: RepositorySelector.update, view: RepositorySelector.view },
+      { update: RepositorySelector.update, view: sceneView() },
       Scene.given(openLoadedModel()),
       Scene.expect(popoverPanel).toContainText("effect"),
       Scene.expect(popoverPanel).toContainText("secret-project"),
@@ -79,7 +80,7 @@ describe("RepositorySelector", () => {
 
   it("renders an empty connected-repositories state", () => {
     Scene.scene(
-      { update: RepositorySelector.update, view: RepositorySelector.view },
+      { update: RepositorySelector.update, view: sceneView() },
       Scene.given(openLoadedModel([], null)),
       Scene.expect(popoverPanel).toContainText("No repositories connected"),
       acknowledgeAnchor,
@@ -89,7 +90,7 @@ describe("RepositorySelector", () => {
 
   it("renders repository load failures", () => {
     Scene.scene(
-      { update: RepositorySelector.update, view: RepositorySelector.view },
+      { update: RepositorySelector.update, view: sceneView() },
       Scene.given({
         ...openModel(),
         repositories:
