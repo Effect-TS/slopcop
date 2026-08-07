@@ -12,6 +12,7 @@ import { evo } from "foldkit/struct"
 import * as Url from "foldkit/url"
 import { ApiClient } from "./api-client"
 import * as AppSidebar from "./components/app-sidebar/index"
+import * as AutoLabeling from "./features/auto-labeling"
 import * as Icon from "./features/icon"
 import * as Setup from "./features/setup"
 import * as RepositorySelector from "./components/repository-selector"
@@ -20,6 +21,7 @@ import * as Router from "./router"
 // MODEL
 
 export const Model = Schema.Struct({
+  autoLabeling: AutoLabeling.Model,
   setup: Setup.Model,
   sidebar: AppSidebar.Model,
   route: Router.AppRoute,
@@ -52,11 +54,17 @@ export const GotSetupMessage = m("GotSetupMessage", {
 })
 export type GotSetupMessage = typeof GotSetupMessage.Type
 
+export const GotAutoLabelingMessage = m("GotAutoLabelingMessage", {
+  message: AutoLabeling.Message,
+})
+export type GotAutoLabelingMessage = typeof GotAutoLabelingMessage.Type
+
 export const Message = Schema.Union([
   ClickedLink,
   ChangedUrl,
   CompletedLoadExternal,
   CompletedNavigateInternal,
+  GotAutoLabelingMessage,
   GotSidebarMessage,
   GotSetupMessage,
 ])
@@ -122,6 +130,14 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       CompletedLoadExternal: () => [model, []],
       CompletedNavigateInternal: () => [model, []],
 
+      GotAutoLabelingMessage: ({ message: autoLabelingMessage }) => {
+        const [autoLabeling] = AutoLabeling.update(
+          model.autoLabeling,
+          autoLabelingMessage,
+        )
+        return [evo(model, { autoLabeling: () => autoLabeling }), []]
+      },
+
       GotSidebarMessage: ({ message: sidebarMessage }) => {
         const [sidebar, commands] = AppSidebar.update(
           model.sidebar,
@@ -173,7 +189,12 @@ export const init: Runtime.RoutingApplicationInit<
   const [setup, setupCommands] = Setup.init()
 
   return [
-    { route: Router.urlToAppRoute(url), setup, sidebar },
+    {
+      autoLabeling: AutoLabeling.init(),
+      route: Router.urlToAppRoute(url),
+      setup,
+      sidebar,
+    },
     [...mapSidebarCommands(commands), ...mapSetupCommands(setupCommands)],
   ]
 }
@@ -246,6 +267,21 @@ const comingSoonView = (h: HtmlBuilder<Message>) =>
     ],
   )
 
+const routeView = (model: Model, h: HtmlBuilder<Message>) => {
+  switch (model.route._tag) {
+    case "AutoLabeling":
+      return h.submodel({
+        slotId: "auto-labeling",
+        model: model.autoLabeling,
+        view: AutoLabeling.view,
+        toParentMessage: (message) => GotAutoLabelingMessage({ message }),
+      })
+    case "Root":
+    case "NotFound":
+      return comingSoonView(h)
+  }
+}
+
 export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
   title:
     model.setup._tag === "Ready" ? "SlopCop" : "Connect repositories | SlopCop",
@@ -257,9 +293,13 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
           view: AppSidebar.view,
           viewInputs: {
             navigationGroups,
+            pageTitle:
+              model.route._tag === "AutoLabeling"
+                ? "Auto-Labeling"
+                : "Overview",
             toNavigationHref: navigationHref,
             isNavigationItemCurrent: (value) => model.route._tag === value,
-            toView: (_) => comingSoonView(h),
+            toView: (_) => routeView(model, h),
           },
           toParentMessage: (message) => GotSidebarMessage({ message }),
         })

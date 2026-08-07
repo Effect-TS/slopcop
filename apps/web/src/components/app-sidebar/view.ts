@@ -45,6 +45,7 @@ export type NavigationConfig = Readonly<{
 
 export type ViewInputs = Readonly<{
   navigationGroups: ReadonlyArray<NavigationGroup>
+  pageTitle: string
   toNavigationHref: (value: NavigationValue) => string
   isNavigationItemCurrent: (value: NavigationValue) => boolean
   toView: (render: RenderInfo) => Html
@@ -89,6 +90,7 @@ const desktopSidebar = (
     isCollapsed,
     layout,
     navigationGroups,
+    pageTitle,
     panel,
     toNavigationHref,
     toView,
@@ -98,6 +100,7 @@ const desktopSidebar = (
 
   const main = sidebarMain(h, model, {
     content,
+    pageTitle,
     sidebarTrigger: button,
   })
 
@@ -146,6 +149,7 @@ const mobileSidebar = (
     isVisible,
     layout,
     navigationGroups,
+    pageTitle,
     panel,
     title,
     toNavigationHref,
@@ -155,6 +159,7 @@ const mobileSidebar = (
   const content = toView({ trigger: button })
   const main = sidebarMain(h, model, {
     content,
+    pageTitle,
     sidebarTrigger: button,
   })
 
@@ -220,16 +225,18 @@ const sidebarMain = (
   model: Model,
   {
     content,
+    pageTitle,
     sidebarTrigger,
   }: {
     readonly content: Html
+    readonly pageTitle: string
     readonly sidebarTrigger: ReadonlyArray<ChildAttribute>
   },
 ): Html =>
   h.main(
     [h.Class("min-w-0 flex-1 bg-background text-foreground")],
     [
-      mainHeader(h, model, { sidebarTrigger }),
+      mainHeader(h, model, { pageTitle, sidebarTrigger }),
       h.div(
         [h.Class("grid min-h-[calc(100svh-4rem)] place-items-center p-6")],
         [content],
@@ -412,8 +419,12 @@ const mainHeader = (
   h: HtmlBuilder<Message>,
   model: Model,
   {
+    pageTitle,
     sidebarTrigger,
-  }: { readonly sidebarTrigger: ReadonlyArray<ChildAttribute> },
+  }: {
+    readonly pageTitle: string
+    readonly sidebarTrigger: ReadonlyArray<ChildAttribute>
+  },
 ): Html => {
   const repository = Option.match(
     RepositorySelector.selectedRepository(model.repositorySelector),
@@ -447,7 +458,7 @@ const mainHeader = (
             [],
             [
               h.p([h.Class("text-xs font-medium")], [repository]),
-              h.h1([h.Class("font-bold")], ["Overview"]),
+              h.h1([h.Class("font-bold")], [pageTitle]),
             ],
           ),
         ],

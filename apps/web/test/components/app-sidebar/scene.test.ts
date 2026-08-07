@@ -14,6 +14,7 @@ const [model] = AppSidebar.init({
 })
 
 const sceneView = Scene.withViewInputs(AppSidebar.view, {
+  pageTitle: "Auto-Labeling",
   navigationGroups: [
     {
       label: "Patrol",
