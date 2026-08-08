@@ -57,10 +57,6 @@ export class PullRequestLabeling extends Context.Service<
       ),
     )
     const decisions = yield* LabelingDecisionsRepo
-    const confidenceThreshold = yield* Config.schema(
-      Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 })),
-      "LABEL_CONFIDENCE_THRESHOLD",
-    ).pipe(Config.withDefault(0.75))
 
     const processEvent = Effect.fn("PullRequestLabeling.processEvent")(
       function* (event: PullRequestWebhookEvent.PullRequestWebhookEvent) {
@@ -102,7 +98,6 @@ export class PullRequestLabeling extends Context.Service<
           rules: aiRules,
           decisions: classification.decisions,
           currentLabels,
-          confidenceThreshold,
         })
         yield* rules.assertRevision(repository.id, snapshot.revision)
 

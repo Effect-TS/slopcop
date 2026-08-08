@@ -4,13 +4,13 @@ export interface LabelPolicyRule {
   readonly id: string
   readonly label: string
   readonly mode: "add-only" | "reconcile"
+  readonly confidenceThreshold: number
 }
 
 export interface LabelPolicyInput {
   readonly rules: ReadonlyArray<LabelPolicyRule>
   readonly decisions: ReadonlyArray<LabelClassification.RuleDecision>
   readonly currentLabels: ReadonlySet<string>
-  readonly confidenceThreshold: number
 }
 
 export interface LabelPlan {
@@ -22,12 +22,19 @@ export interface LabelPlan {
 }
 
 export const planLabels = (input: LabelPolicyInput): LabelPlan => {
+  const thresholds = new Map(
+    input.rules.map((rule) => [rule.id, rule.confidenceThreshold]),
+  )
   const selected = new Set<string>(
     input.decisions
-      .filter(
-        (decision) =>
-          decision.applies && decision.confidence >= input.confidenceThreshold,
-      )
+      .filter((decision) => {
+        const threshold = thresholds.get(decision.ruleId)
+        return (
+          threshold !== undefined &&
+          decision.applies &&
+          decision.confidence >= threshold
+        )
+      })
       .map((decision) => decision.ruleId),
   )
   const add = new Set<string>()
