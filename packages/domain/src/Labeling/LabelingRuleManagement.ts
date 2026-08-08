@@ -133,6 +133,25 @@ export const ListGitHubLabelsResponse = Schema.Struct({
   labels: Schema.Array(GitHubLabel.GitHubLabel),
 })
 
+export const ListRuleTestCandidatesQuery = Schema.Struct({
+  limit: Schema.optionalKey(
+    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })),
+  ),
+})
+
+export const RuleTestCandidate = Schema.Struct({
+  number: Schema.Int.check(Schema.isGreaterThan(0)),
+  title: Schema.String,
+  draft: Schema.Boolean,
+  author: Schema.NullOr(Schema.String),
+  updatedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+})
+export type RuleTestCandidate = typeof RuleTestCandidate.Type
+
+export const ListRuleTestCandidatesResponse = Schema.Struct({
+  candidates: Schema.Array(RuleTestCandidate),
+})
+
 export const ValidateCandidateLabelRequest = Schema.Struct({
   label: GitHubLabel.GitHubLabelName,
 })

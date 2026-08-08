@@ -129,6 +129,85 @@ describe("GitHubClient retries", () => {
 })
 
 describe("GitHubClient pagination", () => {
+  it.effect(
+    "lists only the requested recent open pull request summaries",
+    () => {
+      const attempts: Array<number> = []
+      const layer = makeLayer(
+        [
+          Response.json(
+            [
+              {
+                number: 42,
+                title: "Newest pull request",
+                draft: false,
+                user: { login: "octocat" },
+                updated_at: "2026-07-23T12:00:00Z",
+              },
+              {
+                number: 41,
+                title: "Draft pull request",
+                draft: true,
+                user: null,
+                updated_at: null,
+              },
+            ],
+            {
+              headers: {
+                link: '<https://api.github.com/repos/effect-ts/effect/pulls?page=2>; rel="next"',
+              },
+            },
+          ),
+          Response.json([
+            {
+              number: 40,
+              title: "Older pull request",
+              draft: false,
+            },
+            {
+              number: 39,
+              title: "Outside requested bound",
+              draft: false,
+            },
+          ]),
+        ],
+        attempts,
+      )
+
+      return Effect.gen(function* () {
+        const client = yield* GitHubClient
+        const candidates = yield* client.listOpenPullRequests(repository, 3)
+
+        expect(candidates).toEqual([
+          {
+            number: 42,
+            title: "Newest pull request",
+            draft: false,
+            author: "octocat",
+            updatedAt: Schema.decodeUnknownSync(Schema.DateTimeUtcFromString)(
+              "2026-07-23T12:00:00Z",
+            ),
+          },
+          {
+            number: 41,
+            title: "Draft pull request",
+            draft: true,
+            author: null,
+            updatedAt: null,
+          },
+          {
+            number: 40,
+            title: "Older pull request",
+            draft: false,
+            author: null,
+            updatedAt: null,
+          },
+        ])
+        expect(attempts).toHaveLength(2)
+      }).pipe(Effect.provide(layer))
+    },
+  )
+
   it.effect("collects required checks from every effective-rules page", () => {
     const attempts: Array<number> = []
     const layer = makeLayer(

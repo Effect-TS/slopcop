@@ -170,6 +170,7 @@ const layer = (state: State) =>
             state.evidenceCalls++
             return Stream.fromIterable(state.files)
           },
+          listOpenPullRequests: () => unavailable,
           getPullRequest: () => unavailable,
           listItemLabels: () => unavailableStream,
           addItemLabels: () => unavailable,

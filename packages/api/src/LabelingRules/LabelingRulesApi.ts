@@ -13,6 +13,7 @@ import {
   LabelingRulesRevisionConflict,
   RepositoryNotConfigured,
   PullRequestNotFound,
+  RuleTestCandidatesUnavailable,
 } from "./Errors.ts"
 import { LabelingAdminMiddleware } from "./Security.ts"
 
@@ -27,6 +28,7 @@ const allErrors = [
   GitHubLabelValidationUnavailable,
   PullRequestNotFound,
   LabelingRuleTestUnavailable,
+  RuleTestCandidatesUnavailable,
 ]
 
 export class LabelingRulesApi extends HttpApiGroup.make("labelingRules")
@@ -53,6 +55,16 @@ export class LabelingRulesApi extends HttpApiGroup.make("labelingRules")
       success: LabelingRuleManagement.ListGitHubLabelsResponse,
       error: allErrors,
     }),
+    HttpApiEndpoint.get(
+      "listRuleTestCandidates",
+      "/labeling-rules/test-candidates",
+      {
+        params: LabelingRuleManagement.RepositoryPath,
+        query: LabelingRuleManagement.ListRuleTestCandidatesQuery,
+        success: LabelingRuleManagement.ListRuleTestCandidatesResponse,
+        error: allErrors,
+      },
+    ),
     HttpApiEndpoint.post(
       "validateCandidateLabel",
       "/labeling-rules/validate-label",

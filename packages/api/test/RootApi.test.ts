@@ -42,6 +42,11 @@ describe("RootApi", () => {
         "/api/v1/repositories/{owner}/{repo}/labeling-rules/{ruleId}/test"
       ]?.post?.security,
     ).toEqual([{ access: [] }])
+    expect(
+      specification.paths[
+        "/api/v1/repositories/{owner}/{repo}/labeling-rules/test-candidates"
+      ]?.get?.security,
+    ).toEqual([{ access: [] }])
   })
 
   test("exposes authenticated setup endpoints", () => {

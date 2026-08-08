@@ -109,6 +109,7 @@ const makeLayer = (
               patch: "patch",
             },
           ]),
+        listOpenPullRequests: () => unavailable,
         listItemLabels: () => Stream.empty,
         addItemLabels: () =>
           Effect.sync(() => {

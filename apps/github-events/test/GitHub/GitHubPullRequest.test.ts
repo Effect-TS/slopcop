@@ -86,6 +86,7 @@ const makeLayer = (result: Option.Option<GitHubRepository.GitHubRepository>) =>
         getRepositoryLabel: () => unavailable,
         listRepositoryLabels: () => unavailableStream,
         listPullRequestFiles: () => unavailableStream,
+        listOpenPullRequests: () => unavailable,
         getPullRequest: () => unavailable,
         listItemLabels: () => unavailableStream,
         addItemLabels: () => unavailable,

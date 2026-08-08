@@ -10,6 +10,7 @@ import {
   LabelingRulesRevisionConflict,
   RepositoryNotConfigured as ApiRepositoryNotConfigured,
   PullRequestNotFound,
+  RuleTestCandidatesUnavailable,
 } from "@slopcop/api/LabelingRules/Errors"
 import { LabelingAdminIdentity } from "@slopcop/api/LabelingRules/Security"
 import * as LabelingRule from "@slopcop/domain/Labeling/LabelingRule"
@@ -28,6 +29,9 @@ import {
   LabelingRuleTester,
   type LabelingRuleTestError,
 } from "../LabelingRuleTester.ts"
+import { LabelingRuleTestCandidates } from "../LabelingRuleTestCandidates.ts"
+import { GitHubClientError } from "@slopcop/github/GitHubClient"
+import { RepositoryNotConfigured } from "@slopcop/github/Errors"
 
 const decodeApiRule = Schema.decodeEffect(
   Schema.toType(LabelingRuleManagement.PublicLabelingRule),
@@ -207,12 +211,30 @@ const mapRuleTestError = (
         }),
       )
 
+const mapRepositoryNotConfigured = (error: RepositoryNotConfigured) =>
+  Effect.fail(
+    new ApiRepositoryNotConfigured({
+      repository: error.repository,
+      message: `${error.repository} is not a configured SlopCop repository. Configure it before managing labeling rules.`,
+    }),
+  )
+
+const mapCandidatesError = (repository: string, error: GitHubClientError) =>
+  Effect.fail(
+    new RuleTestCandidatesUnavailable({
+      repository,
+      retryable: error.retryable,
+      message: `Recent open pull requests for ${repository} are unavailable. Retry later; no repository data or labels were changed.`,
+    }),
+  )
+
 export const LabelingRulesApiHandlersLayer = HttpApiBuilder.group(
   RootApi,
   "labelingRules",
   Effect.fnUntraced(function* (handlers) {
     const rules = yield* LabelingRules
     const tester = yield* LabelingRuleTester
+    const testCandidates = yield* LabelingRuleTestCandidates
 
     return handlers.handleAll({
       listRules: Effect.fnUntraced(function* ({ params, query }) {
@@ -258,6 +280,21 @@ export const LabelingRulesApiHandlersLayer = HttpApiBuilder.group(
           .pipe(Effect.catch(mapRuleError))
         return { labels: available }
       }),
+      listRuleTestCandidates: ({ params, query }) => {
+        const repository = `${params.owner}/${params.repo}`
+        return testCandidates
+          .list({ owner: params.owner, repo: params.repo }, query.limit ?? 50)
+          .pipe(
+            Effect.map((candidates) => ({ candidates })),
+            Effect.catchTag(
+              "RepositoryNotConfigured",
+              mapRepositoryNotConfigured,
+            ),
+            Effect.catchTag("GitHubClientError", (error) =>
+              mapCandidatesError(repository, error),
+            ),
+          )
+      },
       validateCandidateLabel: ({ params, payload }) =>
         rules
           .validateCandidateLabel(

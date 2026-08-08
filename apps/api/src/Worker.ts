@@ -15,6 +15,7 @@ import { D1Database, makeDatabaseLayer } from "@slopcop/infra/Sql"
 import * as CloudflareResourceNames from "@slopcop/infra/CloudflareResourceNames"
 import { Repositories } from "./GitHub/Repositories.ts"
 import { LabelingRuleTester } from "./Labeling/LabelingRuleTester.ts"
+import { LabelingRuleTestCandidates } from "./Labeling/LabelingRuleTestCandidates.ts"
 import { OpenAiLanguageModel } from "@effect/ai-openai"
 import { OpenAiLayer } from "@slopcop/labeling/Ai"
 
@@ -47,6 +48,7 @@ export const makeWorker = (options: {
         Layer.provide(FetchHttpClient.layer),
         Layer.provide(LabelingRules.layer),
         Layer.provide(LabelingRuleTester.layer),
+        Layer.provide(LabelingRuleTestCandidates.layer),
         Layer.provide(
           OpenAiLanguageModel.model(labelingModel, {
             reasoning: { effort: "low" },

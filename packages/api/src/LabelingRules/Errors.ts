@@ -101,3 +101,13 @@ export class LabelingRuleTestUnavailable extends Schema.TaggedErrorClass<Labelin
   },
   { httpApiStatus: 503 },
 ) {}
+
+export class RuleTestCandidatesUnavailable extends Schema.TaggedErrorClass<RuleTestCandidatesUnavailable>()(
+  "RuleTestCandidatesUnavailable",
+  {
+    repository: Schema.String,
+    retryable: Schema.Boolean,
+    message: Schema.String,
+  },
+  { httpApiStatus: 503 },
+) {}
