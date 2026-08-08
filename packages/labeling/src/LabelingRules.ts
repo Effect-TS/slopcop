@@ -38,6 +38,10 @@ import {
   type LabelingRuleAuditLogRepoError,
   type LabelingRuleAuditActivityRow,
 } from "./repositories/LabelingRuleAuditLogRepo.ts"
+import {
+  LabelingRuleStatsRepo,
+  type LabelingRuleStatsRepoError,
+} from "./repositories/LabelingRuleStatsRepo.ts"
 
 export interface AdminIdentity {
   readonly actor: string
@@ -48,6 +52,17 @@ export interface LabelingRuleSet {
   readonly repository: string
   readonly revision: number
   readonly rules: ReadonlyArray<LabelingRule.LabelingRule>
+}
+
+export interface ManagedLabelingRuleSet extends LabelingRuleSet {
+  readonly activity: {
+    readonly windowDays: 30
+    readonly totalFires: number
+    readonly rules: ReadonlyArray<{
+      readonly ruleId: LabelingRule.LabelingRule["id"]
+      readonly fires: number
+    }>
+  }
 }
 
 export type CreateLabelingRule =
@@ -79,6 +94,7 @@ type LabelingRulesReadError =
   | RepositoryNotConfigured
   | GitHubRepositoriesRepoError
   | LabelingRulesRepoError
+  | LabelingRuleStatsRepoError
   | LabelingRuleAuditLogRepoError
   | LabelingRuleNotFound
 
@@ -99,7 +115,7 @@ export class LabelingRules extends Context.Service<
     readonly list: (
       repository: RepositoryName,
       options: ListRulesOptions,
-    ) => Effect.Effect<LabelingRuleSet, LabelingRulesReadError>
+    ) => Effect.Effect<ManagedLabelingRuleSet, LabelingRulesReadError>
     readonly get: (
       repository: RepositoryName,
       ruleId: LabelingRule.LabelingRule["id"],
@@ -188,6 +204,7 @@ export class LabelingRules extends Context.Service<
   make: Effect.gen(function* () {
     const repositoryRows = yield* GitHubRepositoriesRepo
     const rules = yield* LabelingRulesRepo
+    const stats = yield* LabelingRuleStatsRepo
     const auditLog = yield* LabelingRuleAuditLogRepo
     const github = yield* GitHubClient
     const executeCommand = yield* makeLabelingRuleCommands
@@ -295,11 +312,24 @@ export class LabelingRules extends Context.Service<
         repository.id,
         options,
       )
+      const now = yield* DateTime.now
+      const activityRules = yield* stats.listRecentFires(
+        repository.id,
+        DateTime.toEpochMillis(now) - 30 * 24 * 60 * 60 * 1_000,
+      )
       return {
         repositoryId: repository.id,
         repository: repository.slug,
         revision: repository.rulesRevision,
         rules: configuredRules,
+        activity: {
+          windowDays: 30 as const,
+          totalFires: activityRules.reduce(
+            (total, activity) => total + activity.fires,
+            0,
+          ),
+          rules: activityRules,
+        },
       }
     })
 
@@ -722,6 +752,7 @@ export class LabelingRules extends Context.Service<
       GitHubClient.layer,
       LabelingRulesRepo.layer,
       LabelingRuleAuditLogRepo.layer,
+      LabelingRuleStatsRepo.layer,
     ]),
   )
 }

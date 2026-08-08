@@ -6,6 +6,7 @@ import * as GitHubWebhookEvent from "@slopcop/domain/GitHub/GitHubWebhookEvent"
 import * as RepositoryManagement from "@slopcop/domain/GitHub/RepositoryManagement"
 import * as LabelClassification from "@slopcop/domain/Labeling/LabelClassification"
 import * as LabelingRule from "@slopcop/domain/Labeling/LabelingRule"
+import * as LabelingRuleManagement from "@slopcop/domain/Labeling/LabelingRuleManagement"
 import * as Option from "effect/Option"
 import { describe, expect, it } from "vite-plus/test"
 
@@ -95,6 +96,28 @@ describe("domain schemas", () => {
       isPrivate: false,
       enabled: true,
     })
+  })
+
+  it("bounds labeling rule activity counts", () => {
+    const summary = {
+      windowDays: 30,
+      totalFires: 3,
+      rules: [
+        {
+          ruleId: "01981f17-26e0-7c4d-aad7-0fd3c554bb6f",
+          fires: 3,
+        },
+      ],
+    }
+    expect(
+      decodes(LabelingRuleManagement.LabelingRuleActivitySummary, summary),
+    ).toBe(true)
+    expect(
+      decodes(LabelingRuleManagement.LabelingRuleActivitySummary, {
+        ...summary,
+        totalFires: -1,
+      }),
+    ).toBe(false)
   })
 
   it("accepts edited pull request events with an installation id", () => {

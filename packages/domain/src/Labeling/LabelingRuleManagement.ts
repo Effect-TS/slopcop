@@ -44,10 +44,22 @@ export const ListLabelingRulesQuery = Schema.Struct({
   includeDisabled: Schema.optionalKey(Schema.Boolean),
 })
 
+export const LabelingRuleFireCount = Schema.Struct({
+  ruleId: LabelingRuleId,
+  fires: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+})
+
+export const LabelingRuleActivitySummary = Schema.Struct({
+  windowDays: Schema.Literal(30),
+  totalFires: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  rules: Schema.Array(LabelingRuleFireCount),
+})
+
 export const ListLabelingRulesResponse = Schema.Struct({
   repository: Schema.String,
   revision: Schema.Int,
   rules: Schema.Array(PublicLabelingRule),
+  activity: LabelingRuleActivitySummary,
 })
 
 export const PublicLabelingRuleAuditValue = Schema.Struct({

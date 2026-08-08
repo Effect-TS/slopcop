@@ -199,6 +199,7 @@ export const LabelingRulesApiHandlersLayer = HttpApiBuilder.group(
           repository: result.repository,
           revision: result.revision,
           rules: encoded,
+          activity: result.activity,
         }
       }),
       listRuleAudit: Effect.fnUntraced(function* ({ params, query }) {
