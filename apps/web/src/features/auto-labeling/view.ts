@@ -7,6 +7,7 @@ import {
   ClosedRuleEditor,
   ConfirmedDeleteRule,
   DismissedDeleteRule,
+  DismissedRowMutationError,
   DismissedRuleTest,
   OpenedDeleteRule,
   OpenedNewRule,
@@ -14,7 +15,11 @@ import {
   OpenedRuleTest,
   RanRuleTest,
   ResetRuleTest,
+  ReloadedRuleEditor,
+  RetriedDeleteRule,
   RetriedRepositoryLoad,
+  RetriedRuleSave,
+  RetriedToggleRule,
   SavedRule,
   SelectedRuleTestCandidate,
   ToggledRule,
@@ -34,6 +39,7 @@ import type {
   RuleDraft,
   RuleKind,
   RuleMode,
+  MutationConflict,
 } from "./model"
 
 type Rule = typeof LabelingRuleManagement.PublicLabelingRule.Type
@@ -199,8 +205,16 @@ const tableView = (
         ],
       ),
       ...(model.rowMutation._tag === "RowMutationFailed"
-        ? [errorBanner(h, model.rowMutation.message)]
-        : []),
+        ? [rowMutationError(h, model.rowMutation.message, false)]
+        : model.rowMutation._tag === "RowMutationConflict"
+          ? [
+              rowMutationError(
+                h,
+                `${model.rowMutation.message} ${conflictSummary(model.rowMutation.conflict)}`,
+                model.rowMutation.conflict.currentRule !== null,
+              ),
+            ]
+          : []),
       h.div(
         [h.Class("mt-4 overflow-hidden rounded-xl border bg-card shadow-sm")],
         [
@@ -331,9 +345,7 @@ const tableRow = (
   index: number,
   fires: number,
 ): Html => {
-  const saving =
-    model.rowMutation._tag === "RowMutationSaving" &&
-    model.rowMutation.ruleId === rule.id
+  const saving = model.rowMutation._tag !== "RowMutationIdle"
   return h.tr(
     [h.Class(rule.enabled ? "" : "bg-muted/15 text-muted-foreground")],
     [
@@ -549,11 +561,22 @@ const editorModal = (h: HtmlBuilder<Message>, model: Model): Html => {
   if (model.editor._tag === "EditorClosed") return h.div([], [])
   const draft = model.editor.draft
   const saving = model.editor._tag === "EditorSaving"
+  const conflicted = model.editor._tag === "EditorConflict"
   const labels =
     model.repository._tag === "LoadedRepository"
       ? model.repository.data.labels
       : []
-  const isNew = model.editor.ruleId === null
+  const editorRuleId = model.editor.ruleId
+  const isNew = editorRuleId === null
+  const recoveryRule =
+    model.editor._tag === "EditorConflict"
+      ? (model.editor.conflict.currentRule ??
+        (editorRuleId !== null && model.repository._tag === "LoadedRepository"
+          ? (model.repository.data.rules.find(
+              (rule) => rule.id === editorRuleId,
+            ) ?? null)
+          : null))
+      : null
   return modalShell(
     h,
     "rule-editor-title",
@@ -598,20 +621,18 @@ const editorModal = (h: HtmlBuilder<Message>, model: Model): Html => {
         ],
       ),
       ...(model.editor._tag === "EditorFailed"
-        ? [
-            errorBanner(h, model.editor.message),
-            ...(model.editor.currentRule === null
-              ? []
-              : [
-                  h.p(
-                    [h.Class("mt-2 text-xs text-muted-foreground")],
-                    [
-                      `Server version ${model.editor.currentRule.version}: ${model.editor.currentRule.name} uses ${model.editor.currentRule.label}.`,
-                    ],
-                  ),
-                ]),
-          ]
-        : []),
+        ? [errorBanner(h, model.editor.message)]
+        : model.editor._tag === "EditorConflict"
+          ? [
+              editorConflict(
+                h,
+                model.editor.message,
+                model.editor.conflict,
+                recoveryRule,
+                editorRuleId === null || recoveryRule !== null,
+              ),
+            ]
+          : []),
       h.p(
         [h.Class("mt-5 text-sm leading-6 text-muted-foreground")],
         [
@@ -682,11 +703,21 @@ const editorModal = (h: HtmlBuilder<Message>, model: Model): Html => {
           h.button(
             [
               h.Type("button"),
-              ...(saving || !validDraft(draft) ? [h.Disabled(true)] : []),
+              ...(saving || conflicted || !validDraft(draft)
+                ? [h.Disabled(true)]
+                : []),
               h.OnClick(SavedRule()),
               h.Class(primaryButton),
             ],
-            [saving ? "Saving..." : isNew ? "Create rule" : "Save changes"],
+            [
+              saving
+                ? "Saving..."
+                : conflicted
+                  ? "Resolve conflict to save"
+                  : isNew
+                    ? "Create rule"
+                    : "Save changes",
+            ],
           ),
         ],
       ),
@@ -701,6 +732,108 @@ const validDraft = (draft: RuleDraft): boolean =>
   draft.instructions.trim().length > 0 &&
   draft.instructions.length <= 4_000 &&
   draft.exclusiveGroup.length <= 100
+
+const conflictSummary = (conflict: MutationConflict): string => {
+  if (conflict._tag === "RuleVersionConflict") {
+    return `Expected rule version ${conflict.expectedVersion}; current server version is ${conflict.currentRule.version}.`
+  }
+  return `Expected repository revision ${conflict.expectedRevision}; current server revision is ${conflict.actualRevision}.`
+}
+
+const editorConflict = (
+  h: HtmlBuilder<Message>,
+  message: string,
+  conflict: MutationConflict,
+  currentRule: Rule | null,
+  canRetry: boolean,
+): Html =>
+  h.div(
+    [
+      h.Role("alert"),
+      h.Class(
+        "mt-4 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm",
+      ),
+    ],
+    [
+      h.p([h.Class("text-destructive")], [message]),
+      h.p([h.Class("mt-2 text-foreground")], [conflictSummary(conflict)]),
+      ...(currentRule === null
+        ? []
+        : [
+            h.p(
+              [h.Class("mt-1 text-xs text-muted-foreground")],
+              [
+                `Current server rule: ${currentRule.name} uses ${currentRule.label}.`,
+              ],
+            ),
+          ]),
+      h.div(
+        [h.Class("mt-3 flex flex-wrap gap-2")],
+        [
+          h.button(
+            [
+              h.Type("button"),
+              ...(currentRule === null ? [h.Disabled(true)] : []),
+              h.OnClick(ReloadedRuleEditor()),
+              h.Class(secondaryButton),
+            ],
+            ["Reload current server values"],
+          ),
+          h.button(
+            [
+              h.Type("button"),
+              ...(canRetry ? [] : [h.Disabled(true)]),
+              h.OnClick(RetriedRuleSave()),
+              h.Class(primaryButton),
+            ],
+            ["Keep draft and retry latest"],
+          ),
+        ],
+      ),
+    ],
+  )
+
+const rowMutationError = (
+  h: HtmlBuilder<Message>,
+  message: string,
+  retryable: boolean,
+): Html =>
+  h.div(
+    [
+      h.Role("alert"),
+      h.Class(
+        "mt-4 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive",
+      ),
+    ],
+    [
+      h.p([], [message]),
+      h.div(
+        [h.Class("mt-3 flex flex-wrap gap-2")],
+        [
+          ...(retryable
+            ? [
+                h.button(
+                  [
+                    h.Type("button"),
+                    h.OnClick(RetriedToggleRule()),
+                    h.Class(secondaryButton),
+                  ],
+                  ["Retry with current version"],
+                ),
+              ]
+            : []),
+          h.button(
+            [
+              h.Type("button"),
+              h.OnClick(DismissedRowMutationError()),
+              h.Class(secondaryButton),
+            ],
+            ["Dismiss"],
+          ),
+        ],
+      ),
+    ],
+  )
 
 const field = (
   h: HtmlBuilder<Message>,
@@ -871,7 +1004,14 @@ const deleteModal = (h: HtmlBuilder<Message>, model: Model): Html => {
       ),
       ...(model.deletion._tag === "DeleteFailed"
         ? [errorBanner(h, model.deletion.message)]
-        : []),
+        : model.deletion._tag === "DeleteConflict"
+          ? [
+              errorBanner(
+                h,
+                `${model.deletion.message} ${conflictSummary(model.deletion.conflict)}`,
+              ),
+            ]
+          : []),
       h.p(
         [h.Class("mt-3 text-sm leading-6 text-muted-foreground")],
         [
@@ -895,10 +1035,28 @@ const deleteModal = (h: HtmlBuilder<Message>, model: Model): Html => {
             ],
             ["Cancel"],
           ),
+          ...(model.deletion._tag === "DeleteConflict" &&
+          model.deletion.conflict.currentRule !== null &&
+          !model.deletion.conflict.currentRule.enabled
+            ? [
+                h.button(
+                  [
+                    h.Type("button"),
+                    h.OnClick(RetriedDeleteRule()),
+                    h.Class(secondaryButton),
+                  ],
+                  ["Retry with current version"],
+                ),
+              ]
+            : []),
           h.button(
             [
               h.Type("button"),
-              ...(rule.enabled || deleting ? [h.Disabled(true)] : []),
+              ...(rule.enabled ||
+              deleting ||
+              model.deletion._tag === "DeleteConflict"
+                ? [h.Disabled(true)]
+                : []),
               h.OnClick(ConfirmedDeleteRule()),
               h.Class(
                 "inline-flex min-h-10 items-center justify-center rounded-lg bg-destructive px-4 py-2 text-sm font-semibold text-white outline-hidden hover:bg-destructive/90 focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50",

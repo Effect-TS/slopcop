@@ -17,7 +17,13 @@ import {
   LoadedRuleTestCandidates,
   type Message,
 } from "./message"
-import { Repository, RuleDraft, RuleId } from "./model"
+import {
+  MutationConflict,
+  Repository,
+  RuleDraft,
+  RuleId,
+  type MutationConflict as MutationConflictType,
+} from "./model"
 
 export type Command = FoldkitCommand.Command<Message, never, ApiClient>
 
@@ -49,10 +55,43 @@ const failureMessage = (error: { readonly _tag: string }): string => {
   }
 }
 
+const mutationConflict = (
+  error:
+    | {
+        readonly _tag: "LabelingRuleConflict"
+        readonly currentRule: Extract<
+          MutationConflictType,
+          { _tag: "RuleVersionConflict" }
+        >["currentRule"]
+      }
+    | {
+        readonly _tag: "LabelingRulesRevisionConflict"
+        readonly currentRule: Extract<
+          MutationConflictType,
+          { _tag: "RepositoryRevisionConflict" }
+        >["currentRule"]
+        readonly expectedRevision: number
+        readonly actualRevision: number
+      },
+  expectedVersion: number,
+): MutationConflictType => {
+  if (error._tag === "LabelingRuleConflict") {
+    return MutationConflict.cases.RuleVersionConflict.make({
+      expectedVersion,
+      currentRule: error.currentRule,
+    })
+  }
+  return MutationConflict.cases.RepositoryRevisionConflict.make({
+    expectedRevision: error.expectedRevision,
+    actualRevision: error.actualRevision,
+    currentRule: error.currentRule,
+  })
+}
+
 export const LoadRepositoryData = FoldkitCommand.define("LoadRepositoryData", {
-  args: { repository: Repository },
+  args: { requestId: Schema.Int, repository: Repository },
   messages: [LoadedRepositoryData, FailedToLoadRepositoryData],
-  execute: ({ repository }) =>
+  execute: ({ repository, requestId }) =>
     Effect.gen(function* () {
       const client = yield* ApiClient
       const [rules, labels] = yield* Effect.all([
@@ -63,6 +102,7 @@ export const LoadRepositoryData = FoldkitCommand.define("LoadRepositoryData", {
         client.labelingRules.listGitHubLabels({ params: repository }),
       ])
       return LoadedRepositoryData({
+        requestId,
         repository,
         revision: rules.revision,
         rules: rules.rules,
@@ -73,6 +113,7 @@ export const LoadRepositoryData = FoldkitCommand.define("LoadRepositoryData", {
       Effect.catch((error) =>
         Effect.succeed(
           FailedToLoadRepositoryData({
+            requestId,
             repository,
             message: failureMessage(error),
           }),
@@ -87,9 +128,10 @@ export const SaveRule = FoldkitCommand.define("SaveRule", {
     ruleId: Schema.NullOr(RuleId),
     version: Schema.NullOr(Schema.Int),
     draft: RuleDraft,
+    requestId: Schema.Int,
   },
   messages: [CompletedSaveRule, FailedToSaveRule],
-  execute: ({ draft, repository, ruleId, version }) =>
+  execute: ({ draft, repository, requestId, ruleId, version }) =>
     Effect.gen(function* () {
       const client = yield* ApiClient
       const payload = {
@@ -113,17 +155,18 @@ export const SaveRule = FoldkitCommand.define("SaveRule", {
               params: { ...repository, ruleId },
               payload: { ...payload, version },
             })
-      return CompletedSaveRule({ repository, rule })
+      return CompletedSaveRule({ requestId, repository, rule })
     }).pipe(
       Effect.catch((error) =>
         Effect.succeed(
           FailedToSaveRule({
+            requestId,
             repository,
             message: failureMessage(error),
-            currentRule:
+            conflict:
               error._tag === "LabelingRuleConflict" ||
               error._tag === "LabelingRulesRevisionConflict"
-                ? error.currentRule
+                ? mutationConflict(error, version ?? 0)
                 : null,
           }),
         ),
@@ -137,23 +180,30 @@ export const ToggleRule = FoldkitCommand.define("ToggleRule", {
     ruleId: RuleId,
     version: Schema.Int,
     enabled: Schema.Boolean,
+    requestId: Schema.Int,
   },
   messages: [CompletedToggleRule, FailedToToggleRule],
-  execute: ({ enabled, repository, ruleId, version }) =>
+  execute: ({ enabled, repository, requestId, ruleId, version }) =>
     Effect.gen(function* () {
       const client = yield* ApiClient
       const rule = yield* client.labelingRules.patchRule({
         params: { ...repository, ruleId },
         payload: { enabled, version },
       })
-      return CompletedToggleRule({ repository, rule })
+      return CompletedToggleRule({ requestId, repository, rule })
     }).pipe(
       Effect.catch((error) =>
         Effect.succeed(
           FailedToToggleRule({
+            requestId,
             repository,
             ruleId,
             message: failureMessage(error),
+            conflict:
+              error._tag === "LabelingRuleConflict" ||
+              error._tag === "LabelingRulesRevisionConflict"
+                ? mutationConflict(error, version)
+                : null,
           }),
         ),
       ),
@@ -161,22 +211,33 @@ export const ToggleRule = FoldkitCommand.define("ToggleRule", {
 })
 
 export const DeleteRule = FoldkitCommand.define("DeleteRule", {
-  args: { repository: Repository, ruleId: RuleId, version: Schema.Int },
+  args: {
+    repository: Repository,
+    requestId: Schema.Int,
+    ruleId: RuleId,
+    version: Schema.Int,
+  },
   messages: [CompletedDeleteRule, FailedToDeleteRule],
-  execute: ({ repository, ruleId, version }) =>
+  execute: ({ repository, requestId, ruleId, version }) =>
     Effect.gen(function* () {
       const client = yield* ApiClient
       yield* client.labelingRules.deleteRule({
         params: { ...repository, ruleId },
         query: { version },
       })
-      return CompletedDeleteRule({ repository, ruleId })
+      return CompletedDeleteRule({ requestId, repository, ruleId })
     }).pipe(
       Effect.catch((error) =>
         Effect.succeed(
           FailedToDeleteRule({
+            requestId,
             repository,
             message: failureMessage(error),
+            conflict:
+              error._tag === "LabelingRuleConflict" ||
+              error._tag === "LabelingRulesRevisionConflict"
+                ? mutationConflict(error, version)
+                : null,
           }),
         ),
       ),

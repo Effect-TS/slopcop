@@ -3,8 +3,12 @@ import * as Schema from "effect/Schema"
 import { describe, expect, it } from "vite-plus/test"
 import {
   CompletedRuleTest,
+  CompletedSaveRule,
+  CompletedToggleRule,
   ConfirmedDeleteRule,
+  FailedToDeleteRule,
   FailedToSaveRule,
+  FailedToToggleRule,
   LoadedRepositoryData,
   LoadedRuleTestCandidates,
   OpenedNewRule,
@@ -12,6 +16,11 @@ import {
   OpenedRuleEditor,
   OpenedRuleTest,
   RanRuleTest,
+  ReloadedRuleEditor,
+  RetriedDeleteRule,
+  RetriedRepositoryLoad,
+  RetriedRuleSave,
+  RetriedToggleRule,
   SavedRule,
   SelectedRepositoryChanged,
   TestRule,
@@ -42,6 +51,7 @@ const rule = Schema.decodeUnknownSync(
 })
 
 const loaded = LoadedRepositoryData({
+  requestId: 1,
   repository,
   revision: 7,
   rules: [rule],
@@ -91,19 +101,181 @@ describe("Auto-labeling update", () => {
       UpdatedRuleName({ name: "My unsaved name" }),
     )
     const [saving] = update(named, SavedRule())
-    const [failed] = update(
+    const [failed, commands] = update(
       saving,
       FailedToSaveRule({
+        requestId: 2,
         repository,
         message: "The server rule changed.",
-        currentRule: rule,
+        conflict: {
+          _tag: "RuleVersionConflict",
+          expectedVersion: 3,
+          currentRule: { ...rule, version: 4 },
+        },
       }),
     )
-    expect(failed.editor._tag).toBe("EditorFailed")
-    if (failed.editor._tag === "EditorFailed") {
+    expect(commands).toEqual([])
+    expect(failed.editor._tag).toBe("EditorConflict")
+    if (failed.editor._tag === "EditorConflict") {
       expect(failed.editor.draft.name).toBe("My unsaved name")
-      expect(failed.editor.currentRule?.version).toBe(3)
+      expect(failed.editor.conflict).toMatchObject({
+        expectedVersion: 3,
+        currentRule: { version: 4 },
+      })
     }
+  })
+
+  it("retries a conflicted draft only after explicit recovery", () => {
+    const [editing] = update(
+      loadedModel(),
+      OpenedRuleEditor({ ruleId: rule.id }),
+    )
+    const [named] = update(
+      editing,
+      UpdatedRuleName({ name: "My unsaved name" }),
+    )
+    const [saving] = update(named, SavedRule())
+    const [conflicted] = update(
+      saving,
+      FailedToSaveRule({
+        requestId: 2,
+        repository,
+        message: "The server rule changed.",
+        conflict: {
+          _tag: "RuleVersionConflict",
+          expectedVersion: 3,
+          currentRule: { ...rule, name: "Server name", version: 4 },
+        },
+      }),
+    )
+
+    const [retrying, commands] = update(conflicted, RetriedRuleSave())
+    expect(retrying.editor._tag).toBe("EditorSaving")
+    expect(commands[0]?.args).toMatchObject({
+      draft: { name: "My unsaved name" },
+      version: 4,
+    })
+  })
+
+  it("reloads current server values only after explicit recovery", () => {
+    const [editing] = update(
+      loadedModel(),
+      OpenedRuleEditor({ ruleId: rule.id }),
+    )
+    const [saving] = update(editing, SavedRule())
+    const currentRule = { ...rule, name: "Server name", version: 4 }
+    const [conflicted] = update(
+      saving,
+      FailedToSaveRule({
+        requestId: 2,
+        repository,
+        message: "The server rule changed.",
+        conflict: {
+          _tag: "RuleVersionConflict",
+          expectedVersion: 3,
+          currentRule,
+        },
+      }),
+    )
+    const [reloaded, commands] = update(conflicted, ReloadedRuleEditor())
+    expect(commands).toEqual([])
+    expect(reloaded.editor).toMatchObject({
+      _tag: "EditorEditing",
+      draft: { name: "Server name" },
+      version: 4,
+    })
+  })
+
+  it("refreshes the table after a repository revision conflict", () => {
+    const [editing] = update(
+      loadedModel(),
+      OpenedRuleEditor({ ruleId: rule.id }),
+    )
+    const [named] = update(
+      editing,
+      UpdatedRuleName({ name: "My unsaved name" }),
+    )
+    const [saving] = update(named, SavedRule())
+    const [conflicted, commands] = update(
+      saving,
+      FailedToSaveRule({
+        requestId: 2,
+        repository,
+        message: "The repository changed.",
+        conflict: {
+          _tag: "RepositoryRevisionConflict",
+          expectedRevision: 7,
+          actualRevision: 8,
+          currentRule: { ...rule, version: 4 },
+        },
+      }),
+    )
+    expect(conflicted.editor).toMatchObject({
+      _tag: "EditorConflict",
+      draft: { name: "My unsaved name" },
+    })
+    expect(commands.map((command) => command.name)).toEqual([
+      "LoadRepositoryData",
+    ])
+    const [refreshed] = update(
+      conflicted,
+      LoadedRepositoryData({
+        ...loaded,
+        requestId: 3,
+        revision: 8,
+        rules: [{ ...rule, version: 4 }],
+      }),
+    )
+    expect(refreshed.editor).toMatchObject({
+      _tag: "EditorConflict",
+      draft: { name: "My unsaved name" },
+    })
+    if (refreshed.repository._tag === "LoadedRepository") {
+      expect(refreshed.repository.data).toMatchObject({
+        revision: 8,
+        rules: [{ version: 4 }],
+      })
+    }
+  })
+
+  it("accepts only the latest repository load response", () => {
+    const [firstLoad] = update(
+      init(),
+      SelectedRepositoryChanged({ repository }),
+    )
+    const [secondLoad] = update(firstLoad, RetriedRepositoryLoad())
+    const [afterStale] = update(secondLoad, loaded)
+    expect(afterStale).toEqual(secondLoad)
+
+    const [afterCurrent] = update(
+      afterStale,
+      LoadedRepositoryData({ ...loaded, requestId: 2, revision: 8 }),
+    )
+    expect(afterCurrent.repository._tag).toBe("LoadedRepository")
+    if (afterCurrent.repository._tag === "LoadedRepository") {
+      expect(afterCurrent.repository.data.revision).toBe(8)
+    }
+  })
+
+  it("ignores stale save and repository responses", () => {
+    const [editing] = update(
+      loadedModel(),
+      OpenedRuleEditor({ ruleId: rule.id }),
+    )
+    const [saving] = update(editing, SavedRule())
+    const [afterStaleSave, saveCommands] = update(
+      saving,
+      CompletedSaveRule({ requestId: 99, repository, rule }),
+    )
+    expect(afterStaleSave).toEqual(saving)
+    expect(saveCommands).toEqual([])
+
+    const newerRule = { ...rule, version: 5 }
+    const [afterStaleLoad] = update(
+      saving,
+      LoadedRepositoryData({ ...loaded, requestId: 99, rules: [newerRule] }),
+    )
+    expect(afterStaleLoad).toEqual(saving)
   })
 
   it("patches enabled state using the server rule version", () => {
@@ -119,6 +291,55 @@ describe("Auto-labeling update", () => {
       version: 3,
       enabled: false,
     })
+  })
+
+  it("keeps toggle intent and retries a conflict with the current version", () => {
+    const [saving] = update(loadedModel(), ToggledRule({ ruleId: rule.id }))
+    const [conflicted, conflictCommands] = update(
+      saving,
+      FailedToToggleRule({
+        requestId: 2,
+        repository,
+        ruleId: rule.id,
+        message: "The rule changed.",
+        conflict: {
+          _tag: "RuleVersionConflict",
+          expectedVersion: 3,
+          currentRule: { ...rule, version: 4 },
+        },
+      }),
+    )
+    expect(conflictCommands).toEqual([])
+    expect(conflicted.rowMutation).toMatchObject({
+      _tag: "RowMutationConflict",
+      enabled: false,
+      expectedVersion: 3,
+    })
+    const [, retryCommands] = update(conflicted, RetriedToggleRule())
+    expect(retryCommands[0]?.args).toMatchObject({
+      version: 4,
+      enabled: false,
+    })
+  })
+
+  it("ignores stale toggle completions", () => {
+    const [saving] = update(loadedModel(), ToggledRule({ ruleId: rule.id }))
+    const [unchanged, commands] = update(
+      saving,
+      CompletedToggleRule({ requestId: 99, repository, rule }),
+    )
+    expect(unchanged).toEqual(saving)
+    expect(commands).toEqual([])
+  })
+
+  it("does not start another row mutation while one is unresolved", () => {
+    const [saving] = update(loadedModel(), ToggledRule({ ruleId: rule.id }))
+    const [unchanged, commands] = update(
+      saving,
+      ToggledRule({ ruleId: rule.id }),
+    )
+    expect(unchanged).toEqual(saving)
+    expect(commands).toEqual([])
   })
 
   it("deletes a disabled rule using its server version", () => {
@@ -140,6 +361,36 @@ describe("Auto-labeling update", () => {
     expect(commands).toHaveLength(1)
     expect(commands[0]?.name).toBe("DeleteRule")
     expect(commands[0]?.args).toMatchObject({ ruleId: rule.id, version: 3 })
+  })
+
+  it("preserves delete intent and retries a conflict explicitly", () => {
+    const disabledRule = { ...rule, enabled: false }
+    const [loading] = update(init(), SelectedRepositoryChanged({ repository }))
+    const [disabledModel] = update(
+      loading,
+      LoadedRepositoryData({ ...loaded, rules: [disabledRule] }),
+    )
+    const [confirming] = update(
+      disabledModel,
+      OpenedDeleteRule({ ruleId: rule.id }),
+    )
+    const [deleting] = update(confirming, ConfirmedDeleteRule())
+    const [conflicted] = update(
+      deleting,
+      FailedToDeleteRule({
+        requestId: 2,
+        repository,
+        message: "The rule changed.",
+        conflict: {
+          _tag: "RuleVersionConflict",
+          expectedVersion: 3,
+          currentRule: { ...disabledRule, version: 4 },
+        },
+      }),
+    )
+    expect(conflicted.deletion._tag).toBe("DeleteConflict")
+    const [, commands] = update(conflicted, RetriedDeleteRule())
+    expect(commands[0]?.args).toMatchObject({ version: 4 })
   })
 
   it("loads candidates before running a no-write test", () => {

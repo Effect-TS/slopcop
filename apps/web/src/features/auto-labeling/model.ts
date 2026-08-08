@@ -37,6 +37,12 @@ export const RepositoryData = Schema.Struct({
 })
 export type RepositoryData = typeof RepositoryData.Type
 
+export const RepositoryRequest = Schema.Struct({
+  requestId: Schema.Int,
+  repository: Repository,
+})
+export type RepositoryRequest = typeof RepositoryRequest.Type
+
 export const NoRepository = Schema.TaggedStruct("NoRepository", {})
 export const LoadingRepository = Schema.TaggedStruct("LoadingRepository", {
   repository: Repository,
@@ -61,19 +67,45 @@ const EditorFields = {
   ruleId: Schema.NullOr(RuleId),
   version: Schema.NullOr(Schema.Int),
 }
+export const RuleVersionConflict = Schema.TaggedStruct("RuleVersionConflict", {
+  expectedVersion: Schema.Int,
+  currentRule: LabelingRuleManagement.PublicLabelingRule,
+})
+export const RepositoryRevisionConflict = Schema.TaggedStruct(
+  "RepositoryRevisionConflict",
+  {
+    expectedRevision: Schema.Int,
+    actualRevision: Schema.Int,
+    currentRule: Schema.NullOr(LabelingRuleManagement.PublicLabelingRule),
+  },
+)
+export const MutationConflict = Schema.Union([
+  RuleVersionConflict,
+  RepositoryRevisionConflict,
+]).pipe(Schema.toTaggedUnion("_tag"))
+export type MutationConflict = typeof MutationConflict.Type
+
 export const EditorClosed = Schema.TaggedStruct("EditorClosed", {})
 export const EditorEditing = Schema.TaggedStruct("EditorEditing", EditorFields)
-export const EditorSaving = Schema.TaggedStruct("EditorSaving", EditorFields)
+export const EditorSaving = Schema.TaggedStruct("EditorSaving", {
+  ...EditorFields,
+  requestId: Schema.Int,
+})
 export const EditorFailed = Schema.TaggedStruct("EditorFailed", {
   ...EditorFields,
   message: Schema.String,
-  currentRule: Schema.NullOr(LabelingRuleManagement.PublicLabelingRule),
+})
+export const EditorConflict = Schema.TaggedStruct("EditorConflict", {
+  ...EditorFields,
+  message: Schema.String,
+  conflict: MutationConflict,
 })
 export const EditorState = Schema.Union([
   EditorClosed,
   EditorEditing,
   EditorSaving,
   EditorFailed,
+  EditorConflict,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type EditorState = typeof EditorState.Type
 
@@ -83,16 +115,23 @@ export const DeleteConfirming = Schema.TaggedStruct("DeleteConfirming", {
 })
 export const DeleteDeleting = Schema.TaggedStruct("DeleteDeleting", {
   rule: LabelingRuleManagement.PublicLabelingRule,
+  requestId: Schema.Int,
 })
 export const DeleteFailed = Schema.TaggedStruct("DeleteFailed", {
   rule: LabelingRuleManagement.PublicLabelingRule,
   message: Schema.String,
+})
+export const DeleteConflict = Schema.TaggedStruct("DeleteConflict", {
+  rule: LabelingRuleManagement.PublicLabelingRule,
+  message: Schema.String,
+  conflict: MutationConflict,
 })
 export const DeleteState = Schema.Union([
   DeleteClosed,
   DeleteConfirming,
   DeleteDeleting,
   DeleteFailed,
+  DeleteConflict,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type DeleteState = typeof DeleteState.Type
 
@@ -132,20 +171,33 @@ export type TestState = typeof TestState.Type
 export const RowMutationIdle = Schema.TaggedStruct("RowMutationIdle", {})
 export const RowMutationSaving = Schema.TaggedStruct("RowMutationSaving", {
   ruleId: RuleId,
+  requestId: Schema.Int,
+  expectedVersion: Schema.Int,
+  enabled: Schema.Boolean,
 })
 export const RowMutationFailed = Schema.TaggedStruct("RowMutationFailed", {
   ruleId: RuleId,
   message: Schema.String,
 })
+export const RowMutationConflict = Schema.TaggedStruct("RowMutationConflict", {
+  ruleId: RuleId,
+  expectedVersion: Schema.Int,
+  enabled: Schema.Boolean,
+  message: Schema.String,
+  conflict: MutationConflict,
+})
 export const RowMutationState = Schema.Union([
   RowMutationIdle,
   RowMutationSaving,
   RowMutationFailed,
+  RowMutationConflict,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type RowMutationState = typeof RowMutationState.Type
 
 export const Model = Schema.Struct({
   repository: RepositoryState,
+  repositoryRequest: Schema.NullOr(RepositoryRequest),
+  nextRequestId: Schema.Int,
   editor: EditorState,
   deletion: DeleteState,
   test: TestState,

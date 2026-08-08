@@ -19,6 +19,7 @@ import {
   RowMutationState,
   TestState,
   type Model,
+  type MutationConflict,
   type Repository,
   type RuleDraft,
   type RuleId,
@@ -75,12 +76,59 @@ const updateDraft = (
             version: editor.version,
           }),
       })
+    case "EditorConflict":
+      return evo(model, {
+        editor: () =>
+          EditorState.cases.EditorConflict.make({
+            draft: transform(editor.draft),
+            ruleId: editor.ruleId,
+            version: editor.version,
+            message: editor.message,
+            conflict: editor.conflict,
+          }),
+      })
   }
 }
 
-const refresh = (repository: Repository): ReadonlyArray<Command> => [
-  LoadRepositoryData({ repository }),
-]
+const requestRepository = (
+  model: Model,
+  repository: Repository,
+  showLoading: boolean,
+): UpdateReturn => {
+  const requestId = model.nextRequestId
+  return [
+    evo(model, {
+      repository: (state) =>
+        showLoading
+          ? RepositoryState.cases.LoadingRepository.make({ repository })
+          : state,
+      repositoryRequest: () => ({ requestId, repository }),
+      nextRequestId: (id) => id + 1,
+    }),
+    [LoadRepositoryData({ requestId, repository })],
+  ]
+}
+
+const latestRule = (
+  model: Model,
+  ruleId: RuleId,
+  conflict: MutationConflict,
+) => {
+  const loaded = loadedRule(model, ruleId)
+  const current = conflict.currentRule
+  if (loaded === null) return current
+  if (current === null || loaded.version >= current.version) return loaded
+  return current
+}
+
+const isCurrentRepositoryRequest = (
+  model: Model,
+  repository: Repository,
+  requestId: number,
+): boolean =>
+  model.repositoryRequest !== null &&
+  model.repositoryRequest.requestId === requestId &&
+  sameRepository(model.repositoryRequest.repository, repository)
 
 export const update = (model: Model, message: Message): UpdateReturn =>
   Match.value(message).pipe(
@@ -94,14 +142,13 @@ export const update = (model: Model, message: Message): UpdateReturn =>
                 editor: () => EditorState.cases.EditorClosed.make({}),
                 deletion: () => DeleteState.cases.DeleteClosed.make({}),
                 test: () => TestState.cases.TestClosed.make({}),
+                repositoryRequest: () => null,
                 openRuleMenu: () => null,
               }),
               [],
             ]
-          : [
+          : requestRepository(
               evo(model, {
-                repository: () =>
-                  RepositoryState.cases.LoadingRepository.make({ repository }),
                 editor: () => EditorState.cases.EditorClosed.make({}),
                 deletion: () => DeleteState.cases.DeleteClosed.make({}),
                 test: () => TestState.cases.TestClosed.make({}),
@@ -109,47 +156,47 @@ export const update = (model: Model, message: Message): UpdateReturn =>
                   RowMutationState.cases.RowMutationIdle.make({}),
                 openRuleMenu: () => null,
               }),
-              refresh(repository),
-            ],
+              repository,
+              true,
+            ),
       RetriedRepositoryLoad: () => {
         const repository = currentRepository(model)
         return repository === null
           ? [model, []]
-          : [
-              evo(model, {
-                repository: () =>
-                  RepositoryState.cases.LoadingRepository.make({ repository }),
-              }),
-              refresh(repository),
-            ]
+          : requestRepository(model, repository, true)
       },
       LoadedRepositoryData: ({
         activity,
         labels,
         repository,
+        requestId,
         revision,
         rules,
       }) =>
-        sameRepository(currentRepository(model), repository)
+        isCurrentRepositoryRequest(model, repository, requestId)
           ? [
               evo(model, {
                 repository: () =>
                   RepositoryState.cases.LoadedRepository.make({
                     data: { repository, revision, rules, activity, labels },
                   }),
+                repositoryRequest: () => null,
               }),
               [],
             ]
           : [model, []],
-      FailedToLoadRepositoryData: ({ message, repository }) =>
-        sameRepository(currentRepository(model), repository)
+      FailedToLoadRepositoryData: ({ message, repository, requestId }) =>
+        isCurrentRepositoryRequest(model, repository, requestId)
           ? [
               evo(model, {
-                repository: () =>
-                  RepositoryState.cases.FailedRepository.make({
-                    repository,
-                    message,
-                  }),
+                repository: (state) =>
+                  state._tag === "LoadedRepository"
+                    ? state
+                    : RepositoryState.cases.FailedRepository.make({
+                        repository,
+                        message,
+                      }),
+                repositoryRequest: () => null,
               }),
               [],
             ]
@@ -202,27 +249,40 @@ export const update = (model: Model, message: Message): UpdateReturn =>
           return [model, []]
         }
         const { draft, ruleId, version } = model.editor
+        const requestId = model.nextRequestId
         return [
           evo(model, {
             editor: () =>
-              EditorState.cases.EditorSaving.make({ draft, ruleId, version }),
+              EditorState.cases.EditorSaving.make({
+                draft,
+                requestId,
+                ruleId,
+                version,
+              }),
+            nextRequestId: (id) => id + 1,
           }),
-          [SaveRule({ repository, draft, ruleId, version })],
+          [SaveRule({ repository, requestId, draft, ruleId, version })],
         ]
       },
-      CompletedSaveRule: ({ repository }) =>
-        sameRepository(currentRepository(model), repository)
-          ? [
+      RetriedRuleSave: () => retrySave(model),
+      ReloadedRuleEditor: () => reloadRuleEditor(model),
+      CompletedSaveRule: ({ repository, requestId }) =>
+        sameRepository(currentRepository(model), repository) &&
+        model.editor._tag === "EditorSaving" &&
+        model.editor.requestId === requestId
+          ? requestRepository(
               evo(model, {
                 editor: () => EditorState.cases.EditorClosed.make({}),
               }),
-              refresh(repository),
-            ]
+              repository,
+              false,
+            )
           : [model, []],
-      FailedToSaveRule: ({ currentRule, message, repository }) =>
+      FailedToSaveRule: ({ conflict, message, repository, requestId }) =>
         sameRepository(currentRepository(model), repository) &&
-        model.editor._tag === "EditorSaving"
-          ? failSave(model, message, currentRule)
+        model.editor._tag === "EditorSaving" &&
+        model.editor.requestId === requestId
+          ? failSave(model, repository, message, conflict)
           : [model, []],
 
       ToggledRuleMenu: ({ ruleId }) => [
@@ -234,45 +294,73 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       ToggledRule: ({ ruleId }) => {
         const repository = currentRepository(model)
         const rule = loadedRule(model, ruleId)
-        return repository === null || rule === null
-          ? [model, []]
-          : [
-              evo(model, {
-                rowMutation: () =>
-                  RowMutationState.cases.RowMutationSaving.make({ ruleId }),
+        if (
+          repository === null ||
+          rule === null ||
+          model.rowMutation._tag !== "RowMutationIdle"
+        )
+          return [model, []]
+        const requestId = model.nextRequestId
+        const enabled = !rule.enabled
+        return [
+          evo(model, {
+            rowMutation: () =>
+              RowMutationState.cases.RowMutationSaving.make({
+                ruleId,
+                requestId,
+                expectedVersion: rule.version,
+                enabled,
               }),
-              [
-                ToggleRule({
-                  repository,
-                  ruleId,
-                  version: rule.version,
-                  enabled: !rule.enabled,
-                }),
-              ],
-            ]
+            nextRequestId: (id) => id + 1,
+          }),
+          [
+            ToggleRule({
+              repository,
+              requestId,
+              ruleId,
+              version: rule.version,
+              enabled,
+            }),
+          ],
+        ]
       },
-      CompletedToggleRule: ({ repository }) =>
-        sameRepository(currentRepository(model), repository)
+      RetriedToggleRule: () => retryToggle(model),
+      DismissedRowMutationError: () =>
+        model.rowMutation._tag === "RowMutationFailed" ||
+        model.rowMutation._tag === "RowMutationConflict"
           ? [
               evo(model, {
                 rowMutation: () =>
                   RowMutationState.cases.RowMutationIdle.make({}),
               }),
-              refresh(repository),
-            ]
-          : [model, []],
-      FailedToToggleRule: ({ message, repository, ruleId }) =>
-        sameRepository(currentRepository(model), repository)
-          ? [
-              evo(model, {
-                rowMutation: () =>
-                  RowMutationState.cases.RowMutationFailed.make({
-                    ruleId,
-                    message,
-                  }),
-              }),
               [],
             ]
+          : [model, []],
+      CompletedToggleRule: ({ repository, requestId }) =>
+        sameRepository(currentRepository(model), repository) &&
+        model.rowMutation._tag === "RowMutationSaving" &&
+        model.rowMutation.requestId === requestId
+          ? requestRepository(
+              evo(model, {
+                rowMutation: () =>
+                  RowMutationState.cases.RowMutationIdle.make({}),
+              }),
+              repository,
+              false,
+            )
+          : [model, []],
+      FailedToToggleRule: ({
+        conflict,
+        message,
+        repository,
+        requestId,
+        ruleId,
+      }) =>
+        sameRepository(currentRepository(model), repository) &&
+        model.rowMutation._tag === "RowMutationSaving" &&
+        model.rowMutation.requestId === requestId &&
+        model.rowMutation.ruleId === ruleId
+          ? failToggle(model, repository, message, conflict)
           : [model, []],
 
       OpenedDeleteRule: ({ ruleId }) => {
@@ -305,32 +393,41 @@ export const update = (model: Model, message: Message): UpdateReturn =>
           return [model, []]
         }
         const rule = model.deletion.rule
+        const requestId = model.nextRequestId
         return [
           evo(model, {
-            deletion: () => DeleteState.cases.DeleteDeleting.make({ rule }),
+            deletion: () =>
+              DeleteState.cases.DeleteDeleting.make({ rule, requestId }),
+            nextRequestId: (id) => id + 1,
           }),
           [
             DeleteRule({
               repository,
+              requestId,
               ruleId: rule.id,
               version: rule.version,
             }),
           ],
         ]
       },
-      CompletedDeleteRule: ({ repository }) =>
-        sameRepository(currentRepository(model), repository)
-          ? [
+      RetriedDeleteRule: () => retryDelete(model),
+      CompletedDeleteRule: ({ repository, requestId }) =>
+        sameRepository(currentRepository(model), repository) &&
+        model.deletion._tag === "DeleteDeleting" &&
+        model.deletion.requestId === requestId
+          ? requestRepository(
               evo(model, {
                 deletion: () => DeleteState.cases.DeleteClosed.make({}),
               }),
-              refresh(repository),
-            ]
+              repository,
+              false,
+            )
           : [model, []],
-      FailedToDeleteRule: ({ message, repository }) =>
+      FailedToDeleteRule: ({ conflict, message, repository, requestId }) =>
         sameRepository(currentRepository(model), repository) &&
-        model.deletion._tag === "DeleteDeleting"
-          ? failDelete(model, message)
+        model.deletion._tag === "DeleteDeleting" &&
+        model.deletion.requestId === requestId
+          ? failDelete(model, repository, message, conflict)
           : [model, []],
 
       OpenedRuleTest: ({ ruleId }) => {
@@ -480,37 +577,192 @@ export const update = (model: Model, message: Message): UpdateReturn =>
 
 const failSave = (
   model: Model,
+  repository: Repository,
   message: string,
-  currentRule: Extract<
-    Model["editor"],
-    { _tag: "EditorFailed" }
-  >["currentRule"],
+  conflict: MutationConflict | null,
 ): UpdateReturn => {
   if (model.editor._tag !== "EditorSaving") return [model, []]
   const editor = model.editor
+  const failed = evo(model, {
+    editor: () =>
+      conflict === null
+        ? EditorState.cases.EditorFailed.make({
+            draft: editor.draft,
+            ruleId: editor.ruleId,
+            version: editor.version,
+            message,
+          })
+        : EditorState.cases.EditorConflict.make({
+            draft: editor.draft,
+            ruleId: editor.ruleId,
+            version: editor.version,
+            message,
+            conflict,
+          }),
+  })
+  return conflict?._tag === "RepositoryRevisionConflict"
+    ? requestRepository(failed, repository, false)
+    : [failed, []]
+}
+
+const retrySave = (model: Model): UpdateReturn => {
+  if (model.editor._tag !== "EditorConflict") return [model, []]
+  const repository = currentRepository(model)
+  if (repository === null) return [model, []]
+  const editor = model.editor
+  const serverRule =
+    editor.ruleId === null
+      ? null
+      : latestRule(model, editor.ruleId, editor.conflict)
+  if (editor.ruleId !== null && serverRule === null) return [model, []]
+  const requestId = model.nextRequestId
+  const version = serverRule?.version ?? null
   return [
     evo(model, {
       editor: () =>
-        EditorState.cases.EditorFailed.make({
+        EditorState.cases.EditorSaving.make({
           draft: editor.draft,
+          requestId,
           ruleId: editor.ruleId,
-          version: editor.version,
-          message,
-          currentRule,
+          version,
+        }),
+      nextRequestId: (id) => id + 1,
+    }),
+    [
+      SaveRule({
+        repository,
+        requestId,
+        draft: editor.draft,
+        ruleId: editor.ruleId,
+        version,
+      }),
+    ],
+  ]
+}
+
+const reloadRuleEditor = (model: Model): UpdateReturn => {
+  if (model.editor._tag !== "EditorConflict") return [model, []]
+  const editor = model.editor
+  const serverRule =
+    editor.ruleId === null
+      ? null
+      : latestRule(model, editor.ruleId, editor.conflict)
+  if (editor.ruleId !== null && serverRule === null) return [model, []]
+  return [
+    evo(model, {
+      editor: () =>
+        EditorState.cases.EditorEditing.make({
+          draft: serverRule === null ? editor.draft : draftFromRule(serverRule),
+          ruleId: editor.ruleId,
+          version: serverRule?.version ?? null,
         }),
     }),
     [],
   ]
 }
 
-const failDelete = (model: Model, message: string): UpdateReturn => {
-  if (model.deletion._tag !== "DeleteDeleting") return [model, []]
-  const rule = model.deletion.rule
+const failToggle = (
+  model: Model,
+  repository: Repository,
+  message: string,
+  conflict: MutationConflict | null,
+): UpdateReturn => {
+  if (model.rowMutation._tag !== "RowMutationSaving") return [model, []]
+  const mutation = model.rowMutation
+  const failed = evo(model, {
+    rowMutation: () =>
+      conflict === null
+        ? RowMutationState.cases.RowMutationFailed.make({
+            ruleId: mutation.ruleId,
+            message,
+          })
+        : RowMutationState.cases.RowMutationConflict.make({
+            ruleId: mutation.ruleId,
+            expectedVersion: mutation.expectedVersion,
+            enabled: mutation.enabled,
+            message,
+            conflict,
+          }),
+  })
+  return conflict?._tag === "RepositoryRevisionConflict"
+    ? requestRepository(failed, repository, false)
+    : [failed, []]
+}
+
+const retryToggle = (model: Model): UpdateReturn => {
+  if (model.rowMutation._tag !== "RowMutationConflict") return [model, []]
+  const repository = currentRepository(model)
+  const mutation = model.rowMutation
+  const currentRule = latestRule(model, mutation.ruleId, mutation.conflict)
+  if (repository === null || currentRule === null) return [model, []]
+  const requestId = model.nextRequestId
   return [
     evo(model, {
-      deletion: () => DeleteState.cases.DeleteFailed.make({ rule, message }),
+      rowMutation: () =>
+        RowMutationState.cases.RowMutationSaving.make({
+          ruleId: mutation.ruleId,
+          requestId,
+          expectedVersion: currentRule.version,
+          enabled: mutation.enabled,
+        }),
+      nextRequestId: (id) => id + 1,
     }),
-    [],
+    [
+      ToggleRule({
+        repository,
+        requestId,
+        ruleId: mutation.ruleId,
+        version: currentRule.version,
+        enabled: mutation.enabled,
+      }),
+    ],
+  ]
+}
+
+const failDelete = (
+  model: Model,
+  repository: Repository,
+  message: string,
+  conflict: MutationConflict | null,
+): UpdateReturn => {
+  if (model.deletion._tag !== "DeleteDeleting") return [model, []]
+  const rule = model.deletion.rule
+  const failed = evo(model, {
+    deletion: () =>
+      conflict === null
+        ? DeleteState.cases.DeleteFailed.make({ rule, message })
+        : DeleteState.cases.DeleteConflict.make({ rule, message, conflict }),
+  })
+  return conflict?._tag === "RepositoryRevisionConflict"
+    ? requestRepository(failed, repository, false)
+    : [failed, []]
+}
+
+const retryDelete = (model: Model): UpdateReturn => {
+  if (model.deletion._tag !== "DeleteConflict") return [model, []]
+  const repository = currentRepository(model)
+  const deletion = model.deletion
+  const currentRule = latestRule(model, deletion.rule.id, deletion.conflict)
+  if (repository === null || currentRule === null || currentRule.enabled)
+    return [model, []]
+  const requestId = model.nextRequestId
+  return [
+    evo(model, {
+      deletion: () =>
+        DeleteState.cases.DeleteDeleting.make({
+          rule: currentRule,
+          requestId,
+        }),
+      nextRequestId: (id) => id + 1,
+    }),
+    [
+      DeleteRule({
+        repository,
+        requestId,
+        ruleId: currentRule.id,
+        version: currentRule.version,
+      }),
+    ],
   ]
 }
 
