@@ -36,6 +36,14 @@ describe("RootApi", () => {
     ).toEqual([{ access: [] }])
   })
 
+  test("exposes the authenticated no-write rule test endpoint", () => {
+    expect(
+      specification.paths[
+        "/api/v1/repositories/{owner}/{repo}/labeling-rules/{ruleId}/test"
+      ]?.post?.security,
+    ).toEqual([{ access: [] }])
+  })
+
   test("exposes authenticated setup endpoints", () => {
     expect(specification.paths["/api/v1/setup"]?.get?.security).toEqual([
       { access: [] },

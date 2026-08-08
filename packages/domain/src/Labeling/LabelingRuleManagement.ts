@@ -174,3 +174,24 @@ export const RuleVersionRequest = Schema.Struct({
 export const RuleVersionQuery = Schema.Struct({
   version: Schema.Int,
 })
+
+export const TestLabelingRuleRequest = Schema.Struct({
+  pullRequestNumber: Schema.Int.check(Schema.isGreaterThan(0)),
+})
+
+export type TestLabelingRuleRequest = typeof TestLabelingRuleRequest.Type
+
+export const TestLabelingRuleResponse = Schema.Struct({
+  ruleId: LabelingRuleId,
+  pullRequestNumber: Schema.Int.check(Schema.isGreaterThan(0)),
+  applies: Schema.Boolean,
+  confidence: LabelingRuleConfidenceThreshold,
+  confidenceThreshold: LabelingRuleConfidenceThreshold,
+  rationale: Schema.String,
+  proposedLabelChanges: Schema.Struct({
+    add: Schema.Array(GitHubLabel.GitHubLabelName),
+    remove: Schema.Array(GitHubLabel.GitHubLabelName),
+  }),
+})
+
+export type TestLabelingRuleResponse = typeof TestLabelingRuleResponse.Type

@@ -8,6 +8,7 @@
     "test": "vp test --run"
   },
   "dependencies": {
+    "@effect/ai-openai": "catalog:",
     "@slopcop/api": "workspace:*",
     "@slopcop/domain": "workspace:*",
     "@slopcop/github": "workspace:*",

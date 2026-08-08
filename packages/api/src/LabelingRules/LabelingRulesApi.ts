@@ -9,8 +9,10 @@ import {
   InvalidLabelingRule,
   LabelingRuleConflict,
   LabelingRuleNotFound,
+  LabelingRuleTestUnavailable,
   LabelingRulesRevisionConflict,
   RepositoryNotConfigured,
+  PullRequestNotFound,
 } from "./Errors.ts"
 import { LabelingAdminMiddleware } from "./Security.ts"
 
@@ -23,6 +25,8 @@ const allErrors = [
   LabelingRuleConflict,
   LabelingRulesRevisionConflict,
   GitHubLabelValidationUnavailable,
+  PullRequestNotFound,
+  LabelingRuleTestUnavailable,
 ]
 
 export class LabelingRulesApi extends HttpApiGroup.make("labelingRules")
@@ -82,6 +86,12 @@ export class LabelingRulesApi extends HttpApiGroup.make("labelingRules")
         error: allErrors,
       },
     ),
+    HttpApiEndpoint.post("testRule", "/labeling-rules/:ruleId/test", {
+      params: LabelingRuleManagement.RulePath,
+      payload: LabelingRuleManagement.TestLabelingRuleRequest,
+      success: LabelingRuleManagement.TestLabelingRuleResponse,
+      error: allErrors,
+    }),
     HttpApiEndpoint.post("disableRule", "/labeling-rules/:ruleId/disable", {
       params: LabelingRuleManagement.RulePath,
       payload: LabelingRuleManagement.RuleVersionRequest,

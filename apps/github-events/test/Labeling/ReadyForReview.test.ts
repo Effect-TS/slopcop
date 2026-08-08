@@ -19,12 +19,12 @@ import {
   type RequiredCheck,
 } from "@slopcop/github/GitHubClient"
 import { GitHubPullRequest } from "../../src/GitHub/GitHubPullRequest.ts"
+import { ReadyForReview } from "../../src/Labeling/ReadyForReview.ts"
 import {
   hasChangesRequested,
   isValidChangesetContent,
-  ReadyForReview,
   requiredChecksPass,
-} from "../../src/Labeling/ReadyForReview.ts"
+} from "@slopcop/labeling/ReadyForReviewPolicy"
 import { LabelingRules } from "@slopcop/labeling/LabelingRules"
 import { LabelingDecisionsRepo } from "../../src/Labeling/repositories/LabelingDecisionsRepo.ts"
 
@@ -170,6 +170,7 @@ const layer = (state: State) =>
             state.evidenceCalls++
             return Stream.fromIterable(state.files)
           },
+          getPullRequest: () => unavailable,
           listItemLabels: () => unavailableStream,
           addItemLabels: () => unavailable,
           removeItemLabel: () => unavailable,

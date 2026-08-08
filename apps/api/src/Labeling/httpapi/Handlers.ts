@@ -6,8 +6,10 @@ import {
   InvalidLabelingRule as ApiInvalidLabelingRule,
   LabelingRuleConflict as ApiLabelingRuleConflict,
   LabelingRuleNotFound as ApiLabelingRuleNotFound,
+  LabelingRuleTestUnavailable,
   LabelingRulesRevisionConflict,
   RepositoryNotConfigured as ApiRepositoryNotConfigured,
+  PullRequestNotFound,
 } from "@slopcop/api/LabelingRules/Errors"
 import { LabelingAdminIdentity } from "@slopcop/api/LabelingRules/Security"
 import * as LabelingRule from "@slopcop/domain/Labeling/LabelingRule"
@@ -22,6 +24,10 @@ import {
   type LabelingRulesError,
 } from "@slopcop/labeling/LabelingRules"
 import { LabelingAdminMiddlewareLayer } from "./Security.ts"
+import {
+  LabelingRuleTester,
+  type LabelingRuleTestError,
+} from "../LabelingRuleTester.ts"
 
 const decodeApiRule = Schema.decodeEffect(
   Schema.toType(LabelingRuleManagement.PublicLabelingRule),
@@ -180,11 +186,33 @@ const publicRule = (
   effect: Effect.Effect<LabelingRule.LabelingRule, LabelingRulesError>,
 ) => effect.pipe(Effect.catch(mapRuleError), Effect.flatMap(toPublicRule))
 
+const mapRuleTestError = (
+  error: LabelingRuleTestError,
+): Effect.Effect<never, PullRequestNotFound | LabelingRuleTestUnavailable> =>
+  error.notFound
+    ? Effect.fail(
+        new PullRequestNotFound({
+          repository: error.repository,
+          pullRequestNumber: error.pullRequestNumber,
+          message: error.message,
+        }),
+      )
+    : Effect.fail(
+        new LabelingRuleTestUnavailable({
+          repository: error.repository,
+          ruleId: error.ruleId,
+          pullRequestNumber: error.pullRequestNumber,
+          retryable: error.retryable,
+          message: error.message,
+        }),
+      )
+
 export const LabelingRulesApiHandlersLayer = HttpApiBuilder.group(
   RootApi,
   "labelingRules",
   Effect.fnUntraced(function* (handlers) {
     const rules = yield* LabelingRules
+    const tester = yield* LabelingRuleTester
 
     return handlers.handleAll({
       listRules: Effect.fnUntraced(function* ({ params, query }) {
@@ -271,6 +299,18 @@ export const LabelingRulesApiHandlersLayer = HttpApiBuilder.group(
             ),
           )
         }),
+      testRule: ({ params, payload }) =>
+        tester
+          .test(
+            { owner: params.owner, repo: params.repo },
+            params.ruleId,
+            payload.pullRequestNumber,
+          )
+          .pipe(
+            Effect.catchTag("LabelingRuleTestError", mapRuleTestError),
+            Effect.catchTag("RepositoryNotConfigured", mapRuleError),
+            Effect.catchTag("LabelingRuleNotFound", mapRuleError),
+          ),
       disableRule: ({ params, payload }) =>
         Effect.gen(function* () {
           const identity = yield* LabelingAdminIdentity

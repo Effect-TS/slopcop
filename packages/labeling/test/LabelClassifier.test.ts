@@ -7,7 +7,7 @@ import * as Schema from "effect/Schema"
 import {
   isGeneratedChangesetsReleasePullRequest,
   validateClassificationOutput,
-} from "../../src/Labeling/LabelClassifier.ts"
+} from "@slopcop/labeling/LabelClassifier"
 
 const ruleId = Schema.decodeUnknownSync(LabelingRule.LabelingRuleId)
 

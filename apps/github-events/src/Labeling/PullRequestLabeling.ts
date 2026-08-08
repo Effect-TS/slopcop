@@ -13,11 +13,11 @@ import { GitHubPullRequest } from "../GitHub/GitHubPullRequest.ts"
 import {
   LABEL_CLASSIFIER_PROMPT_VERSION,
   makeLabelClassifier,
-} from "./LabelClassifier.ts"
+} from "@slopcop/labeling/LabelClassifier"
 import { LabelingDecisionsRepo } from "./repositories/LabelingDecisionsRepo.ts"
-import { planLabels } from "./LabelPolicy.ts"
+import { planLabels } from "@slopcop/labeling/LabelPolicy"
 import { OpenAiLanguageModel } from "@effect/ai-openai"
-import { OpenAiLayer } from "../Ai.ts"
+import { OpenAiLayer } from "@slopcop/labeling/Ai"
 
 export class PullRequestLabelingError extends Data.TaggedError(
   "PullRequestLabelingError",

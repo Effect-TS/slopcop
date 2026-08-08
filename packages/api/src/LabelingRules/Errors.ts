@@ -79,3 +79,25 @@ export class GitHubLabelValidationUnavailable extends Schema.TaggedErrorClass<Gi
   },
   { httpApiStatus: 503 },
 ) {}
+
+export class PullRequestNotFound extends Schema.TaggedErrorClass<PullRequestNotFound>()(
+  "PullRequestNotFound",
+  {
+    repository: Schema.String,
+    pullRequestNumber: Schema.Int,
+    message: Schema.String,
+  },
+  { httpApiStatus: 404 },
+) {}
+
+export class LabelingRuleTestUnavailable extends Schema.TaggedErrorClass<LabelingRuleTestUnavailable>()(
+  "LabelingRuleTestUnavailable",
+  {
+    repository: Schema.String,
+    ruleId: Schema.String,
+    pullRequestNumber: Schema.Int,
+    retryable: Schema.Boolean,
+    message: Schema.String,
+  },
+  { httpApiStatus: 503 },
+) {}

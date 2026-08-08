@@ -313,6 +313,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@effect/ai-openai':
+        specifier: 'catalog:'
+        version: 4.0.0-beta.102(effect@4.0.0-beta.102)
       '@slopcop/api':
         specifier: workspace:*
         version: link:../../packages/api
@@ -564,6 +567,9 @@ importers:
 
   packages/labeling:
     dependencies:
+      '@effect/ai-openai':
+        specifier: 'catalog:'
+        version: 4.0.0-beta.102(effect@4.0.0-beta.102)
       '@slopcop/domain':
         specifier: workspace:*
         version: link:../domain
@@ -576,6 +582,9 @@ importers:
       effect:
         specifier: 'catalog:'
         version: 4.0.0-beta.102
+      yaml:
+        specifier: ^2.9.0
+        version: 2.9.0
     devDependencies:
       '@effect/vitest':
         specifier: 'catalog:'

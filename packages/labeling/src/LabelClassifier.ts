@@ -1,5 +1,7 @@
 import * as LabelClassification from "@slopcop/domain/Labeling/LabelClassification"
 import * as Effect from "effect/Effect"
+import * as Context from "effect/Context"
+import * as Layer from "effect/Layer"
 import * as Schema from "effect/Schema"
 import * as LanguageModel from "effect/unstable/ai/LanguageModel"
 
@@ -226,3 +228,17 @@ export const makeLabelClassifier = Effect.gen(function* () {
 
   return classify
 })
+
+export class LabelClassifier extends Context.Service<
+  LabelClassifier,
+  (
+    input: LabelClassification.ClassificationInput,
+  ) => Effect.Effect<
+    LabelClassification.ClassificationResult,
+    LabelClassifierError
+  >
+>()("@slopcop/labeling/LabelClassifier", {
+  make: makeLabelClassifier,
+}) {
+  static readonly layerNoDeps = Layer.effect(this, this.make)
+}

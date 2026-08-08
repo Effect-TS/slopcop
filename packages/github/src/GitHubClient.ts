@@ -24,6 +24,7 @@ const GitHubClientOperation = Schema.Literals([
   "GitHubClient.getRepositoryLabel",
   "GitHubClient.listRepositoryLabels",
   "GitHubClient.listPullRequestFiles",
+  "GitHubClient.getPullRequest",
   "GitHubClient.listItemLabels",
   "GitHubClient.addItemLabels",
   "GitHubClient.removeItemLabel",
@@ -182,6 +183,10 @@ export class GitHubClient extends Context.Service<
       GitHubPullRequest.GitHubPullRequestFile,
       GitHubClientError
     >
+    readonly getPullRequest: (
+      repository: GitHubRepository.GitHubRepository,
+      number: number,
+    ) => Effect.Effect<PullRequestSummary, GitHubClientError>
     readonly listItemLabels: (
       repository: GitHubRepository.GitHubRepository,
       number: number,
@@ -251,6 +256,8 @@ export class GitHubClient extends Context.Service<
     const decodePullRequestSummaries = HttpClientResponse.schemaBodyJson(
       Schema.Array(PullRequestSummary),
     )
+    const decodePullRequestSummary =
+      HttpClientResponse.schemaBodyJson(PullRequestSummary)
     const decodePullRequestReviews = HttpClientResponse.schemaBodyJson(
       PullRequestReviewsResponse,
     )
@@ -402,6 +409,24 @@ export class GitHubClient extends Context.Service<
           return [files, nextPage(pageNumber, response)] as const
         }),
       )
+
+    const getPullRequest = Effect.fn("GitHubClient.getPullRequest")(function* (
+      repository: GitHubRepository.GitHubRepository,
+      number: number,
+    ) {
+      const operation = "GitHubClient.getPullRequest"
+      const response = yield* execute(
+        repository,
+        operation,
+        HttpClientRequest.get(
+          `${GITHUB_API_URL}${repositoryPath(repository)}/pulls/${number}`,
+        ),
+      )
+      yield* requireStatus(operation, response, 200)
+      return yield* decodePullRequestSummary(response).pipe(
+        mapResponseDecodeError(operation, response),
+      )
+    })
 
     const listItemLabels = (
       repository: GitHubRepository.GitHubRepository,
@@ -687,6 +712,7 @@ export class GitHubClient extends Context.Service<
       getRepositoryLabel,
       listRepositoryLabels,
       listPullRequestFiles,
+      getPullRequest,
       listItemLabels,
       addItemLabels,
       removeItemLabel,

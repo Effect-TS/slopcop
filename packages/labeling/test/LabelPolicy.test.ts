@@ -2,7 +2,7 @@ import * as LabelClassification from "@slopcop/domain/Labeling/LabelClassificati
 import * as LabelingRule from "@slopcop/domain/Labeling/LabelingRule"
 import { describe, expect, it } from "@effect/vitest"
 import * as Schema from "effect/Schema"
-import { planLabels } from "../../src/Labeling/LabelPolicy.ts"
+import { planLabels } from "@slopcop/labeling/LabelPolicy"
 
 const decision = (
   ruleId: string,

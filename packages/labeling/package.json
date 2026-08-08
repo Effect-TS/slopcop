@@ -12,10 +12,12 @@
     "test": "vp test --run --passWithNoTests"
   },
   "dependencies": {
+    "@effect/ai-openai": "catalog:",
     "@slopcop/domain": "workspace:*",
     "@slopcop/github": "workspace:*",
     "@slopcop/infra": "workspace:*",
-    "effect": "catalog:"
+    "effect": "catalog:",
+    "yaml": "^2.9.0"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

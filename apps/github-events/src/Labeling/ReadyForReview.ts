@@ -9,104 +9,21 @@ import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
 import * as Stream from "effect/Stream"
-import { parseDocument } from "yaml"
 import { GitHubAppAuth } from "@slopcop/github/GitHubAppAuth"
 import {
-  type CheckRun,
-  type CommitStatus,
   GitHubClient,
-  type PullRequestReview,
   type PullRequestSummary,
-  type RequiredCheck,
 } from "@slopcop/github/GitHubClient"
 import { GitHubPullRequest } from "../GitHub/GitHubPullRequest.ts"
-import {
-  isChangesetsReleaseArtifact,
-  isGeneratedChangesetsReleasePullRequest,
-} from "./LabelClassifier.ts"
+import { isGeneratedChangesetsReleasePullRequest } from "@slopcop/labeling/LabelClassifier"
 import { LabelingRules } from "@slopcop/labeling/LabelingRules"
+import {
+  hasChangesRequested,
+  isChangesetCandidate,
+  isValidChangesetContent,
+  requiredChecksPass,
+} from "@slopcop/labeling/ReadyForReviewPolicy"
 import { LabelingDecisionsRepo } from "./repositories/LabelingDecisionsRepo.ts"
-
-const PASSING_CHECK_CONCLUSIONS = new Set(["success", "neutral", "skipped"])
-
-export const requiredChecksPass = (input: {
-  readonly requiredChecks: ReadonlyArray<RequiredCheck>
-  readonly checkRuns: ReadonlyArray<CheckRun>
-  readonly statuses: ReadonlyArray<CommitStatus>
-  readonly ownAppId: number | null
-}) =>
-  input.requiredChecks
-    .filter(
-      (required) =>
-        input.ownAppId === null || required.integrationId !== input.ownAppId,
-    )
-    .every((required) => {
-      const checkRun = input.checkRuns.find(
-        (check) =>
-          check.name === required.context &&
-          (required.integrationId === null ||
-            check.appId === required.integrationId),
-      )
-      if (checkRun !== undefined) {
-        return (
-          checkRun.status === "completed" &&
-          checkRun.conclusion !== null &&
-          PASSING_CHECK_CONCLUSIONS.has(checkRun.conclusion)
-        )
-      }
-      return (
-        required.integrationId === null &&
-        input.statuses.some(
-          (status) =>
-            status.context === required.context && status.state === "success",
-        )
-      )
-    })
-
-export const hasChangesRequested = (
-  reviews: ReadonlyArray<PullRequestReview>,
-) => {
-  const latestByReviewer = new Map<string, PullRequestReview["state"]>()
-  for (const review of [...reviews].sort((left, right) => left.id - right.id)) {
-    if (review.state === "COMMENTED" || review.state === "PENDING") continue
-    latestByReviewer.set(review.reviewer.toLowerCase(), review.state)
-  }
-  return [...latestByReviewer.values()].some(
-    (state) => state === "CHANGES_REQUESTED",
-  )
-}
-
-const CHANGESET_PATH = /^\.changeset\/[^/]+\.md$/
-
-export const isChangesetCandidate = (filename: string) =>
-  CHANGESET_PATH.test(filename) &&
-  filename !== ".changeset/README.md" &&
-  !isChangesetsReleaseArtifact(filename)
-
-export const isValidChangesetContent = (content: string) => {
-  const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)([\s\S]*)$/.exec(content)
-  if (match === null || match[2]?.trim() === "") return false
-
-  const document = parseDocument(match[1] ?? "")
-  if (document.errors.length > 0) return false
-  const frontmatter: unknown = document.toJS()
-  if (
-    frontmatter === null ||
-    typeof frontmatter !== "object" ||
-    Array.isArray(frontmatter)
-  ) {
-    return false
-  }
-  const entries = Object.entries(frontmatter)
-  return (
-    entries.length > 0 &&
-    entries.every(
-      ([packageName, bump]) =>
-        packageName.trim() !== "" &&
-        (bump === "patch" || bump === "minor" || bump === "major"),
-    )
-  )
-}
 
 export class ReadyForReviewError extends Data.TaggedError(
   "ReadyForReviewError",
