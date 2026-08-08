@@ -5,6 +5,7 @@ import * as GitHubLabel from "@slopcop/domain/GitHub/GitHubLabel"
 import * as GitHubWebhookEvent from "@slopcop/domain/GitHub/GitHubWebhookEvent"
 import * as RepositoryManagement from "@slopcop/domain/GitHub/RepositoryManagement"
 import * as LabelClassification from "@slopcop/domain/Labeling/LabelClassification"
+import * as LabelingRule from "@slopcop/domain/Labeling/LabelingRule"
 import * as Option from "effect/Option"
 import { describe, expect, it } from "vite-plus/test"
 
@@ -64,6 +65,20 @@ describe("domain schemas", () => {
         rationale: "Matches the configured rule.",
       }),
     ).toBe(false)
+    expect(decodes(LabelingRule.LabelingRuleName, "Documentation patrol")).toBe(
+      true,
+    )
+    expect(decodes(LabelingRule.LabelingRuleName, "")).toBe(false)
+    expect(decodes(LabelingRule.LabelingRuleName, "x".repeat(101))).toBe(false)
+    expect(decodes(LabelingRule.LabelingRuleConfidenceThreshold, 0.75)).toBe(
+      true,
+    )
+    expect(decodes(LabelingRule.LabelingRuleConfidenceThreshold, -0.01)).toBe(
+      false,
+    )
+    expect(decodes(LabelingRule.LabelingRuleConfidenceThreshold, 1.01)).toBe(
+      false,
+    )
   })
 
   it("encodes repository summaries without internal identities", () => {
