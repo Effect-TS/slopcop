@@ -306,9 +306,11 @@ export const makeLabelingRuleCommands = Effect.gen(function* () {
         const update = LabelingRule.LabelingRule.update.make({
           id: before.id,
           repositoryId: before.repositoryId,
+          name: before.name,
           label: candidate.label,
           kind: candidate.kind,
           instructions: command.input.instructions ?? before.instructions,
+          confidenceThreshold: before.confidenceThreshold,
           mode: candidate.mode,
           exclusiveGroup: candidate.exclusiveGroup,
           enabled: candidate.enabled,

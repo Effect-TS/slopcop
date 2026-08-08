@@ -172,9 +172,11 @@ export class LabelingRulesRepo extends Context.Service<
       execute: ({ ruleId, expectedVersion, input }) => sql`
         UPDATE "labeling_rules"
         SET
+          "name" = ${input.name},
           "label" = ${input.label},
           "kind" = ${input.kind},
           "instructions" = ${input.instructions},
+          "confidence_threshold" = ${input.confidenceThreshold},
           "mode" = ${input.mode},
           "exclusive_group" = ${input.exclusiveGroup},
           "enabled" = ${input.enabled},
