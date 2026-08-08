@@ -3,6 +3,10 @@ import * as LabelingRule from "@slopcop/domain/Labeling/LabelingRule"
 import { describe, expect, it } from "@effect/vitest"
 import * as Schema from "effect/Schema"
 import { planLabels } from "@slopcop/labeling/LabelPolicy"
+import {
+  planReadyForReviewLabels,
+  readyForReviewDisposition,
+} from "@slopcop/labeling/ReadyForReviewPolicy"
 
 const decision = (
   ruleId: string,
@@ -50,7 +54,7 @@ describe("planLabels", () => {
   })
 
   it("treats a below-threshold applicable decision as unselected", () => {
-    const { changes } = planLabels({
+    const { changes, selectedRuleIds } = planLabels({
       rules: [
         {
           id: "v4",
@@ -73,6 +77,7 @@ describe("planLabels", () => {
     })
 
     expect(changes).toEqual({ add: ["enhancement"], remove: ["4.0"] })
+    expect(selectedRuleIds).toEqual(["enhancement"])
   })
 
   it("is idempotent when current labels already match", () => {
@@ -90,5 +95,24 @@ describe("planLabels", () => {
     })
 
     expect(changes).toEqual({ add: [], remove: [] })
+  })
+})
+
+describe("ready-for-review label policy", () => {
+  it("does not reconcile generated Changesets releases", () => {
+    const disposition = readyForReviewDisposition({
+      generatedRelease: true,
+      applies: false,
+    })
+    const plan = planReadyForReviewLabels({
+      disposition,
+      labels: ["ready"],
+      currentLabels: new Set(["ready"]),
+    })
+
+    expect(plan).toEqual({
+      selected: false,
+      changes: { add: [], remove: [] },
+    })
   })
 })

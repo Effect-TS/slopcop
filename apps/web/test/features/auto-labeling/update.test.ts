@@ -6,6 +6,8 @@ import {
   CompletedSaveRule,
   CompletedToggleRule,
   ConfirmedDeleteRule,
+  DismissedRuleTest,
+  FailedRuleTest,
   FailedToDeleteRule,
   FailedToSaveRule,
   FailedToToggleRule,
@@ -398,8 +400,10 @@ describe("Auto-labeling update", () => {
       loadedModel(),
       OpenedRuleTest({ ruleId: rule.id }),
     )
-    expect(candidateCommands).toHaveLength(1)
-    expect(candidateCommands[0]?.name).toBe("LoadRuleTestCandidates")
+    expect(candidateCommands.map((command) => command.name)).toEqual([
+      "LoadRuleTestCandidates",
+      "ShowDialog",
+    ])
     const [configured] = update(
       loadingCandidates,
       LoadedRuleTestCandidates({
@@ -420,6 +424,7 @@ describe("Auto-labeling update", () => {
     expect(running.test._tag).toBe("TestRunning")
     expect(commands).toHaveLength(1)
     expect(commands[0]?.name).toBe(TestRule.name)
+    expect(commands[0]?.args).toMatchObject({ requestId: 2 })
   })
 
   it("stores server test results without changing rules", () => {
@@ -447,11 +452,13 @@ describe("Auto-labeling update", () => {
     const [result] = update(
       running,
       CompletedRuleTest({
+        requestId: 2,
         repository,
         result: {
           ruleId: rule.id,
           pullRequestNumber: 42,
           applies: true,
+          selected: true,
           confidence: 0.92,
           confidenceThreshold: 0.8,
           rationale: "The pull request changes documentation.",
@@ -463,5 +470,98 @@ describe("Auto-labeling update", () => {
     if (result.repository._tag === "LoadedRepository") {
       expect(result.repository.data.rules).toEqual([rule])
     }
+  })
+
+  it("ignores a completion from a dismissed test after another test starts", () => {
+    const [firstLoading] = update(
+      loadedModel(),
+      OpenedRuleTest({ ruleId: rule.id }),
+    )
+    const candidates = [
+      {
+        number: 42,
+        title: "Improve docs",
+        draft: false,
+        author: null,
+        updatedAt: null,
+      },
+    ]
+    const [firstConfigured] = update(
+      firstLoading,
+      LoadedRuleTestCandidates({ repository, ruleId: rule.id, candidates }),
+    )
+    const [firstRunning] = update(firstConfigured, RanRuleTest())
+    const [dismissed] = update(firstRunning, DismissedRuleTest())
+    const [secondLoading] = update(
+      dismissed,
+      OpenedRuleTest({ ruleId: rule.id }),
+    )
+    const [secondConfigured] = update(
+      secondLoading,
+      LoadedRuleTestCandidates({ repository, ruleId: rule.id, candidates }),
+    )
+    const [secondRunning] = update(secondConfigured, RanRuleTest())
+    const [unchanged] = update(
+      secondRunning,
+      CompletedRuleTest({
+        requestId: 2,
+        repository,
+        result: {
+          ruleId: rule.id,
+          pullRequestNumber: 42,
+          applies: true,
+          selected: true,
+          confidence: 0.92,
+          confidenceThreshold: 0.8,
+          rationale: "stale",
+          proposedLabelChanges: { add: ["documentation"], remove: [] },
+        },
+      }),
+    )
+    expect(unchanged).toEqual(secondRunning)
+    expect(secondRunning.test).toMatchObject({
+      _tag: "TestRunning",
+      requestId: 3,
+    })
+  })
+
+  it("ignores a failure from a dismissed test after another test starts", () => {
+    const [firstLoading] = update(
+      loadedModel(),
+      OpenedRuleTest({ ruleId: rule.id }),
+    )
+    const candidates = [
+      {
+        number: 42,
+        title: "Improve docs",
+        draft: false,
+        author: null,
+        updatedAt: null,
+      },
+    ]
+    const [firstConfigured] = update(
+      firstLoading,
+      LoadedRuleTestCandidates({ repository, ruleId: rule.id, candidates }),
+    )
+    const [firstRunning] = update(firstConfigured, RanRuleTest())
+    const [dismissed] = update(firstRunning, DismissedRuleTest())
+    const [secondLoading] = update(
+      dismissed,
+      OpenedRuleTest({ ruleId: rule.id }),
+    )
+    const [secondConfigured] = update(
+      secondLoading,
+      LoadedRuleTestCandidates({ repository, ruleId: rule.id, candidates }),
+    )
+    const [secondRunning] = update(secondConfigured, RanRuleTest())
+    const [unchanged] = update(
+      secondRunning,
+      FailedRuleTest({
+        requestId: 2,
+        repository,
+        message: "stale",
+      }),
+    )
+    expect(unchanged).toEqual(secondRunning)
   })
 })

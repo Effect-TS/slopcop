@@ -58,7 +58,13 @@ const unavailableStream = Stream.die("Unexpected test stream call")
 
 const makeLayer = (
   rule: LabelingRule.LabelingRule,
-  state: { writes: number; classifiedRuleIds: Array<string> },
+  state: {
+    writes: number
+    classifiedRuleIds: Array<string>
+    confidence?: number
+    currentLabels?: ReadonlyArray<string>
+    generatedRelease?: boolean
+  },
 ) =>
   LabelingRuleTester.layerNoDeps.pipe(
     Layer.provide([
@@ -95,8 +101,10 @@ const makeLayer = (
         getPullRequest: () =>
           Effect.succeed({
             number: 42,
-            title: "Fix defect",
-            body: "Fixes a defect.",
+            title: state.generatedRelease ? "Version Packages" : "Fix defect",
+            body: state.generatedRelease
+              ? "This PR was opened by the [Changesets release](https://github.com/changesets/action) GitHub action.\n\n# Releases"
+              : "Fixes a defect.",
             draft: false,
             head: { sha: "abc" },
             base: { ref: "main" },
@@ -104,13 +112,24 @@ const makeLayer = (
         listPullRequestFiles: () =>
           Stream.fromIterable([
             {
-              filename: ".changeset/fix.md",
-              status: "added" as const,
+              filename: state.generatedRelease
+                ? "packages/effect/CHANGELOG.md"
+                : ".changeset/fix.md",
+              status: (state.generatedRelease ? "modified" : "added") as
+                | "modified"
+                | "added",
               patch: "patch",
             },
           ]),
         listOpenPullRequests: () => unavailable,
-        listItemLabels: () => Stream.empty,
+        listItemLabels: () =>
+          Stream.fromIterable(
+            (state.currentLabels ?? []).map((name) => ({
+              name,
+              description: null,
+              color: "ffffff",
+            })),
+          ),
         addItemLabels: () =>
           Effect.sync(() => {
             state.writes++
@@ -138,7 +157,7 @@ const makeLayer = (
           decisions: input.ruleSet.rules.map((item) => ({
             ruleId: item.id,
             applies: true,
-            confidence: 0.95,
+            confidence: state.confidence ?? 0.95,
             rationale: "The evidence matches the configured rule.",
           })),
         })
@@ -163,6 +182,7 @@ describe("LabelingRuleTester", () => {
         ruleId: rule.id,
         pullRequestNumber: 42,
         applies: true,
+        selected: true,
         confidence: 0.95,
         confidenceThreshold: 0.8,
         rationale: "The evidence matches the configured rule.",
@@ -173,6 +193,28 @@ describe("LabelingRuleTester", () => {
     }).pipe(Effect.provide(makeLayer(rule, state)))
   })
 
+  it.effect(
+    "reports an applicable below-threshold result as unselected",
+    () => {
+      const state = {
+        writes: 0,
+        classifiedRuleIds: [] as Array<string>,
+        confidence: 0.7,
+      }
+      const rule = makeRule("ai")
+      return Effect.gen(function* () {
+        const tester = yield* LabelingRuleTester
+        const result = yield* tester.test(repository, rule.id, 42)
+
+        expect(result).toMatchObject({
+          applies: true,
+          selected: false,
+          proposedLabelChanges: { add: [], remove: [] },
+        })
+      }).pipe(Effect.provide(makeLayer(rule, state)))
+    },
+  )
+
   it.effect("tests a ready-for-review rule without AI or label writes", () => {
     const state = { writes: 0, classifiedRuleIds: [] as Array<string> }
     const rule = makeRule("ready-for-review")
@@ -181,6 +223,7 @@ describe("LabelingRuleTester", () => {
       const result = yield* tester.test(repository, rule.id, 42)
 
       expect(result.applies).toBe(true)
+      expect(result.selected).toBe(true)
       expect(result.confidence).toBe(1)
       expect(result.proposedLabelChanges).toEqual({
         add: ["ready"],
@@ -190,4 +233,27 @@ describe("LabelingRuleTester", () => {
       expect(state.writes).toBe(0)
     }).pipe(Effect.provide(makeLayer(rule, state)))
   })
+
+  it.effect(
+    "proposes no reconciliation for generated Changesets releases",
+    () => {
+      const state = {
+        writes: 0,
+        classifiedRuleIds: [] as Array<string>,
+        generatedRelease: true,
+        currentLabels: ["ready"],
+      }
+      const rule = makeRule("ready-for-review")
+      return Effect.gen(function* () {
+        const tester = yield* LabelingRuleTester
+        const result = yield* tester.test(repository, rule.id, 42)
+
+        expect(result).toMatchObject({
+          applies: false,
+          selected: false,
+          proposedLabelChanges: { add: [], remove: [] },
+        })
+      }).pipe(Effect.provide(makeLayer(rule, state)))
+    },
+  )
 })

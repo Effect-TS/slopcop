@@ -2,6 +2,8 @@ import * as GitHubLabel from "@slopcop/domain/GitHub/GitHubLabel"
 import * as RepositoryManagement from "@slopcop/domain/GitHub/RepositoryManagement"
 import * as LabelingRule from "@slopcop/domain/Labeling/LabelingRule"
 import * as LabelingRuleManagement from "@slopcop/domain/Labeling/LabelingRuleManagement"
+import * as Dialog from "@foldkit/ui/dialog"
+import * as Menu from "@foldkit/ui/menu"
 import * as Schema from "effect/Schema"
 
 export const Repository = RepositoryManagement.RepositoryPath
@@ -15,6 +17,11 @@ export type RuleMode = typeof RuleMode.Type
 
 export const RuleKind = LabelingRule.LabelingRuleKind
 export type RuleKind = typeof RuleKind.Type
+
+export const RuleAction = Schema.Literals(["Edit", "Test", "Delete"])
+export type RuleAction = typeof RuleAction.Type
+export const RuleActionMenu: ReturnType<typeof Menu.create<RuleAction>> =
+  Menu.create<RuleAction>()
 
 export const RuleDraft = Schema.Struct({
   name: Schema.String,
@@ -149,7 +156,10 @@ export const TestConfiguring = Schema.TaggedStruct(
   "TestConfiguring",
   TestSelection,
 )
-export const TestRunning = Schema.TaggedStruct("TestRunning", TestSelection)
+export const TestRunning = Schema.TaggedStruct("TestRunning", {
+  ...TestSelection,
+  requestId: Schema.Int,
+})
 export const TestResult = Schema.TaggedStruct("TestResult", {
   ...TestSelection,
   result: LabelingRuleManagement.TestLabelingRuleResponse,
@@ -202,7 +212,10 @@ export const Model = Schema.Struct({
   deletion: DeleteState,
   test: TestState,
   rowMutation: RowMutationState,
-  openRuleMenu: Schema.NullOr(RuleId),
+  editorDialog: Dialog.Model,
+  deleteDialog: Dialog.Model,
+  testDialog: Dialog.Model,
+  ruleMenus: Schema.Record(Schema.String, Menu.Model),
 })
 export type Model = typeof Model.Type
 

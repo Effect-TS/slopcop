@@ -179,7 +179,7 @@ export const mapRuleError = (
         (currentRule) =>
           Effect.fail(
             new LabelingRulesRevisionConflict({
-              repository: error.repositoryId,
+              repository: error.repository,
               expectedRevision: error.expectedRevision,
               actualRevision: error.actualRevision,
               currentRule,

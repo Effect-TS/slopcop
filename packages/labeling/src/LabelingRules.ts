@@ -605,8 +605,14 @@ export class LabelingRules extends Context.Service<
       const actualRevision =
         yield* repositoryRows.getRulesRevision(repositoryId)
       if (actualRevision !== expectedRevision) {
+        const maybeRepository = yield* repositoryRows.findById(repositoryId)
+        if (Option.isNone(maybeRepository)) {
+          return yield* Effect.die(
+            "The repository disappeared while checking its labeling rules revision.",
+          )
+        }
         return yield* new StaleLabelingRulesRevision({
-          repositoryId,
+          repository: maybeRepository.value.slug,
           expectedRevision,
           actualRevision,
           currentRule: null,

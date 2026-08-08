@@ -42,7 +42,7 @@ export class GitHubLabelValidationError extends Data.TaggedError(
 export class StaleLabelingRulesRevision extends Data.TaggedError(
   "StaleLabelingRulesRevision",
 )<{
-  readonly repositoryId: string
+  readonly repository: string
   readonly expectedRevision: number
   readonly actualRevision: number
   readonly currentRule: LabelingRule.LabelingRule | null

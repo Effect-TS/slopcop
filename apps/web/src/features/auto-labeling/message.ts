@@ -1,5 +1,7 @@
 import * as GitHubLabel from "@slopcop/domain/GitHub/GitHubLabel"
 import * as LabelingRuleManagement from "@slopcop/domain/Labeling/LabelingRuleManagement"
+import * as Dialog from "@foldkit/ui/dialog"
+import * as Menu from "@foldkit/ui/menu"
 import * as Schema from "effect/Schema"
 import { m } from "foldkit/message"
 import {
@@ -47,7 +49,19 @@ export const FailedToSaveRule = m("FailedToSaveRule", {
   conflict: Schema.NullOr(MutationConflict),
 })
 
-export const ToggledRuleMenu = m("ToggledRuleMenu", { ruleId: RuleId })
+export const GotRuleMenuMessage = m("GotRuleMenuMessage", {
+  ruleId: RuleId,
+  message: Menu.Message,
+})
+export const GotEditorDialogMessage = m("GotEditorDialogMessage", {
+  message: Dialog.Message,
+})
+export const GotDeleteDialogMessage = m("GotDeleteDialogMessage", {
+  message: Dialog.Message,
+})
+export const GotTestDialogMessage = m("GotTestDialogMessage", {
+  message: Dialog.Message,
+})
 export const ToggledRule = m("ToggledRule", { ruleId: RuleId })
 export const CompletedToggleRule = m("CompletedToggleRule", {
   requestId: Schema.Int,
@@ -95,10 +109,12 @@ export const SelectedRuleTestCandidate = m("SelectedRuleTestCandidate", {
 })
 export const RanRuleTest = m("RanRuleTest")
 export const CompletedRuleTest = m("CompletedRuleTest", {
+  requestId: Schema.Int,
   repository: Repository,
   result: LabelingRuleManagement.TestLabelingRuleResponse,
 })
 export const FailedRuleTest = m("FailedRuleTest", {
+  requestId: Schema.Int,
   repository: Repository,
   message: Schema.String,
 })
@@ -132,7 +148,10 @@ export const Message = Schema.Union([
   ReloadedRuleEditor,
   CompletedSaveRule,
   FailedToSaveRule,
-  ToggledRuleMenu,
+  GotRuleMenuMessage,
+  GotEditorDialogMessage,
+  GotDeleteDialogMessage,
+  GotTestDialogMessage,
   ToggledRule,
   CompletedToggleRule,
   FailedToToggleRule,

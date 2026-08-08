@@ -134,7 +134,7 @@ describe("labeling rule HTTP serialization", () => {
       const error = yield* Effect.flip(
         mapRuleError(
           new StaleLabelingRulesRevision({
-            repositoryId: "repository-1",
+            repository: "Effect-TS/effect",
             expectedRevision: 3,
             actualRevision: 4,
             currentRule: rule,
@@ -144,6 +144,7 @@ describe("labeling rule HTTP serialization", () => {
 
       expect(error).toMatchObject({
         _tag: "LabelingRulesRevisionConflict",
+        repository: "Effect-TS/effect",
         expectedRevision: 3,
         actualRevision: 4,
         currentRule: { id: "rule-1", version: 1 },
@@ -159,7 +160,7 @@ describe("labeling rule HTTP serialization", () => {
       const error = yield* Effect.flip(
         mapRuleError(
           new StaleLabelingRulesRevision({
-            repositoryId: "repository-1",
+            repository: "Effect-TS/effect",
             expectedRevision: 3,
             actualRevision: 4,
             currentRule: null,

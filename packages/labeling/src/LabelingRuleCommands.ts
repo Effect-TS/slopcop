@@ -250,7 +250,7 @@ export const makeLabelingRuleCommands = Effect.gen(function* () {
               ? Option.none<LabelingRule.LabelingRule>()
               : yield* rules.findById(command.repositoryId, command.ruleId)
           return yield* new StaleLabelingRulesRevision({
-            repositoryId: command.repositoryId,
+            repository: command.repository,
             expectedRevision: command.expectedRevision,
             actualRevision,
             currentRule: Option.getOrNull(currentRule),

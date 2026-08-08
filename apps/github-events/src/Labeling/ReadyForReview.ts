@@ -21,6 +21,8 @@ import {
   hasChangesRequested,
   isChangesetCandidate,
   isValidChangesetContent,
+  planReadyForReviewLabels,
+  readyForReviewDisposition,
   requiredChecksPass,
 } from "@slopcop/labeling/ReadyForReviewPolicy"
 import { LabelingDecisionsRepo } from "./repositories/LabelingDecisionsRepo.ts"
@@ -187,7 +189,13 @@ export class ReadyForReview extends Context.Service<
               patchTruncated: false,
             })),
           })
-        if (generatedRelease) return
+        if (
+          readyForReviewDisposition({
+            generatedRelease,
+            applies: false,
+          }) === "Skip"
+        )
+          return
         const applies =
           !summary.draft &&
           files !== null &&
@@ -209,19 +217,14 @@ export class ReadyForReview extends Context.Service<
 
         const currentLabels = yield* pullRequests.getLabels(pullRequest)
         const selectedRules = applies ? deterministicRules : []
-        const changes = {
-          add: selectedRules
-            .filter((rule) => !currentLabels.has(rule.label))
-            .map((rule) => rule.label),
-          remove: deterministicRules
-            .filter(
-              (rule) =>
-                !applies &&
-                rule.mode === "reconcile" &&
-                currentLabels.has(rule.label),
-            )
-            .map((rule) => rule.label),
-        }
+        const { changes } = planReadyForReviewLabels({
+          disposition: readyForReviewDisposition({
+            generatedRelease,
+            applies,
+          }),
+          labels: deterministicRules.map((rule) => rule.label),
+          currentLabels,
+        })
         yield* rules.assertRevision(repository.id, snapshot.revision)
         const applied = yield* pullRequests.applyLabels(pullRequest, changes)
         const eventId = yield* decodeDeliveryId(deliveryId)

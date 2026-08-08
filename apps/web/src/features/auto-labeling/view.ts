@@ -1,3 +1,4 @@
+import * as Dialog from "@foldkit/ui/dialog"
 import type * as GitHubLabel from "@slopcop/domain/GitHub/GitHubLabel"
 import type * as LabelingRuleManagement from "@slopcop/domain/Labeling/LabelingRuleManagement"
 import type { Html, HtmlBuilder } from "foldkit/html"
@@ -9,10 +10,11 @@ import {
   DismissedDeleteRule,
   DismissedRowMutationError,
   DismissedRuleTest,
-  OpenedDeleteRule,
+  GotDeleteDialogMessage,
+  GotEditorDialogMessage,
+  GotRuleMenuMessage,
+  GotTestDialogMessage,
   OpenedNewRule,
-  OpenedRuleEditor,
-  OpenedRuleTest,
   RanRuleTest,
   ResetRuleTest,
   ReloadedRuleEditor,
@@ -23,7 +25,6 @@ import {
   SavedRule,
   SelectedRuleTestCandidate,
   ToggledRule,
-  ToggledRuleMenu,
   UpdatedRuleConfidence,
   UpdatedRuleExclusiveGroup,
   UpdatedRuleKind,
@@ -41,6 +42,7 @@ import type {
   RuleMode,
   MutationConflict,
 } from "./model"
+import { RuleAction, RuleActionMenu } from "./model"
 
 type Rule = typeof LabelingRuleManagement.PublicLabelingRule.Type
 type Label = typeof GitHubLabel.GitHubLabel.Type
@@ -52,15 +54,26 @@ const secondaryButton =
 const inputClass =
   "min-h-10 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-xs outline-hidden focus:border-ring focus:ring-2 focus:ring-ring/20"
 
-export const view = Submodel.defineView<Model, Message>((model, h) =>
-  h.section(
+export const view = Submodel.defineView<Model, Message>((model, h) => {
+  const dialogOpen =
+    model.editorDialog.isOpen ||
+    model.deleteDialog.isOpen ||
+    model.testDialog.isOpen
+  return h.div(
+    [h.Class("w-full self-stretch")],
     [
-      h.AriaLabelledBy("auto-labeling-title"),
-      h.Class("w-full self-stretch px-4 py-6 sm:px-6 lg:px-8"),
+      h.section(
+        [
+          h.AriaLabelledBy("auto-labeling-title"),
+          h.Inert(dialogOpen),
+          h.Class("px-4 py-6 sm:px-6 lg:px-8"),
+        ],
+        [pageHeader(h, model), repositoryView(h, model)],
+      ),
+      ...modalViews(h, model),
     ],
-    [pageHeader(h, model), repositoryView(h, model), ...modalViews(h, model)],
-  ),
-)
+  )
+})
 
 const pageHeader = (h: HtmlBuilder<Message>, model: Model): Html =>
   h.div(
@@ -346,7 +359,8 @@ const tableRow = (
   fires: number,
 ): Html => {
   const saving = model.rowMutation._tag !== "RowMutationIdle"
-  return h.tr(
+  return h.keyed("tr")(
+    rule.id,
     [h.Class(rule.enabled ? "" : "bg-muted/15 text-muted-foreground")],
     [
       h.td([h.Class("px-4 py-4 align-top")], [ruleToggle(h, rule, saving)]),
@@ -447,70 +461,38 @@ const ruleActionsMenu = (
   model: Model,
   rule: Rule,
 ): Html => {
-  const open = model.openRuleMenu === rule.id
-  return h.div(
-    [h.Class("relative inline-block text-left")],
-    [
-      h.button(
-        [
-          h.Type("button"),
-          h.AriaLabel(`Actions for ${rule.name}`),
-          h.AriaExpanded(open),
-          h.OnClick(ToggledRuleMenu({ ruleId: rule.id })),
-          h.Class(
+  const menu = model.ruleMenus[rule.id]
+  return menu === undefined
+    ? h.empty
+    : h.submodel({
+        slotId: menu.id,
+        model: menu,
+        view: RuleActionMenu.view,
+        toParentMessage: (message) =>
+          GotRuleMenuMessage({ ruleId: rule.id, message }),
+        viewInputs: {
+          items: RuleAction.literals,
+          anchor: { placement: "bottom-end", gap: 4, padding: 8 },
+          ariaLabel: `Actions for ${rule.name}`,
+          buttonContent: h.span([], ["..."]),
+          buttonClassName:
             "grid size-8 place-items-center rounded-md font-mono text-base tracking-widest text-muted-foreground outline-hidden hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50",
-          ),
-        ],
-        ["..."],
-      ),
-      ...(open
-        ? [
-            h.div(
+          itemsClassName:
+            "z-20 w-40 overflow-hidden rounded-lg border bg-popover p-1 text-left text-popover-foreground shadow-lg",
+          itemToConfig: (action) => ({
+            content: h.span(
               [
-                h.Role("menu"),
                 h.Class(
-                  "absolute right-0 top-9 z-20 w-40 overflow-hidden rounded-lg border bg-popover p-1 text-left text-popover-foreground shadow-lg",
+                  `block w-full rounded-md px-3 py-2 text-left text-sm ${action === "Delete" ? "text-destructive hover:bg-destructive/10" : "hover:bg-muted"}`,
                 ),
               ],
-              [
-                menuButton(
-                  h,
-                  "Edit rule",
-                  OpenedRuleEditor({ ruleId: rule.id }),
-                ),
-                menuButton(h, "Test rule", OpenedRuleTest({ ruleId: rule.id })),
-                h.div([h.Class("my-1 border-t")], []),
-                menuButton(
-                  h,
-                  "Delete rule",
-                  OpenedDeleteRule({ ruleId: rule.id }),
-                  true,
-                ),
-              ],
+              [`${action} rule`],
             ),
-          ]
-        : []),
-    ],
-  )
+          }),
+          backdropClassName: "fixed inset-0 z-10",
+        },
+      })
 }
-
-const menuButton = (
-  h: HtmlBuilder<Message>,
-  label: string,
-  message: Message,
-  destructive = false,
-): Html =>
-  h.button(
-    [
-      h.Type("button"),
-      h.Role("menuitem"),
-      h.OnClick(message),
-      h.Class(
-        `w-full rounded-md px-3 py-2 text-left text-sm outline-hidden focus-visible:ring-2 focus-visible:ring-ring/50 ${destructive ? "text-destructive hover:bg-destructive/10" : "hover:bg-muted"}`,
-      ),
-    ],
-    [label],
-  )
 
 const modalViews = (
   h: HtmlBuilder<Message>,
@@ -523,39 +505,59 @@ const modalViews = (
 
 const modalShell = (
   h: HtmlBuilder<Message>,
-  labelId: string,
-  closeLabel: string,
-  closeMessage: Message,
+  dialogModel: Dialog.Model,
+  toParentMessage: (message: Dialog.Message) => Message,
   content: ReadonlyArray<Html>,
-  alert = false,
 ): Html =>
-  h.div(
-    [
-      h.Role(alert ? "alertdialog" : "dialog"),
-      h.AriaModal(true),
-      h.AriaLabelledBy(labelId),
-      h.Class("fixed inset-0 z-50 grid place-items-center p-4 sm:p-6"),
-    ],
-    [
-      h.button(
-        [
-          h.Type("button"),
-          h.AriaLabel(closeLabel),
-          h.OnClick(closeMessage),
-          h.Class("absolute inset-0 bg-black/65 backdrop-blur-[2px]"),
-        ],
-        [],
-      ),
-      h.div(
-        [
-          h.Class(
-            "relative z-10 max-h-[calc(100svh-2rem)] w-full max-w-2xl overflow-y-auto rounded-2xl border bg-card p-5 shadow-2xl sm:max-h-[calc(100svh-3rem)] sm:p-6",
-          ),
-        ],
-        content,
-      ),
-    ],
-  )
+  h.submodel({
+    slotId: dialogModel.id,
+    model: dialogModel,
+    view: Dialog.view,
+    toParentMessage,
+    viewInputs: {
+      toView: ({
+        dialog,
+        backdrop,
+        description,
+        initialFocus,
+        isVisible,
+        panel,
+      }) =>
+        h.dialog(
+          [
+            ...dialog,
+            h.Class(
+              "fixed inset-0 z-50 m-0 size-full max-h-none max-w-none border-0 bg-transparent p-4 sm:p-6",
+            ),
+          ],
+          isVisible
+            ? [
+                h.div([
+                  ...backdrop,
+                  h.Class("fixed inset-0 bg-black/65 backdrop-blur-[2px]"),
+                ]),
+                h.div(
+                  [
+                    ...panel,
+                    ...initialFocus,
+                    h.Tabindex(-1),
+                    h.Class(
+                      "relative z-10 mx-auto max-h-[calc(100svh-2rem)] w-full max-w-2xl overflow-y-auto rounded-2xl border bg-card p-5 shadow-2xl sm:max-h-[calc(100svh-3rem)] sm:p-6",
+                    ),
+                  ],
+                  [
+                    h.p(
+                      [...description, h.Class("sr-only")],
+                      ["Rule management dialog"],
+                    ),
+                    ...content,
+                  ],
+                ),
+              ]
+            : [],
+        ),
+    },
+  })
 
 const editorModal = (h: HtmlBuilder<Message>, model: Model): Html => {
   if (model.editor._tag === "EditorClosed") return h.div([], [])
@@ -579,9 +581,8 @@ const editorModal = (h: HtmlBuilder<Message>, model: Model): Html => {
       : null
   return modalShell(
     h,
-    "rule-editor-title",
-    "Close rule editor",
-    ClosedRuleEditor(),
+    model.editorDialog,
+    (message) => GotEditorDialogMessage({ message }),
     [
       h.div(
         [h.Class("flex items-start justify-between gap-4")],
@@ -599,7 +600,7 @@ const editorModal = (h: HtmlBuilder<Message>, model: Model): Html => {
               ),
               h.h3(
                 [
-                  h.Id("rule-editor-title"),
+                  h.Id(Dialog.titleId(model.editorDialog)),
                   h.Class("mt-2 text-xl font-semibold"),
                 ],
                 [isNew ? "New auto-labeling rule" : draft.name],
@@ -986,9 +987,8 @@ const deleteModal = (h: HtmlBuilder<Message>, model: Model): Html => {
   const deleting = model.deletion._tag === "DeleteDeleting"
   return modalShell(
     h,
-    "delete-rule-title",
-    "Cancel deleting rule",
-    DismissedDeleteRule(),
+    model.deleteDialog,
+    (message) => GotDeleteDialogMessage({ message }),
     [
       h.p(
         [
@@ -999,7 +999,10 @@ const deleteModal = (h: HtmlBuilder<Message>, model: Model): Html => {
         ["Delete rule"],
       ),
       h.h3(
-        [h.Id("delete-rule-title"), h.Class("mt-2 text-xl font-semibold")],
+        [
+          h.Id(Dialog.titleId(model.deleteDialog)),
+          h.Class("mt-2 text-xl font-semibold"),
+        ],
         [`Delete ${rule.name}?`],
       ),
       ...(model.deletion._tag === "DeleteFailed"
@@ -1073,7 +1076,6 @@ const deleteModal = (h: HtmlBuilder<Message>, model: Model): Html => {
         ],
       ),
     ],
-    true,
   )
 }
 
@@ -1081,9 +1083,8 @@ const testModal = (h: HtmlBuilder<Message>, model: Model): Html => {
   if (model.test._tag === "TestClosed") return h.div([], [])
   return modalShell(
     h,
-    "rule-test-title",
-    "Close rule test",
-    DismissedRuleTest(),
+    model.testDialog,
+    (message) => GotTestDialogMessage({ message }),
     [testContent(h, model)],
   )
 }
@@ -1092,10 +1093,10 @@ const testContent = (h: HtmlBuilder<Message>, model: Model): Html => {
   if (model.test._tag === "TestClosed") return h.div([], [])
   if (model.test._tag === "TestLoadingCandidates") {
     return h.section(
-      [h.AriaLabelledBy("rule-test-title")],
+      [h.AriaLabelledBy(Dialog.titleId(model.testDialog))],
       [
         h.h3(
-          [h.Id("rule-test-title"), h.Class("font-semibold")],
+          [h.Id(Dialog.titleId(model.testDialog)), h.Class("font-semibold")],
           [`Test ${model.test.rule.name}`],
         ),
         h.p(
@@ -1106,10 +1107,15 @@ const testContent = (h: HtmlBuilder<Message>, model: Model): Html => {
     )
   }
   if (model.test._tag === "TestResult")
-    return testResult(h, model.test.rule, model.test.result)
+    return testResult(
+      h,
+      Dialog.titleId(model.testDialog),
+      model.test.rule,
+      model.test.result,
+    )
   const running = model.test._tag === "TestRunning"
   return h.section(
-    [h.AriaLabelledBy("rule-test-title")],
+    [h.AriaLabelledBy(Dialog.titleId(model.testDialog))],
     [
       h.p(
         [
@@ -1120,7 +1126,7 @@ const testContent = (h: HtmlBuilder<Message>, model: Model): Html => {
         ["No-write preview"],
       ),
       h.h3(
-        [h.Id("rule-test-title"), h.Class("mt-1 font-semibold")],
+        [h.Id(Dialog.titleId(model.testDialog)), h.Class("mt-1 font-semibold")],
         [`Test ${model.test.rule.name}`],
       ),
       h.p(
@@ -1184,24 +1190,25 @@ const testContent = (h: HtmlBuilder<Message>, model: Model): Html => {
 
 const testResult = (
   h: HtmlBuilder<Message>,
+  titleId: string,
   rule: Rule,
   result: typeof LabelingRuleManagement.TestLabelingRuleResponse.Type,
 ): Html =>
   h.section(
-    [h.AriaLabelledBy("rule-test-title")],
+    [h.AriaLabelledBy(titleId)],
     [
       h.p(
         [
           h.Class(
-            `font-mono text-[10px] font-semibold uppercase tracking-widest ${result.applies ? "text-success" : "text-muted-foreground"}`,
+            `font-mono text-[10px] font-semibold uppercase tracking-widest ${result.selected ? "text-success" : "text-muted-foreground"}`,
           ),
         ],
         [
-          `${result.applies ? "Would apply" : "Would not apply"} / ${Math.round(result.confidence * 100)}% confidence`,
+          `${result.selected ? "Would apply" : "Would not apply"} / ${Math.round(result.confidence * 100)}% confidence`,
         ],
       ),
       h.h3(
-        [h.Id("rule-test-title"), h.Class("mt-1 font-semibold")],
+        [h.Id(titleId), h.Class("mt-1 font-semibold")],
         ["Rule test result"],
       ),
       h.div(

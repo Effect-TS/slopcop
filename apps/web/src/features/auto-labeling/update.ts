@@ -1,4 +1,8 @@
+import * as Dialog from "@foldkit/ui/dialog"
+import * as Menu from "@foldkit/ui/menu"
 import * as Match from "effect/Match"
+import * as Option from "effect/Option"
+import * as FoldkitCommand from "foldkit/command"
 import { evo } from "foldkit/struct"
 import {
   DeleteRule,
@@ -17,6 +21,7 @@ import {
   EditorState,
   RepositoryState,
   RowMutationState,
+  RuleActionMenu,
   TestState,
   type Model,
   type MutationConflict,
@@ -143,7 +148,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
                 deletion: () => DeleteState.cases.DeleteClosed.make({}),
                 test: () => TestState.cases.TestClosed.make({}),
                 repositoryRequest: () => null,
-                openRuleMenu: () => null,
+                ruleMenus: () => ({}),
               }),
               [],
             ]
@@ -154,7 +159,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
                 test: () => TestState.cases.TestClosed.make({}),
                 rowMutation: () =>
                   RowMutationState.cases.RowMutationIdle.make({}),
-                openRuleMenu: () => null,
+                ruleMenus: () => ({}),
               }),
               repository,
               true,
@@ -181,6 +186,17 @@ export const update = (model: Model, message: Message): UpdateReturn =>
                     data: { repository, revision, rules, activity, labels },
                   }),
                 repositoryRequest: () => null,
+                ruleMenus: () =>
+                  Object.fromEntries(
+                    rules.map((rule) => [
+                      rule.id,
+                      model.ruleMenus[rule.id] ??
+                        Menu.init({
+                          id: `rule-actions-${rule.id}`,
+                          isModal: true,
+                        }),
+                    ]),
+                  ),
               }),
               [],
             ]
@@ -205,7 +221,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       OpenedNewRule: () =>
         model.repository._tag !== "LoadedRepository"
           ? [model, []]
-          : [
+          : openDialog(
               evo(model, {
                 editor: () =>
                   EditorState.cases.EditorEditing.make({
@@ -214,13 +230,13 @@ export const update = (model: Model, message: Message): UpdateReturn =>
                     version: null,
                   }),
               }),
-              [],
-            ],
+              "editorDialog",
+            ),
       OpenedRuleEditor: ({ ruleId }) => {
         const rule = loadedRule(model, ruleId)
         return rule === null
           ? [model, []]
-          : [
+          : openDialog(
               evo(model, {
                 editor: () =>
                   EditorState.cases.EditorEditing.make({
@@ -228,17 +244,17 @@ export const update = (model: Model, message: Message): UpdateReturn =>
                     ruleId: rule.id,
                     version: rule.version,
                   }),
-                openRuleMenu: () => null,
               }),
-              [],
-            ]
+              "editorDialog",
+            )
       },
-      ClosedRuleEditor: () => [
-        evo(model, {
-          editor: () => EditorState.cases.EditorClosed.make({}),
-        }),
-        [],
-      ],
+      ClosedRuleEditor: () =>
+        closeDialog(
+          evo(model, {
+            editor: () => EditorState.cases.EditorClosed.make({}),
+          }),
+          "editorDialog",
+        ),
       SavedRule: () => {
         const repository = currentRepository(model)
         if (
@@ -285,12 +301,14 @@ export const update = (model: Model, message: Message): UpdateReturn =>
           ? failSave(model, repository, message, conflict)
           : [model, []],
 
-      ToggledRuleMenu: ({ ruleId }) => [
-        evo(model, {
-          openRuleMenu: (open) => (open === ruleId ? null : ruleId),
-        }),
-        [],
-      ],
+      GotRuleMenuMessage: ({ message: menuMessage, ruleId }) =>
+        updateRuleMenu(model, ruleId, menuMessage),
+      GotEditorDialogMessage: ({ message: dialogMessage }) =>
+        updateDialog(model, "editorDialog", dialogMessage),
+      GotDeleteDialogMessage: ({ message: dialogMessage }) =>
+        updateDialog(model, "deleteDialog", dialogMessage),
+      GotTestDialogMessage: ({ message: dialogMessage }) =>
+        updateDialog(model, "testDialog", dialogMessage),
       ToggledRule: ({ ruleId }) => {
         const repository = currentRepository(model)
         const rule = loadedRule(model, ruleId)
@@ -367,21 +385,21 @@ export const update = (model: Model, message: Message): UpdateReturn =>
         const rule = loadedRule(model, ruleId)
         return rule === null
           ? [model, []]
-          : [
+          : openDialog(
               evo(model, {
                 deletion: () =>
                   DeleteState.cases.DeleteConfirming.make({ rule }),
-                openRuleMenu: () => null,
               }),
-              [],
-            ]
+              "deleteDialog",
+            )
       },
-      DismissedDeleteRule: () => [
-        evo(model, {
-          deletion: () => DeleteState.cases.DeleteClosed.make({}),
-        }),
-        [],
-      ],
+      DismissedDeleteRule: () =>
+        closeDialog(
+          evo(model, {
+            deletion: () => DeleteState.cases.DeleteClosed.make({}),
+          }),
+          "deleteDialog",
+        ),
       ConfirmedDeleteRule: () => {
         const repository = currentRepository(model)
         if (
@@ -435,14 +453,14 @@ export const update = (model: Model, message: Message): UpdateReturn =>
         const rule = loadedRule(model, ruleId)
         return repository === null || rule === null
           ? [model, []]
-          : [
+          : openDialog(
               evo(model, {
                 test: () =>
                   TestState.cases.TestLoadingCandidates.make({ rule }),
-                openRuleMenu: () => null,
               }),
+              "testDialog",
               [LoadRuleTestCandidates({ repository, ruleId })],
-            ]
+            )
       },
       LoadedRuleTestCandidates: ({ candidates, repository, ruleId }) =>
         sameRepository(currentRepository(model), repository) &&
@@ -487,6 +505,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
           return [model, []]
         }
         const { candidates, rule, selectedPullRequest } = model.test
+        const requestId = model.nextRequestId
         return [
           evo(model, {
             test: () =>
@@ -494,25 +513,30 @@ export const update = (model: Model, message: Message): UpdateReturn =>
                 candidates,
                 rule,
                 selectedPullRequest,
+                requestId,
               }),
+            nextRequestId: (id) => id + 1,
           }),
           [
             TestRule({
               repository,
+              requestId,
               ruleId: rule.id,
               pullRequestNumber: selectedPullRequest,
             }),
           ],
         ]
       },
-      CompletedRuleTest: ({ repository, result }) =>
+      CompletedRuleTest: ({ repository, requestId, result }) =>
         sameRepository(currentRepository(model), repository) &&
-        model.test._tag === "TestRunning"
+        model.test._tag === "TestRunning" &&
+        model.test.requestId === requestId
           ? completeTest(model, result)
           : [model, []],
-      FailedRuleTest: ({ message, repository }) =>
+      FailedRuleTest: ({ message, repository, requestId }) =>
         sameRepository(currentRepository(model), repository) &&
-        model.test._tag === "TestRunning"
+        model.test._tag === "TestRunning" &&
+        model.test.requestId === requestId
           ? failTest(model, message)
           : [model, []],
       ResetRuleTest: () => {
@@ -535,10 +559,11 @@ export const update = (model: Model, message: Message): UpdateReturn =>
           [],
         ]
       },
-      DismissedRuleTest: () => [
-        evo(model, { test: () => TestState.cases.TestClosed.make({}) }),
-        [],
-      ],
+      DismissedRuleTest: () =>
+        closeDialog(
+          evo(model, { test: () => TestState.cases.TestClosed.make({}) }),
+          "testDialog",
+        ),
 
       UpdatedRuleName: ({ name }) => [
         updateDraft(model, (draft) => ({ ...draft, name })),
@@ -837,4 +862,119 @@ const failTest = (model: Model, message: string): UpdateReturn => {
     }),
     [],
   ]
+}
+
+type DialogField = "editorDialog" | "deleteDialog" | "testDialog"
+
+const dialogMessage = (
+  field: DialogField,
+  message: Dialog.Message,
+): Message => {
+  switch (field) {
+    case "editorDialog":
+      return { _tag: "GotEditorDialogMessage", message }
+    case "deleteDialog":
+      return { _tag: "GotDeleteDialogMessage", message }
+    case "testDialog":
+      return { _tag: "GotTestDialogMessage", message }
+  }
+}
+
+const mapDialogCommands = (
+  field: DialogField,
+  commands: ReadonlyArray<FoldkitCommand.Command<Dialog.Message>>,
+): ReadonlyArray<Command> =>
+  FoldkitCommand.mapMessages(commands, (message) =>
+    dialogMessage(field, message),
+  )
+
+const openDialog = (
+  model: Model,
+  field: DialogField,
+  commands: ReadonlyArray<Command> = [],
+): UpdateReturn => {
+  const [dialog, dialogCommands] = Dialog.open(model[field])
+  return [
+    setDialog(model, field, dialog),
+    [...commands, ...mapDialogCommands(field, dialogCommands)],
+  ]
+}
+
+const closeDialog = (model: Model, field: DialogField): UpdateReturn => {
+  const [dialog, commands] = Dialog.close(model[field])
+  return [setDialog(model, field, dialog), mapDialogCommands(field, commands)]
+}
+
+const updateDialog = (
+  model: Model,
+  field: DialogField,
+  message: Dialog.Message,
+): UpdateReturn => {
+  const [dialog, commands, outMessage] = Dialog.update(model[field], message)
+  const next = setDialog(model, field, dialog)
+  const closed = Option.exists(outMessage, (out) => out._tag === "Closed")
+  return [
+    closed ? closeDialogState(next, field) : next,
+    mapDialogCommands(field, commands),
+  ]
+}
+
+const setDialog = (
+  model: Model,
+  field: DialogField,
+  dialog: Dialog.Model,
+): Model => {
+  switch (field) {
+    case "editorDialog":
+      return evo(model, { editorDialog: () => dialog })
+    case "deleteDialog":
+      return evo(model, { deleteDialog: () => dialog })
+    case "testDialog":
+      return evo(model, { testDialog: () => dialog })
+  }
+}
+
+const closeDialogState = (model: Model, field: DialogField): Model => {
+  switch (field) {
+    case "editorDialog":
+      return evo(model, {
+        editor: () => EditorState.cases.EditorClosed.make({}),
+      })
+    case "deleteDialog":
+      return evo(model, {
+        deletion: () => DeleteState.cases.DeleteClosed.make({}),
+      })
+    case "testDialog":
+      return evo(model, { test: () => TestState.cases.TestClosed.make({}) })
+  }
+}
+
+const updateRuleMenu = (
+  model: Model,
+  ruleId: RuleId,
+  message: Menu.Message,
+): UpdateReturn => {
+  const menu = model.ruleMenus[ruleId]
+  if (menu === undefined) return [model, []]
+  const [nextMenu, menuCommands, outMessage] = RuleActionMenu.update(
+    menu,
+    message,
+  )
+  const next = evo(model, {
+    ruleMenus: (menus) => ({ ...menus, [ruleId]: nextMenu }),
+  })
+  const commands = FoldkitCommand.mapMessages(menuCommands, (message) => ({
+    _tag: "GotRuleMenuMessage" as const,
+    ruleId,
+    message,
+  }))
+  if (Option.isNone(outMessage)) return [next, commands]
+  const selected =
+    outMessage.value.value === "Edit"
+      ? { _tag: "OpenedRuleEditor" as const, ruleId }
+      : outMessage.value.value === "Test"
+        ? { _tag: "OpenedRuleTest" as const, ruleId }
+        : { _tag: "OpenedDeleteRule" as const, ruleId }
+  const [selectedModel, selectedCommands] = update(next, selected)
+  return [selectedModel, [...commands, ...selectedCommands]]
 }

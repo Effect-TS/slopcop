@@ -204,6 +204,7 @@ export const TestLabelingRuleResponse = Schema.Struct({
   ruleId: LabelingRuleId,
   pullRequestNumber: Schema.Int.check(Schema.isGreaterThan(0)),
   applies: Schema.Boolean,
+  selected: Schema.Boolean,
   confidence: LabelingRuleConfidenceThreshold,
   confidenceThreshold: LabelingRuleConfidenceThreshold,
   rationale: Schema.String,

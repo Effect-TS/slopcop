@@ -7,6 +7,38 @@ import type {
 } from "@slopcop/github/GitHubClient"
 import { parseDocument } from "yaml"
 
+export type ReadyForReviewDisposition = "Skip" | "Apply" | "Reconcile"
+
+export const readyForReviewDisposition = (input: {
+  readonly generatedRelease: boolean
+  readonly applies: boolean
+}): ReadyForReviewDisposition =>
+  input.generatedRelease ? "Skip" : input.applies ? "Apply" : "Reconcile"
+
+export const planReadyForReviewLabels = (input: {
+  readonly disposition: ReadyForReviewDisposition
+  readonly labels: ReadonlyArray<string>
+  readonly currentLabels: ReadonlySet<string>
+}) => ({
+  selected: input.disposition === "Apply",
+  changes:
+    input.disposition === "Skip"
+      ? { add: [], remove: [] }
+      : input.disposition === "Apply"
+        ? {
+            add: input.labels.filter(
+              (label) => !input.currentLabels.has(label),
+            ),
+            remove: [],
+          }
+        : {
+            add: [],
+            remove: input.labels.filter((label) =>
+              input.currentLabels.has(label),
+            ),
+          },
+})
+
 const PASSING_CHECK_CONCLUSIONS = new Set(["success", "neutral", "skipped"])
 
 export const requiredChecksPass = (input: {

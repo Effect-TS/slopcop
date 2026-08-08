@@ -26,7 +26,9 @@ import {
   hasChangesRequested,
   isChangesetCandidate,
   isValidChangesetContent,
+  planReadyForReviewLabels,
   readyForReviewRationale,
+  readyForReviewDisposition,
   requiredChecksPass,
 } from "@slopcop/labeling/ReadyForReviewPolicy"
 import { LabelingRules } from "@slopcop/labeling/LabelingRules"
@@ -154,6 +156,7 @@ export class LabelingRuleTester extends Context.Service<
           ruleId: rule.id,
           pullRequestNumber,
           applies: decision.applies,
+          selected: plan.selectedRuleIds.includes(rule.id),
           confidence: decision.confidence,
           confidenceThreshold: rule.confidenceThreshold,
           rationale: decision.rationale,
@@ -212,21 +215,16 @@ export class LabelingRuleTester extends Context.Service<
         validChangeset &&
         checksPass &&
         reviewsClear
-      const decision = {
-        ruleId: rule.id,
-        applies,
-        confidence: 1,
-        rationale: "",
-      }
-      const plan = planLabels({
-        rules: [rule],
-        decisions: [decision],
+      const plan = planReadyForReviewLabels({
+        disposition: readyForReviewDisposition({ generatedRelease, applies }),
+        labels: [rule.label],
         currentLabels,
       })
       return {
         ruleId: rule.id,
         pullRequestNumber,
         applies,
+        selected: plan.selected,
         confidence: 1,
         confidenceThreshold: rule.confidenceThreshold,
         rationale: readyForReviewRationale({

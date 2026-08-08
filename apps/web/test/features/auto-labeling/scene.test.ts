@@ -65,6 +65,62 @@ const conflictModel = (): AutoLabeling.Model => {
   )[0]
 }
 
+const belowThresholdResultModel = (): AutoLabeling.Model => {
+  const [loading] = AutoLabeling.update(
+    AutoLabeling.init(),
+    AutoLabeling.SelectedRepositoryChanged({ repository }),
+  )
+  const [loaded] = AutoLabeling.update(
+    loading,
+    AutoLabeling.LoadedRepositoryData({
+      requestId: 1,
+      repository,
+      revision: 8,
+      rules: [rule],
+      activity: { windowDays: 30, totalFires: 0, rules: [] },
+      labels: [{ name: "documentation", description: null, color: "0ea5e9" }],
+    }),
+  )
+  const [loadingCandidates] = AutoLabeling.update(
+    loaded,
+    AutoLabeling.OpenedRuleTest({ ruleId: rule.id }),
+  )
+  const [configured] = AutoLabeling.update(
+    loadingCandidates,
+    AutoLabeling.LoadedRuleTestCandidates({
+      repository,
+      ruleId: rule.id,
+      candidates: [
+        {
+          number: 42,
+          title: "Improve docs",
+          draft: false,
+          author: null,
+          updatedAt: null,
+        },
+      ],
+    }),
+  )
+  const [running] = AutoLabeling.update(configured, AutoLabeling.RanRuleTest())
+  return AutoLabeling.update(
+    running,
+    AutoLabeling.CompletedRuleTest({
+      requestId: 2,
+      repository,
+      result: {
+        ruleId: rule.id,
+        pullRequestNumber: 42,
+        applies: true,
+        selected: false,
+        confidence: 0.7,
+        confidenceThreshold: 0.8,
+        rationale: "The classifier matched below the configured threshold.",
+        proposedLabelChanges: { add: [], remove: [] },
+      },
+    }),
+  )[0]
+}
+
 describe("Auto-labeling conflicts", () => {
   it("shows local draft recovery and expected versus current versions", () => {
     Scene.scene(
@@ -100,6 +156,21 @@ describe("Auto-labeling conflicts", () => {
           message: "The retry failed.",
           conflict: null,
         }),
+      ),
+    )
+  })
+})
+
+describe("Auto-labeling rule test results", () => {
+  it("displays the effective thresholded outcome", () => {
+    Scene.scene(
+      { update: AutoLabeling.update, view: AutoLabeling.view },
+      Scene.given(belowThresholdResultModel()),
+      Scene.expect(Scene.role("dialog")).toContainText(
+        "Would not apply / 70% confidence",
+      ),
+      Scene.expect(Scene.role("dialog")).toContainText(
+        "Proposed additionsNone",
       ),
     )
   })

@@ -277,23 +277,28 @@ export const LoadRuleTestCandidates = FoldkitCommand.define(
 
 export const TestRule = FoldkitCommand.define("TestRule", {
   args: {
+    requestId: Schema.Int,
     repository: Repository,
     ruleId: RuleId,
     pullRequestNumber: Schema.Int,
   },
   messages: [CompletedRuleTest, FailedRuleTest],
-  execute: ({ pullRequestNumber, repository, ruleId }) =>
+  execute: ({ pullRequestNumber, repository, requestId, ruleId }) =>
     Effect.gen(function* () {
       const client = yield* ApiClient
       const result = yield* client.labelingRules.testRule({
         params: { ...repository, ruleId },
         payload: { pullRequestNumber },
       })
-      return CompletedRuleTest({ repository, result })
+      return CompletedRuleTest({ requestId, repository, result })
     }).pipe(
       Effect.catch((error) =>
         Effect.succeed(
-          FailedRuleTest({ repository, message: failureMessage(error) }),
+          FailedRuleTest({
+            requestId,
+            repository,
+            message: failureMessage(error),
+          }),
         ),
       ),
     ),
