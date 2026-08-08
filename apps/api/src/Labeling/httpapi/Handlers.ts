@@ -114,7 +114,7 @@ type PublicLabelingRulesError =
   | LabelingRulesRevisionConflict
   | ApiRepositoryNotConfigured
 
-const mapRuleError = (
+export const mapRuleError = (
   error: LabelingRulesError,
 ): Effect.Effect<never, PublicLabelingRulesError> => {
   switch (error._tag) {
@@ -172,14 +172,21 @@ const mapRuleError = (
         ),
       )
     case "StaleLabelingRulesRevision":
-      return Effect.fail(
-        new LabelingRulesRevisionConflict({
-          repository: error.repositoryId,
-          expectedRevision: error.expectedRevision,
-          actualRevision: error.actualRevision,
-          message:
-            "The repository labeling configuration changed during this operation. Refresh the rules and retry.",
-        }),
+      return Effect.flatMap(
+        error.currentRule === null
+          ? Effect.succeed(null)
+          : toPublicRule(error.currentRule),
+        (currentRule) =>
+          Effect.fail(
+            new LabelingRulesRevisionConflict({
+              repository: error.repositoryId,
+              expectedRevision: error.expectedRevision,
+              actualRevision: error.actualRevision,
+              currentRule,
+              message:
+                "The repository labeling configuration changed during this operation. Refresh the rules and retry.",
+            }),
+          ),
       )
     default:
       return internalFailure(error)

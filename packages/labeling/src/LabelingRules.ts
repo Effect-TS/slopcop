@@ -609,6 +609,7 @@ export class LabelingRules extends Context.Service<
           repositoryId,
           expectedRevision,
           actualRevision,
+          currentRule: null,
         })
       }
     })

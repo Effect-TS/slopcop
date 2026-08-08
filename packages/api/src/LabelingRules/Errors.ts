@@ -66,6 +66,7 @@ export class LabelingRulesRevisionConflict extends Schema.TaggedErrorClass<Label
     repository: Schema.String,
     expectedRevision: Schema.Int,
     actualRevision: Schema.Int,
+    currentRule: Schema.NullOr(LabelingRuleManagement.PublicLabelingRule),
     message: Schema.String,
   },
   { httpApiStatus: 409 },

@@ -45,4 +45,5 @@ export class StaleLabelingRulesRevision extends Data.TaggedError(
   readonly repositoryId: string
   readonly expectedRevision: number
   readonly actualRevision: number
+  readonly currentRule: LabelingRule.LabelingRule | null
 }> {}

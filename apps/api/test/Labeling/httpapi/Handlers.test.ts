@@ -2,12 +2,17 @@ import * as GitHubRepository from "@slopcop/domain/GitHub/GitHubRepository"
 import * as LabelingRule from "@slopcop/domain/Labeling/LabelingRule"
 import * as LabelingRuleAuditEntry from "@slopcop/domain/Labeling/LabelingRuleAuditEntry"
 import * as LabelingRuleManagement from "@slopcop/domain/Labeling/LabelingRuleManagement"
+import {
+  LabelingRuleConflict,
+  StaleLabelingRulesRevision,
+} from "@slopcop/labeling/LabelingRuleErrors"
 import { describe, expect, it } from "@effect/vitest"
 import * as DateTime from "effect/DateTime"
 import * as Effect from "effect/Effect"
 import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
 import {
+  mapRuleError,
   toPublicAuditEntry,
   toPublicRule,
 } from "../../../src/Labeling/httpapi/Handlers.ts"
@@ -99,5 +104,73 @@ describe("labeling rule HTTP serialization", () => {
         })
         expect(encoded.before).not.toHaveProperty("repositoryId")
       }),
+  )
+
+  it.effect("preserves the current rule in stale version errors", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        mapRuleError(
+          new LabelingRuleConflict({
+            repository: "Effect-TS/effect",
+            ruleId: rule.id,
+            currentRule: rule,
+          }),
+        ),
+      )
+
+      expect(error).toMatchObject({
+        _tag: "LabelingRuleConflict",
+        ruleId: "rule-1",
+        currentRule: { id: "rule-1", version: 1 },
+      })
+      if (error._tag !== "LabelingRuleConflict")
+        return yield* Effect.die("Expected a rule version conflict")
+      expect(error.currentRule).not.toHaveProperty("repositoryId")
+    }),
+  )
+
+  it.effect("preserves the current rule in stale revision errors", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        mapRuleError(
+          new StaleLabelingRulesRevision({
+            repositoryId: "repository-1",
+            expectedRevision: 3,
+            actualRevision: 4,
+            currentRule: rule,
+          }),
+        ),
+      )
+
+      expect(error).toMatchObject({
+        _tag: "LabelingRulesRevisionConflict",
+        expectedRevision: 3,
+        actualRevision: 4,
+        currentRule: { id: "rule-1", version: 1 },
+      })
+      if (error._tag !== "LabelingRulesRevisionConflict")
+        return yield* Effect.die("Expected a rules revision conflict")
+      expect(error.currentRule).not.toHaveProperty("repositoryId")
+    }),
+  )
+
+  it.effect("uses a null current rule for create revision conflicts", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        mapRuleError(
+          new StaleLabelingRulesRevision({
+            repositoryId: "repository-1",
+            expectedRevision: 3,
+            actualRevision: 4,
+            currentRule: null,
+          }),
+        ),
+      )
+
+      expect(error).toMatchObject({
+        _tag: "LabelingRulesRevisionConflict",
+        currentRule: null,
+      })
+    }),
   )
 })

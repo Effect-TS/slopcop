@@ -132,6 +132,77 @@ const storedMutation = (
 
 const deletedMutation = (): LabelingRuleCommandResult => ({ _tag: "Deleted" })
 
+export const validateLabelingRuleSet = (
+  existing: ReadonlyArray<LabelingRule.LabelingRule>,
+  repository: string,
+  candidate: {
+    readonly label: string
+    readonly kind: "ai" | "ready-for-review"
+    readonly mode: "add-only" | "reconcile"
+    readonly exclusiveGroup: string | null
+    readonly enabled: boolean
+    readonly validationStatus: "valid" | "missing" | "unknown"
+  },
+  excludedRuleId?: LabelingRule.LabelingRule["id"],
+): Effect.Effect<void, DuplicateLabelingRule | InvalidLabelingRule> => {
+  const others = existing.filter((rule) => rule.id !== excludedRuleId)
+  const duplicate = others.find(
+    (rule) => rule.label.toLowerCase() === candidate.label.toLowerCase(),
+  )
+  if (duplicate !== undefined) {
+    return Effect.fail(
+      new DuplicateLabelingRule({ repository, label: candidate.label }),
+    )
+  }
+  if (candidate.enabled && others.filter((rule) => rule.enabled).length >= 50) {
+    return Effect.fail(
+      new InvalidLabelingRule({
+        message: "A repository may have at most 50 enabled labeling rules.",
+      }),
+    )
+  }
+  if (candidate.enabled && candidate.validationStatus !== "valid") {
+    return Effect.fail(
+      new InvalidLabelingRule({
+        message: "An enabled labeling rule must have a valid GitHub label.",
+      }),
+    )
+  }
+  if (candidate.kind === "ready-for-review" && candidate.mode !== "reconcile") {
+    return Effect.fail(
+      new InvalidLabelingRule({
+        message: "Ready-for-review rules must use reconcile mode.",
+      }),
+    )
+  }
+  if (candidate.exclusiveGroup !== null) {
+    const incompatible = others.find(
+      (rule) =>
+        rule.exclusiveGroup === candidate.exclusiveGroup &&
+        rule.mode !== candidate.mode,
+    )
+    if (incompatible !== undefined) {
+      return Effect.fail(
+        new InvalidLabelingRule({
+          message: `Rules in exclusive group '${candidate.exclusiveGroup}' must use the same mode.`,
+        }),
+      )
+    }
+  }
+  return Effect.void
+}
+
+export const validateLabelingRuleDeletion = (
+  rule: LabelingRule.LabelingRule,
+) =>
+  rule.enabled
+    ? Effect.fail(
+        new InvalidLabelingRule({
+          message: "Disable the labeling rule before deleting it.",
+        }),
+      )
+    : Effect.void
+
 export const makeLabelingRuleCommands = Effect.gen(function* () {
   const repositories = yield* GitHubRepositoriesRepo
   const rules = yield* LabelingRulesRepo
@@ -155,49 +226,12 @@ export const makeLabelingRuleCommands = Effect.gen(function* () {
       const existing = yield* rules.listByRepository(repositoryId, {
         includeDisabled: true,
       })
-      const others = existing.filter((rule) => rule.id !== excludedRuleId)
-      const duplicate = others.find(
-        (rule) => rule.label.toLowerCase() === candidate.label.toLowerCase(),
+      yield* validateLabelingRuleSet(
+        existing,
+        repository,
+        candidate,
+        excludedRuleId,
       )
-      if (duplicate !== undefined) {
-        return yield* new DuplicateLabelingRule({
-          repository,
-          label: candidate.label,
-        })
-      }
-      if (
-        candidate.enabled &&
-        others.filter((rule) => rule.enabled).length >= 50
-      ) {
-        return yield* new InvalidLabelingRule({
-          message: "A repository may have at most 50 enabled labeling rules.",
-        })
-      }
-      if (candidate.enabled && candidate.validationStatus !== "valid") {
-        return yield* new InvalidLabelingRule({
-          message: "An enabled labeling rule must have a valid GitHub label.",
-        })
-      }
-      if (
-        candidate.kind === "ready-for-review" &&
-        candidate.mode !== "reconcile"
-      ) {
-        return yield* new InvalidLabelingRule({
-          message: "Ready-for-review rules must use reconcile mode.",
-        })
-      }
-      if (candidate.exclusiveGroup !== null) {
-        const incompatible = others.find(
-          (rule) =>
-            rule.exclusiveGroup === candidate.exclusiveGroup &&
-            rule.mode !== candidate.mode,
-        )
-        if (incompatible !== undefined) {
-          return yield* new InvalidLabelingRule({
-            message: `Rules in exclusive group '${candidate.exclusiveGroup}' must use the same mode.`,
-          })
-        }
-      }
     },
   )
 
@@ -211,10 +245,15 @@ export const makeLabelingRuleCommands = Effect.gen(function* () {
           command.repositoryId,
         )
         if (actualRevision !== command.expectedRevision) {
+          const currentRule =
+            command._tag === "Create"
+              ? Option.none<LabelingRule.LabelingRule>()
+              : yield* rules.findById(command.repositoryId, command.ruleId)
           return yield* new StaleLabelingRulesRevision({
             repositoryId: command.repositoryId,
             expectedRevision: command.expectedRevision,
             actualRevision,
+            currentRule: Option.getOrNull(currentRule),
           })
         }
 
@@ -262,11 +301,7 @@ export const makeLabelingRuleCommands = Effect.gen(function* () {
         }
 
         if (command._tag === "Delete") {
-          if (before.enabled) {
-            return yield* new InvalidLabelingRule({
-              message: "Disable the labeling rule before deleting it.",
-            })
-          }
+          yield* validateLabelingRuleDeletion(before)
           yield* rules.remove(
             command.repositoryId,
             command.ruleId,
