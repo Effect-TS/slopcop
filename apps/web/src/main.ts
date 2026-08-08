@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect"
 import * as KeyValueStore from "effect/unstable/persistence/KeyValueStore"
 import * as Match from "effect/Match"
+import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
 import * as FoldkitCommand from "foldkit/command"
 import * as Navigation from "foldkit/navigation"
@@ -106,6 +107,26 @@ const mapSetupCommands = (
     GotSetupMessage({ message }),
   )
 
+const mapAutoLabelingCommands = (
+  commands: ReadonlyArray<AutoLabeling.Command>,
+): ReadonlyArray<Command> =>
+  FoldkitCommand.mapMessages(commands, (message) =>
+    GotAutoLabelingMessage({ message }),
+  )
+
+const selectedRepository = (sidebar: AppSidebar.Model) =>
+  Option.getOrNull(
+    RepositorySelector.selectedRepository(sidebar.repositorySelector),
+  )
+
+const isSameRepository = (
+  left: ReturnType<typeof selectedRepository>,
+  right: ReturnType<typeof selectedRepository>,
+): boolean =>
+  left === null
+    ? right === null
+    : right !== null && left.owner === right.owner && left.repo === right.repo
+
 const reloadRepositoryCommands = (): ReadonlyArray<Command> =>
   mapSidebarCommands(
     AppSidebar.mapRepositorySelectorCommands([
@@ -131,21 +152,47 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       CompletedNavigateInternal: () => [model, []],
 
       GotAutoLabelingMessage: ({ message: autoLabelingMessage }) => {
-        const [autoLabeling] = AutoLabeling.update(
+        const [autoLabeling, commands] = AutoLabeling.update(
           model.autoLabeling,
           autoLabelingMessage,
         )
-        return [evo(model, { autoLabeling: () => autoLabeling }), []]
+        return [
+          evo(model, { autoLabeling: () => autoLabeling }),
+          mapAutoLabelingCommands(commands),
+        ]
       },
 
       GotSidebarMessage: ({ message: sidebarMessage }) => {
+        const previousRepository = selectedRepository(model.sidebar)
         const [sidebar, commands] = AppSidebar.update(
           model.sidebar,
           sidebarMessage,
         )
+        const nextRepository = selectedRepository(sidebar)
+        if (isSameRepository(previousRepository, nextRepository)) {
+          return [
+            evo(model, { sidebar: () => sidebar }),
+            mapSidebarCommands(commands),
+          ]
+        }
+        const [autoLabeling, autoLabelingCommands] = AutoLabeling.update(
+          model.autoLabeling,
+          AutoLabeling.SelectedRepositoryChanged({
+            repository:
+              nextRepository === null
+                ? null
+                : { owner: nextRepository.owner, repo: nextRepository.repo },
+          }),
+        )
         return [
-          evo(model, { sidebar: () => sidebar }),
-          mapSidebarCommands(commands),
+          evo(model, {
+            autoLabeling: () => autoLabeling,
+            sidebar: () => sidebar,
+          }),
+          [
+            ...mapSidebarCommands(commands),
+            ...mapAutoLabelingCommands(autoLabelingCommands),
+          ],
         ]
       },
       GotSetupMessage: ({ message: setupMessage }) => {

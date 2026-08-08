@@ -1,3 +1,4 @@
+export * from "./auto-labeling/command"
 export * from "./auto-labeling/init"
 export * from "./auto-labeling/message"
 export * from "./auto-labeling/model"
