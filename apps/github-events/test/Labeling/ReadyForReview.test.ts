@@ -49,9 +49,11 @@ const repository = new GitHubRepository.GitHubRepository({
 const rule = new LabelingRule.LabelingRule({
   id: Schema.decodeUnknownSync(LabelingRule.LabelingRuleId)("ready-rule"),
   repositoryId: repository.id,
+  name: "Ready for review",
   label: "ready for review",
   kind: "ready-for-review",
   instructions: "All required checks pass and a valid changeset is present.",
+  confidenceThreshold: 1,
   mode: "reconcile",
   exclusiveGroup: null,
   enabled: true,

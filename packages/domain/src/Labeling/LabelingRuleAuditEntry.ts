@@ -3,11 +3,13 @@ import { Model } from "effect/unstable/schema"
 import * as GitHubLabel from "../GitHub/GitHubLabel.ts"
 import { GitHubRepositoryId } from "../GitHub/GitHubRepository.ts"
 import {
+  LabelingRuleConfidenceThreshold,
   LabelingRuleExclusiveGroup,
   LabelingRuleId,
   LabelingRuleInstructions,
   LabelingRuleKind,
   LabelingRuleMode,
+  LabelingRuleName,
   LabelingRuleValidationStatus,
 } from "./LabelingRule.ts"
 
@@ -26,9 +28,11 @@ export const LabelingRuleAuditOperation = Schema.Literals([
 export const LabelingRuleAuditValue = Schema.Struct({
   id: LabelingRuleId,
   repositoryId: GitHubRepositoryId,
+  name: LabelingRuleName,
   label: GitHubLabel.GitHubLabelName,
-  kind: Schema.optionalKey(LabelingRuleKind),
+  kind: LabelingRuleKind,
   instructions: LabelingRuleInstructions,
+  confidenceThreshold: LabelingRuleConfidenceThreshold,
   mode: LabelingRuleMode,
   exclusiveGroup: LabelingRuleExclusiveGroup,
   enabled: Schema.Boolean,

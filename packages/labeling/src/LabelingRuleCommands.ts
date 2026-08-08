@@ -41,9 +41,11 @@ type ExistingMutation = {
 }
 
 export interface LabelingRuleChanges {
+  readonly name?: LabelingRule.LabelingRule["name"]
   readonly label?: string
   readonly kind?: "ai" | "ready-for-review"
   readonly instructions?: string
+  readonly confidenceThreshold?: LabelingRule.LabelingRule["confidenceThreshold"]
   readonly mode?: "add-only" | "reconcile"
   readonly exclusiveGroup?: string | null
   readonly enabled?: boolean
@@ -90,9 +92,11 @@ const auditValue = (
 ): LabelingRuleAuditEntry.LabelingRuleAuditValue => ({
   id: rule.id,
   repositoryId: rule.repositoryId,
+  name: rule.name,
   label: rule.label,
   kind: rule.kind,
   instructions: rule.instructions,
+  confidenceThreshold: rule.confidenceThreshold,
   mode: rule.mode,
   exclusiveGroup: rule.exclusiveGroup,
   enabled: rule.enabled,
@@ -306,11 +310,12 @@ export const makeLabelingRuleCommands = Effect.gen(function* () {
         const update = LabelingRule.LabelingRule.update.make({
           id: before.id,
           repositoryId: before.repositoryId,
-          name: before.name,
+          name: command.input.name ?? before.name,
           label: candidate.label,
           kind: candidate.kind,
           instructions: command.input.instructions ?? before.instructions,
-          confidenceThreshold: before.confidenceThreshold,
+          confidenceThreshold:
+            command.input.confidenceThreshold ?? before.confidenceThreshold,
           mode: candidate.mode,
           exclusiveGroup: candidate.exclusiveGroup,
           enabled: candidate.enabled,

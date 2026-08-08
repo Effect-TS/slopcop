@@ -38,9 +38,11 @@ const repository = new GitHubRepository.GitHubRepository({
 const rule = new LabelingRule.LabelingRule({
   id: Schema.decodeUnknownSync(LabelingRule.LabelingRuleId)("rule-1"),
   repositoryId: repository.id,
+  name: "Bug fixes",
   label: "bug",
   kind: "ai",
   instructions: "Apply to bug fixes.",
+  confidenceThreshold: 0.75,
   mode: "add-only",
   exclusiveGroup: null,
   enabled: true,

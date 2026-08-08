@@ -1,8 +1,10 @@
 CREATE TABLE "labeling_rules" (
   "id" TEXT PRIMARY KEY,
   "repository_id" TEXT NOT NULL,
+  "name" TEXT NOT NULL,
   "label" TEXT NOT NULL,
   "instructions" TEXT NOT NULL,
+  "confidence_threshold" REAL NOT NULL,
   "mode" TEXT NOT NULL,
   "exclusive_group" TEXT,
   "enabled" INTEGER NOT NULL
@@ -19,8 +21,15 @@ CREATE TABLE "labeling_rules" (
     ON DELETE CASCADE,
   CONSTRAINT "labeling_rules_label_length"
     CHECK (length("label") BETWEEN 1 AND 50),
+  CONSTRAINT "labeling_rules_name_length"
+    CHECK (length("name") BETWEEN 1 AND 100),
   CONSTRAINT "labeling_rules_instructions_length"
     CHECK (length("instructions") BETWEEN 1 AND 4000),
+  CONSTRAINT "labeling_rules_confidence_threshold_valid"
+    CHECK (
+      "confidence_threshold" >= 0
+      AND "confidence_threshold" <= 1
+    ),
   CONSTRAINT "labeling_rules_exclusive_group_length"
     CHECK (
       "exclusive_group" IS NULL

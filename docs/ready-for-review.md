@@ -23,9 +23,11 @@ Configure this through the labeling-rules HTTP API with:
 
 ```json
 {
+  "name": "Ready for review",
   "label": "ready for review",
   "kind": "ready-for-review",
   "instructions": "Required checks pass, a valid changeset is present, and no reviewer requests changes.",
+  "confidenceThreshold": 1,
   "mode": "reconcile",
   "exclusiveGroup": null,
   "enabled": true

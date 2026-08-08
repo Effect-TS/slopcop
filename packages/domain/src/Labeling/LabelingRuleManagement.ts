@@ -2,11 +2,13 @@ import * as Schema from "effect/Schema"
 import * as GitHubLabel from "../GitHub/GitHubLabel.ts"
 import { GitHubRepositorySlug } from "../GitHub/GitHubRepository.ts"
 import {
+  LabelingRuleConfidenceThreshold,
   LabelingRuleExclusiveGroup,
   LabelingRuleId,
   LabelingRuleInstructions,
   LabelingRuleKind,
   LabelingRuleMode,
+  LabelingRuleName,
   LabelingRuleValidationStatus,
 } from "./LabelingRule.ts"
 import {
@@ -23,9 +25,11 @@ export const RulePath = Schema.Struct({
 
 export const PublicLabelingRule = Schema.Struct({
   id: LabelingRuleId,
+  name: LabelingRuleName,
   label: GitHubLabel.GitHubLabelName,
   kind: LabelingRuleKind,
   instructions: LabelingRuleInstructions,
+  confidenceThreshold: LabelingRuleConfidenceThreshold,
   mode: LabelingRuleMode,
   exclusiveGroup: LabelingRuleExclusiveGroup,
   enabled: Schema.Boolean,
@@ -48,9 +52,11 @@ export const ListLabelingRulesResponse = Schema.Struct({
 
 export const PublicLabelingRuleAuditValue = Schema.Struct({
   id: LabelingRuleId,
+  name: LabelingRuleName,
   label: GitHubLabel.GitHubLabelName,
-  kind: Schema.optionalKey(LabelingRuleKind),
+  kind: LabelingRuleKind,
   instructions: LabelingRuleInstructions,
+  confidenceThreshold: LabelingRuleConfidenceThreshold,
   mode: LabelingRuleMode,
   exclusiveGroup: LabelingRuleExclusiveGroup,
   enabled: Schema.Boolean,
@@ -123,9 +129,11 @@ export const ValidateCandidateLabelResponse =
   GitHubLabel.GitHubLabelValidationResult
 
 export const CreateLabelingRuleRequest = Schema.Struct({
+  name: LabelingRuleName,
   label: GitHubLabel.GitHubLabelName,
   kind: Schema.optionalKey(LabelingRuleKind),
   instructions: LabelingRuleInstructions,
+  confidenceThreshold: LabelingRuleConfidenceThreshold,
   mode: LabelingRuleMode,
   exclusiveGroup: LabelingRuleExclusiveGroup,
   enabled: Schema.Boolean,
@@ -134,9 +142,11 @@ export const CreateLabelingRuleRequest = Schema.Struct({
 export type CreateLabelingRuleRequest = typeof CreateLabelingRuleRequest.Type
 
 export const PatchLabelingRuleRequest = Schema.Struct({
+  name: Schema.optionalKey(LabelingRuleName),
   label: Schema.optionalKey(GitHubLabel.GitHubLabelName),
   kind: Schema.optionalKey(LabelingRuleKind),
   instructions: Schema.optionalKey(LabelingRuleInstructions),
+  confidenceThreshold: Schema.optionalKey(LabelingRuleConfidenceThreshold),
   mode: Schema.optionalKey(LabelingRuleMode),
   exclusiveGroup: Schema.optionalKey(LabelingRuleExclusiveGroup),
   enabled: Schema.optionalKey(Schema.Boolean),

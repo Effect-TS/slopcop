@@ -20,9 +20,11 @@ const rule = new LabelingRule.LabelingRule({
   repositoryId: Schema.decodeUnknownSync(GitHubRepository.GitHubRepositoryId)(
     "repository-1",
   ),
+  name: "Bug fixes",
   label: "bug",
   kind: "ai",
   instructions: "The pull request fixes a defect.",
+  confidenceThreshold: 0.75,
   mode: "add-only",
   exclusiveGroup: null,
   enabled: true,
@@ -45,8 +47,11 @@ const deletedAuditEntry = new LabelingRuleAuditEntry.LabelingRuleAuditEntry({
   before: {
     id: rule.id,
     repositoryId: rule.repositoryId,
+    name: rule.name,
     label: rule.label,
+    kind: rule.kind,
     instructions: rule.instructions,
+    confidenceThreshold: rule.confidenceThreshold,
     mode: rule.mode,
     exclusiveGroup: rule.exclusiveGroup,
     enabled: false,
