@@ -3,7 +3,6 @@ import * as LabelingRule from "@slopcop/domain/Labeling/LabelingRule"
 import * as LabelingRuleAuditEntry from "@slopcop/domain/Labeling/LabelingRuleAuditEntry"
 import * as Effect from "effect/Effect"
 import * as Option from "effect/Option"
-import * as SqlClient from "effect/unstable/sql/SqlClient"
 import type * as SqlError from "effect/unstable/sql/SqlError"
 import {
   GitHubRepositoriesRepo,
@@ -207,7 +206,6 @@ export const makeLabelingRuleCommands = Effect.gen(function* () {
   const repositories = yield* GitHubRepositoriesRepo
   const rules = yield* LabelingRulesRepo
   const audit = yield* LabelingRuleAuditLogRepo
-  const sql = yield* SqlClient.SqlClient
 
   const validateRuleSet = Effect.fn("LabelingRuleCommands.validateRuleSet")(
     function* (
@@ -239,132 +237,71 @@ export const makeLabelingRuleCommands = Effect.gen(function* () {
     command: LabelingRuleCommand,
     actor: ConfigurationActor,
   ) {
-    return yield* sql.withTransaction(
-      Effect.gen(function* () {
-        const actualRevision = yield* repositories.getRulesRevision(
-          command.repositoryId,
-        )
-        if (actualRevision !== command.expectedRevision) {
-          const currentRule =
-            command._tag === "Create"
-              ? Option.none<LabelingRule.LabelingRule>()
-              : yield* rules.findById(command.repositoryId, command.ruleId)
-          return yield* new StaleLabelingRulesRevision({
-            repository: command.repository,
-            expectedRevision: command.expectedRevision,
-            actualRevision,
-            currentRule: Option.getOrNull(currentRule),
-          })
-        }
+    // D1 rejects interactive transactions. Rule and repository writes retain
+    // their version/revision compare-and-set checks, but execute sequentially.
+    return yield* Effect.gen(function* () {
+      const actualRevision = yield* repositories.getRulesRevision(
+        command.repositoryId,
+      )
+      if (actualRevision !== command.expectedRevision) {
+        const currentRule =
+          command._tag === "Create"
+            ? Option.none<LabelingRule.LabelingRule>()
+            : yield* rules.findById(command.repositoryId, command.ruleId)
+        return yield* new StaleLabelingRulesRevision({
+          repository: command.repository,
+          expectedRevision: command.expectedRevision,
+          actualRevision,
+          currentRule: Option.getOrNull(currentRule),
+        })
+      }
 
-        if (command._tag === "Create") {
-          yield* validateRuleSet(
-            command.repositoryId,
-            command.repository,
-            command.input,
-          )
-          const stored = yield* rules.insert(command.input)
-          yield* repositories.incrementRulesRevision(
-            command.repositoryId,
-            command.expectedRevision,
-          )
-          yield* audit.append(
-            LabelingRuleAuditEntry.LabelingRuleAuditEntry.insert.make({
-              repositoryId: command.repositoryId,
-              ruleId: stored.id,
-              actor: actorName(actor),
-              operation: "create",
-              before: null,
-              after: auditValue(stored),
-            }),
-          )
-          return storedMutation(stored)
-        }
-
-        const found = yield* rules.findById(
-          command.repositoryId,
-          command.ruleId,
-        )
-        if (Option.isNone(found)) {
-          return yield* new LabelingRuleNotFound({
-            repository: command.repository,
-            ruleId: command.ruleId,
-          })
-        }
-        const before = found.value
-        if (before.version !== command.expectedVersion) {
-          return yield* new LabelingRuleConflict({
-            repository: command.repository,
-            ruleId: command.ruleId,
-            currentRule: before,
-          })
-        }
-
-        if (command._tag === "Delete") {
-          yield* validateLabelingRuleDeletion(before)
-          yield* rules.remove(
-            command.repositoryId,
-            command.ruleId,
-            command.expectedVersion,
-          )
-          yield* repositories.incrementRulesRevision(
-            command.repositoryId,
-            command.expectedRevision,
-          )
-          yield* audit.append(
-            LabelingRuleAuditEntry.LabelingRuleAuditEntry.insert.make({
-              repositoryId: command.repositoryId,
-              ruleId: null,
-              actor: actorName(actor),
-              operation: "delete",
-              before: auditValue(before),
-              after: null,
-            }),
-          )
-          return deletedMutation()
-        }
-
-        const candidate = {
-          label: command.input.label ?? before.label,
-          kind: command.input.kind ?? before.kind,
-          mode: command.input.mode ?? before.mode,
-          exclusiveGroup:
-            command.input.exclusiveGroup === undefined
-              ? before.exclusiveGroup
-              : command.input.exclusiveGroup,
-          enabled: command.input.enabled ?? before.enabled,
-          validationStatus:
-            command.input.validationStatus ?? before.validationStatus,
-        }
+      if (command._tag === "Create") {
         yield* validateRuleSet(
           command.repositoryId,
           command.repository,
-          candidate,
-          command.ruleId,
+          command.input,
         )
-        const update = LabelingRule.LabelingRule.update.make({
-          id: before.id,
-          repositoryId: before.repositoryId,
-          name: command.input.name ?? before.name,
-          label: candidate.label,
-          kind: candidate.kind,
-          instructions: command.input.instructions ?? before.instructions,
-          confidenceThreshold:
-            command.input.confidenceThreshold ?? before.confidenceThreshold,
-          mode: candidate.mode,
-          exclusiveGroup: candidate.exclusiveGroup,
-          enabled: candidate.enabled,
-          validationStatus: candidate.validationStatus,
-          validatedAt:
-            command.input.validatedAt === undefined
-              ? before.validatedAt
-              : command.input.validatedAt,
-          version: before.version,
+        const stored = yield* rules.insert(command.input)
+        yield* repositories.incrementRulesRevision(
+          command.repositoryId,
+          command.expectedRevision,
+        )
+        yield* audit.append(
+          LabelingRuleAuditEntry.LabelingRuleAuditEntry.insert.make({
+            repositoryId: command.repositoryId,
+            ruleId: stored.id,
+            actor: actorName(actor),
+            operation: "create",
+            before: null,
+            after: auditValue(stored),
+          }),
+        )
+        return storedMutation(stored)
+      }
+
+      const found = yield* rules.findById(command.repositoryId, command.ruleId)
+      if (Option.isNone(found)) {
+        return yield* new LabelingRuleNotFound({
+          repository: command.repository,
+          ruleId: command.ruleId,
         })
-        const stored = yield* rules.update(
+      }
+      const before = found.value
+      if (before.version !== command.expectedVersion) {
+        return yield* new LabelingRuleConflict({
+          repository: command.repository,
+          ruleId: command.ruleId,
+          currentRule: before,
+        })
+      }
+
+      if (command._tag === "Delete") {
+        yield* validateLabelingRuleDeletion(before)
+        yield* rules.remove(
+          command.repositoryId,
           command.ruleId,
           command.expectedVersion,
-          update,
         )
         yield* repositories.incrementRulesRevision(
           command.repositoryId,
@@ -373,16 +310,74 @@ export const makeLabelingRuleCommands = Effect.gen(function* () {
         yield* audit.append(
           LabelingRuleAuditEntry.LabelingRuleAuditEntry.insert.make({
             repositoryId: command.repositoryId,
-            ruleId: command.ruleId,
+            ruleId: null,
             actor: actorName(actor),
-            operation: operation(command),
+            operation: "delete",
             before: auditValue(before),
-            after: auditValue(stored),
+            after: null,
           }),
         )
-        return storedMutation(stored)
-      }),
-    )
+        return deletedMutation()
+      }
+
+      const candidate = {
+        label: command.input.label ?? before.label,
+        kind: command.input.kind ?? before.kind,
+        mode: command.input.mode ?? before.mode,
+        exclusiveGroup:
+          command.input.exclusiveGroup === undefined
+            ? before.exclusiveGroup
+            : command.input.exclusiveGroup,
+        enabled: command.input.enabled ?? before.enabled,
+        validationStatus:
+          command.input.validationStatus ?? before.validationStatus,
+      }
+      yield* validateRuleSet(
+        command.repositoryId,
+        command.repository,
+        candidate,
+        command.ruleId,
+      )
+      const update = LabelingRule.LabelingRule.update.make({
+        id: before.id,
+        repositoryId: before.repositoryId,
+        name: command.input.name ?? before.name,
+        label: candidate.label,
+        kind: candidate.kind,
+        instructions: command.input.instructions ?? before.instructions,
+        confidenceThreshold:
+          command.input.confidenceThreshold ?? before.confidenceThreshold,
+        mode: candidate.mode,
+        exclusiveGroup: candidate.exclusiveGroup,
+        enabled: candidate.enabled,
+        validationStatus: candidate.validationStatus,
+        validatedAt:
+          command.input.validatedAt === undefined
+            ? before.validatedAt
+            : command.input.validatedAt,
+        version: before.version,
+      })
+      const stored = yield* rules.update(
+        command.ruleId,
+        command.expectedVersion,
+        update,
+      )
+      yield* repositories.incrementRulesRevision(
+        command.repositoryId,
+        command.expectedRevision,
+      )
+      yield* audit.append(
+        LabelingRuleAuditEntry.LabelingRuleAuditEntry.insert.make({
+          repositoryId: command.repositoryId,
+          ruleId: command.ruleId,
+          actor: actorName(actor),
+          operation: operation(command),
+          before: auditValue(before),
+          after: auditValue(stored),
+        }),
+      )
+      return storedMutation(stored)
+    })
   })
 
   return execute
