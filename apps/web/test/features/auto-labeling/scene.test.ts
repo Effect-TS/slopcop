@@ -1,4 +1,6 @@
+import * as Dialog from "@foldkit/ui/dialog"
 import * as LabelingRuleManagement from "@slopcop/domain/Labeling/LabelingRuleManagement"
+import * as Menu from "@foldkit/ui/menu"
 import * as Schema from "effect/Schema"
 import * as Scene from "foldkit/scene"
 import { describe, it } from "vite-plus/test"
@@ -24,6 +26,24 @@ const rule = Schema.decodeUnknownSync(
   createdAt: "2026-08-08T00:00:00.000Z",
   updatedAt: "2026-08-08T00:00:00.000Z",
 })
+
+const loadedModel = (): AutoLabeling.Model => {
+  const [loading] = AutoLabeling.update(
+    AutoLabeling.init(),
+    AutoLabeling.SelectedRepositoryChanged({ repository }),
+  )
+  return AutoLabeling.update(
+    loading,
+    AutoLabeling.LoadedRepositoryData({
+      requestId: 1,
+      repository,
+      revision: 8,
+      rules: [rule],
+      activity: { windowDays: 30, totalFires: 0, rules: [] },
+      labels: [{ name: "documentation", description: null, color: "0ea5e9" }],
+    }),
+  )[0]
+}
 
 const conflictModel = (): AutoLabeling.Model => {
   const [loading] = AutoLabeling.update(
@@ -172,6 +192,58 @@ describe("Auto-labeling rule test results", () => {
       Scene.expect(Scene.role("dialog")).toContainText(
         "Proposed additionsNone",
       ),
+    )
+  })
+})
+
+describe("Auto-labeling rule actions", () => {
+  it("opens the editor from the row actions menu", () => {
+    Scene.scene(
+      { update: AutoLabeling.update, view: AutoLabeling.view },
+      Scene.given(loadedModel()),
+      Scene.click(Scene.role("button", { name: "Actions for Server rule" })),
+      Scene.Command.resolve(Menu.FocusItems, Menu.CompletedFocusItems()),
+      Scene.Mount.resolveAll(
+        [Menu.PortalMenuBackdrop, Menu.CompletedPortalMenuBackdrop()],
+        [Menu.AnchorMenu, Menu.CompletedAnchorMenu()],
+      ),
+      Scene.click(Scene.role("menuitem", { name: "Edit rule" })),
+      Scene.Mount.expectEnded(Menu.PortalMenuBackdrop),
+      Scene.Mount.expectEnded(Menu.AnchorMenu),
+      Scene.Command.resolveAll(
+        [Menu.FocusButton, Menu.CompletedFocusButton()],
+        [Dialog.ShowDialog, Dialog.CompletedShowDialog()],
+      ),
+      Scene.expect(Scene.role("dialog")).toContainText("Edit rule"),
+    )
+  })
+
+  it("opens rule testing from the row actions menu", () => {
+    Scene.scene(
+      { update: AutoLabeling.update, view: AutoLabeling.view },
+      Scene.given(loadedModel()),
+      Scene.click(Scene.role("button", { name: "Actions for Server rule" })),
+      Scene.Command.resolve(Menu.FocusItems, Menu.CompletedFocusItems()),
+      Scene.Mount.resolveAll(
+        [Menu.PortalMenuBackdrop, Menu.CompletedPortalMenuBackdrop()],
+        [Menu.AnchorMenu, Menu.CompletedAnchorMenu()],
+      ),
+      Scene.click(Scene.role("menuitem", { name: "Test rule" })),
+      Scene.Mount.expectEnded(Menu.PortalMenuBackdrop),
+      Scene.Mount.expectEnded(Menu.AnchorMenu),
+      Scene.Command.resolveAll(
+        [Menu.FocusButton, Menu.CompletedFocusButton()],
+        [
+          AutoLabeling.LoadRuleTestCandidates,
+          AutoLabeling.LoadedRuleTestCandidates({
+            repository,
+            ruleId: rule.id,
+            candidates: [],
+          }),
+        ],
+        [Dialog.ShowDialog, Dialog.CompletedShowDialog()],
+      ),
+      Scene.expect(Scene.role("dialog")).toContainText("Test Server rule"),
     )
   })
 })

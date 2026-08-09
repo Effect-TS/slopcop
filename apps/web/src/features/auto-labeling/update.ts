@@ -191,10 +191,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
                     rules.map((rule) => [
                       rule.id,
                       model.ruleMenus[rule.id] ??
-                        Menu.init({
-                          id: `rule-actions-${rule.id}`,
-                          isModal: true,
-                        }),
+                        Menu.init({ id: `rule-actions-${rule.id}` }),
                     ]),
                   ),
               }),
