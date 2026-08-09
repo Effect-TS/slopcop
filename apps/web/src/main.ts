@@ -16,6 +16,7 @@ import * as AppSidebar from "./components/app-sidebar/index"
 import * as AutoLabeling from "./features/auto-labeling"
 import * as Icon from "./features/icon"
 import * as Setup from "./features/setup"
+import * as Settings from "./features/settings"
 import * as RepositorySelector from "./components/repository-selector"
 import * as Router from "./router"
 
@@ -23,6 +24,7 @@ import * as Router from "./router"
 
 export const Model = Schema.Struct({
   autoLabeling: AutoLabeling.Model,
+  settings: Settings.Model,
   setup: Setup.Model,
   sidebar: AppSidebar.Model,
   route: Router.AppRoute,
@@ -60,12 +62,18 @@ export const GotAutoLabelingMessage = m("GotAutoLabelingMessage", {
 })
 export type GotAutoLabelingMessage = typeof GotAutoLabelingMessage.Type
 
+export const GotSettingsMessage = m("GotSettingsMessage", {
+  message: Settings.Message,
+})
+export type GotSettingsMessage = typeof GotSettingsMessage.Type
+
 export const Message = Schema.Union([
   ClickedLink,
   ChangedUrl,
   CompletedLoadExternal,
   CompletedNavigateInternal,
   GotAutoLabelingMessage,
+  GotSettingsMessage,
   GotSidebarMessage,
   GotSetupMessage,
 ])
@@ -112,6 +120,13 @@ const mapAutoLabelingCommands = (
 ): ReadonlyArray<Command> =>
   FoldkitCommand.mapMessages(commands, (message) =>
     GotAutoLabelingMessage({ message }),
+  )
+
+const mapSettingsCommands = (
+  commands: ReadonlyArray<Settings.Command>,
+): ReadonlyArray<Command> =>
+  FoldkitCommand.mapMessages(commands, (message) =>
+    GotSettingsMessage({ message }),
   )
 
 const selectedRepository = (sidebar: AppSidebar.Model) =>
@@ -162,6 +177,22 @@ export const update = (model: Model, message: Message): UpdateReturn =>
         ]
       },
 
+      GotSettingsMessage: ({ message: settingsMessage }) => {
+        const [settings, commands] = Settings.update(
+          model.settings,
+          settingsMessage,
+        )
+        return [
+          evo(model, { settings: () => settings }),
+          [
+            ...mapSettingsCommands(commands),
+            ...(settingsMessage._tag === "UpdatedRepositoryEnabled"
+              ? reloadRepositoryCommands()
+              : []),
+          ],
+        ]
+      },
+
       GotSidebarMessage: ({ message: sidebarMessage }) => {
         const previousRepository = selectedRepository(model.sidebar)
         const [sidebar, commands] = AppSidebar.update(
@@ -184,9 +215,14 @@ export const update = (model: Model, message: Message): UpdateReturn =>
                 : { owner: nextRepository.owner, repo: nextRepository.repo },
           }),
         )
+        const [settings] = Settings.update(
+          model.settings,
+          Settings.SelectedRepositoryChanged({ repository: nextRepository }),
+        )
         return [
           evo(model, {
             autoLabeling: () => autoLabeling,
+            settings: () => settings,
             sidebar: () => sidebar,
           }),
           [
@@ -238,6 +274,7 @@ export const init: Runtime.RoutingApplicationInit<
   return [
     {
       autoLabeling: AutoLabeling.init(),
+      settings: Settings.init(),
       route: Router.urlToAppRoute(url),
       setup,
       sidebar,
@@ -278,6 +315,12 @@ const navigationGroups: ReadonlyArray<AppSidebar.NavigationGroup> = [
         description: "Citation policies",
         icon: Icon.tags(),
       },
+      {
+        value: "Settings",
+        label: "Settings",
+        description: "Department policies",
+        icon: Icon.tags(),
+      },
     ],
   },
 ]
@@ -288,6 +331,8 @@ const navigationHref = (value: AppSidebar.NavigationValue): string => {
       return Router.rootRouter()
     case "AutoLabeling":
       return Router.autoLabelingRouter()
+    case "Settings":
+      return Router.settingsRouter()
   }
 }
 
@@ -323,6 +368,13 @@ const routeView = (model: Model, h: HtmlBuilder<Message>) => {
         view: AutoLabeling.view,
         toParentMessage: (message) => GotAutoLabelingMessage({ message }),
       })
+    case "Settings":
+      return h.submodel({
+        slotId: "settings",
+        model: model.settings,
+        view: Settings.view,
+        toParentMessage: (message) => GotSettingsMessage({ message }),
+      })
     case "Root":
     case "NotFound":
       return comingSoonView(h)
@@ -343,7 +395,9 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
             pageTitle:
               model.route._tag === "AutoLabeling"
                 ? "Auto-Labeling"
-                : "Overview",
+                : model.route._tag === "Settings"
+                  ? "Settings"
+                  : "Overview",
             toNavigationHref: navigationHref,
             isNavigationItemCurrent: (value) => model.route._tag === value,
             toView: (_) => routeView(model, h),
