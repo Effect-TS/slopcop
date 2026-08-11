@@ -1,7 +1,8 @@
+import * as AiPromptTemplate from "@slopcop/domain/Labeling/AiPromptTemplate"
 import type * as Rule from "@slopcop/domain/Labeling/LabelingRule"
 import type * as Program from "@slopcop/domain/Policy/PolicyProgram"
 import * as Effect from "effect/Effect"
-import type { PolicyAiEvaluator } from "./PolicyAi.ts"
+import { PolicyAiError, type PolicyAiEvaluator } from "./PolicyAi.ts"
 import type { PullRequestFacts } from "./PolicyEngine.ts"
 
 const fact = (
@@ -40,9 +41,15 @@ export const evaluateAiLabelingRule = Effect.fn(
   const evidence = Object.fromEntries(
     input.rule.evidence.map((name) => [name, fact(input.facts, name)]),
   )
+  const rendered = AiPromptTemplate.render(input.rule.prompt, evidence)
+  if (rendered._tag === "Invalid")
+    return yield* new PolicyAiError({
+      message: `The AI prompt template is invalid: ${rendered.message}`,
+      cause: rendered,
+    })
   const result = yield* input.ai.evaluate({
     evaluator: input.rule.evaluator,
-    prompt: input.rule.prompt,
+    prompt: rendered.prompt,
     evidence,
   })
   if (result.confidence < input.rule.minimumConfidence)

@@ -293,8 +293,17 @@ const sidebarSubscriptions = Subscription.lift(AppSidebar.subscriptions)<
   toParentMessage: (message) => GotSidebarMessage({ message }),
 })
 
+const autoLabelingSubscriptions = Subscription.lift(AutoLabeling.subscriptions)<
+  Model,
+  Message
+>({
+  toChildModel: (model) => model.autoLabeling,
+  toParentMessage: (message) => GotAutoLabelingMessage({ message }),
+})
+
 export const subscriptions = Subscription.aggregate<Model, Message>()(
   sidebarSubscriptions,
+  autoLabelingSubscriptions,
 )
 
 // VIEW
@@ -318,13 +327,13 @@ const navigationGroups: ReadonlyArray<AppSidebar.NavigationGroup> = [
       {
         value: "Policies",
         label: "Policies",
-        description: "Policy programs",
+        description: "Department policies",
         icon: Icon.tags(),
       },
       {
         value: "Settings",
         label: "Settings",
-        description: "Department policies",
+        description: "Precinct controls",
         icon: Icon.tags(),
       },
     ],

@@ -1,13 +1,16 @@
 import * as Dialog from "@foldkit/ui/dialog"
 import * as Menu from "@foldkit/ui/menu"
+import * as Slider from "@foldkit/ui/slider"
 import * as GitHubLabel from "@slopcop/domain/GitHub/GitHubLabel"
 import * as PolicyManagement from "@slopcop/domain/Labeling/LabelingPolicyManagement"
 import * as RuleManagement from "@slopcop/domain/Labeling/LabelingRuleManagement"
 import * as PolicyProgram from "@slopcop/domain/Policy/PolicyProgram"
 import * as Schema from "effect/Schema"
 import { m } from "foldkit/message"
+import * as AiPromptEditor from "../../components/ai-prompt-editor"
 import * as PolicyCodeEditor from "../../components/policy-editor"
 import { ItemKind, NodeKind, Operator, Quantifier } from "./condition"
+import { Toast } from "./toast"
 import {
   PolicyId,
   PolicyVersionId,
@@ -180,14 +183,17 @@ export const ChangedRuleType = m("ChangedRuleType", {
   ruleType: Schema.Literals(["PolicyLabelingRule", "AiLabelingRule"]),
 })
 export const UpdatedRulePolicy = m("UpdatedRulePolicy", { policyId: PolicyId })
-export const UpdatedRulePrompt = m("UpdatedRulePrompt", {
-  prompt: Schema.String,
+export const GotAiPromptEditorMessage = m("GotAiPromptEditorMessage", {
+  message: AiPromptEditor.Message,
 })
 export const ToggledRuleEvidence = m("ToggledRuleEvidence", {
   fact: PolicyProgram.PullRequestFact,
 })
-export const UpdatedRuleMinimumConfidence = m("UpdatedRuleMinimumConfidence", {
-  minimumConfidence: Schema.Number,
+export const GotConfidenceSliderMessage = m("GotConfidenceSliderMessage", {
+  message: Slider.Message,
+})
+export const GotRuleToastMessage = m("GotRuleToastMessage", {
+  message: Toast.Message,
 })
 export const UpdatedRuleGatePolicy = m("UpdatedRuleGatePolicy", {
   gatePolicyId: Schema.NullOr(PolicyId),
@@ -256,6 +262,42 @@ export const FailedToDeleteRule = m("FailedToDeleteRule", {
   revisionConflict: Schema.Boolean,
 })
 export const GotRuleDeleteDialogMessage = m("GotRuleDeleteDialogMessage", {
+  message: Dialog.Message,
+})
+
+export const OpenedRuleTest = m("OpenedRuleTest", { ruleId: RuleId })
+export const LoadedRuleTestCandidates = m("LoadedRuleTestCandidates", {
+  requestId: Schema.Int,
+  repository: Repository,
+  ruleId: RuleId,
+  candidates: Schema.Array(RuleManagement.RuleTestCandidate),
+})
+export const FailedToLoadRuleTestCandidates = m(
+  "FailedToLoadRuleTestCandidates",
+  {
+    requestId: Schema.Int,
+    repository: Repository,
+    ruleId: RuleId,
+    message: Schema.String,
+  },
+)
+export const SelectedRuleTestCandidate = m("SelectedRuleTestCandidate", {
+  pullRequestNumber: Schema.Int,
+})
+export const RanRuleTest = m("RanRuleTest")
+export const CompletedRuleTest = m("CompletedRuleTest", {
+  requestId: Schema.Int,
+  repository: Repository,
+  result: RuleManagement.TestLabelingRuleResponse,
+})
+export const FailedRuleTest = m("FailedRuleTest", {
+  requestId: Schema.Int,
+  repository: Repository,
+  message: Schema.String,
+})
+export const ResetRuleTest = m("ResetRuleTest")
+export const DismissedRuleTest = m("DismissedRuleTest")
+export const GotRuleTestDialogMessage = m("GotRuleTestDialogMessage", {
   message: Dialog.Message,
 })
 
@@ -346,9 +388,10 @@ export const Message = Schema.Union([
   ClosedRuleEditor,
   ChangedRuleType,
   UpdatedRulePolicy,
-  UpdatedRulePrompt,
+  GotAiPromptEditorMessage,
   ToggledRuleEvidence,
-  UpdatedRuleMinimumConfidence,
+  GotConfidenceSliderMessage,
+  GotRuleToastMessage,
   UpdatedRuleGatePolicy,
   UpdatedRuleLabel,
   UpdatedRuleNoMatch,
@@ -372,6 +415,16 @@ export const Message = Schema.Union([
   CompletedDeleteRule,
   FailedToDeleteRule,
   GotRuleDeleteDialogMessage,
+  OpenedRuleTest,
+  LoadedRuleTestCandidates,
+  FailedToLoadRuleTestCandidates,
+  SelectedRuleTestCandidate,
+  RanRuleTest,
+  CompletedRuleTest,
+  FailedRuleTest,
+  ResetRuleTest,
+  DismissedRuleTest,
+  GotRuleTestDialogMessage,
   OpenedPolicyTest,
   LoadedPolicyTestCandidates,
   FailedToLoadPolicyTestCandidates,

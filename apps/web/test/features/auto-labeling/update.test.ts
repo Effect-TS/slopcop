@@ -1,10 +1,12 @@
 import * as Dialog from "@foldkit/ui/dialog"
+import * as Slider from "@foldkit/ui/slider"
 import * as PolicyManagement from "@slopcop/domain/Labeling/LabelingPolicyManagement"
 import * as RuleManagement from "@slopcop/domain/Labeling/LabelingRuleManagement"
 import * as PolicyProgram from "@slopcop/domain/Policy/PolicyProgram"
 import * as Result from "effect/Result"
 import * as Schema from "effect/Schema"
 import { describe, expect, it } from "vite-plus/test"
+import * as AiPromptEditor from "../../../src/components/ai-prompt-editor/index.ts"
 import * as AutoLabeling from "../../../src/features/auto-labeling.ts"
 import {
   NodeKind,
@@ -669,6 +671,50 @@ describe("policy detail, validation, publication, and testing", () => {
       },
     })
   })
+
+  it("tests a saved label rule without writing labels", () => {
+    const [loading, loadCommands] = AutoLabeling.update(
+      loadedModel(),
+      AutoLabeling.OpenedRuleTest({ ruleId: rule.id }),
+    )
+    expect(loadCommands[0]?.name).toBe("LoadRuleTestCandidates")
+    const [configured] = AutoLabeling.update(
+      loading,
+      AutoLabeling.LoadedRuleTestCandidates({
+        requestId: 2,
+        repository,
+        ruleId: rule.id,
+        candidates: [candidate],
+      }),
+    )
+    const [running, testCommands] = AutoLabeling.update(
+      configured,
+      AutoLabeling.RanRuleTest(),
+    )
+    expect(testCommands[0]?.name).toBe("TestRule")
+    const [completed] = AutoLabeling.update(
+      running,
+      AutoLabeling.CompletedRuleTest({
+        requestId: 3,
+        repository,
+        result: {
+          _tag: "PolicyLabelingRule",
+          ruleId: rule.id,
+          pullRequestNumber: candidate.number,
+          outcome: "Match",
+          confidence: 1,
+          rationale: "The policy matched.",
+          proposedAction: "add",
+          proposedLabelChanges: { add: [rule.label], remove: [] },
+          policyId: publishedPolicy.id,
+        },
+      }),
+    )
+    expect(completed.ruleTest).toMatchObject({
+      _tag: "RuleTestResult",
+      result: { outcome: "Match", proposedAction: "add" },
+    })
+  })
 })
 
 describe("label rule variants and request safety", () => {
@@ -744,17 +790,27 @@ describe("label rule variants and request safety", () => {
     )
     const [prompted] = AutoLabeling.update(
       aiDraft,
-      AutoLabeling.UpdatedRulePrompt({
-        prompt: "Does this pull request change documentation?",
+      AutoLabeling.GotAiPromptEditorMessage({
+        message: AiPromptEditor.EditedSource({
+          source:
+            "Does {{fact:pull_request.body}} indicate a documentation change?",
+        }),
       }),
     )
+    const [, blockedCommands] = AutoLabeling.update(
+      prompted,
+      AutoLabeling.SavedRule(),
+    )
+    expect(blockedCommands).toEqual([])
     const [withEvidence] = AutoLabeling.update(
       prompted,
       AutoLabeling.ToggledRuleEvidence({ fact: "pull_request.body" }),
     )
     const [confident] = AutoLabeling.update(
       withEvidence,
-      AutoLabeling.UpdatedRuleMinimumConfidence({ minimumConfidence: 0.9 }),
+      AutoLabeling.GotConfidenceSliderMessage({
+        message: Slider.PressedPointer({ value: 0.9, originValue: 0.8 }),
+      }),
     )
     const [gated] = AutoLabeling.update(
       confident,
@@ -767,7 +823,10 @@ describe("label rule variants and request safety", () => {
       identity: { _tag: "NewRule" },
       draft: {
         _tag: "AiLabelingRule",
-        prompt: "Does this pull request change documentation?",
+        promptEditor: {
+          source:
+            "Does {{fact:pull_request.body}} indicate a documentation change?",
+        },
         evidence: ["pull_request.title", "pull_request.body"],
         minimumConfidence: 0.9,
         evaluator: "boolean-policy-v1",
@@ -1003,6 +1062,11 @@ describe("final policy UI lifecycle and boundary safety", () => {
       AutoLabeling.CompletedSaveRule({ requestId: 2, repository, rule }),
     )
     expect(savedRule.ruleEditorDialog.isOpen).toBe(false)
+    expect(savedRule.statusMessage).toBeNull()
+    expect(savedRule.toast.entries).toHaveLength(1)
+    expect(savedRule.toast.entries[0]?.payload.message).toBe(
+      "Saved label rule for documentation.",
+    )
 
     const disabledRule = { ...rule, enabled: false }
     const [loading] = AutoLabeling.update(

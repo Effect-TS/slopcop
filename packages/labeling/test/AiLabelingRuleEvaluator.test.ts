@@ -23,7 +23,7 @@ const rule = new Rule.AiLabelingRule({
   validationStatus: "valid",
   validatedAt: now,
   version: 1,
-  prompt: "Is this a bug fix?",
+  prompt: "Is {{fact:pull_request.title}} a bug fix?",
   evidence: ["pull_request.title", "pull_request.body"],
   minimumConfidence: 0.8,
   evaluator: "boolean-policy-v1",
@@ -49,6 +49,7 @@ describe("AiLabelingRuleEvaluator", () => {
   it.effect("projects requested evidence and applies minimum confidence", () =>
     Effect.gen(function* () {
       let evidence: Readonly<Record<string, unknown>> = {}
+      let prompt = ""
       const result = yield* evaluateAiLabelingRule({
         rule,
         facts,
@@ -56,6 +57,7 @@ describe("AiLabelingRuleEvaluator", () => {
           evaluate: (input) =>
             Effect.sync(() => {
               evidence = input.evidence
+              prompt = input.prompt
               return { matches: true, confidence: 0.79, rationale: "Likely" }
             }),
         },
@@ -64,6 +66,7 @@ describe("AiLabelingRuleEvaluator", () => {
         "pull_request.title": "Fix parser",
         "pull_request.body": "Corrects invalid parsing",
       })
+      expect(prompt).toBe('Is "Fix parser" a bug fix?')
       expect(result).toMatchObject({ outcome: "Abstain", confidence: 0.79 })
     }),
   )

@@ -12,7 +12,9 @@ export const view = Submodel.defineView<Model, Message>(
         h.div(
           [
             h.Id(model.id),
-            h.Class("overflow-hidden rounded-lg border bg-background"),
+            h.Class(
+              "overflow-hidden rounded-lg border bg-background transition-shadow focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20",
+            ),
             h.OnMount(
               MountPolicyEditor({
                 id: model.id,

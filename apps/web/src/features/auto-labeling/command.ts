@@ -265,7 +265,7 @@ export const SaveRule = FoldkitCommand.define("SaveRule", {
                   _tag: draft._tag,
                   ...shared,
                   onMatch: "ensure-present",
-                  prompt: draft.prompt,
+                  prompt: draft.promptEditor.source,
                   evidence: draft.evidence,
                   minimumConfidence: draft.minimumConfidence,
                   evaluator: draft.evaluator,
@@ -287,7 +287,7 @@ export const SaveRule = FoldkitCommand.define("SaveRule", {
                 payload: {
                   _tag: draft._tag,
                   ...shared,
-                  prompt: draft.prompt,
+                  prompt: draft.promptEditor.source,
                   evidence: draft.evidence,
                   minimumConfidence: draft.minimumConfidence,
                   evaluator: draft.evaluator,
@@ -429,6 +429,72 @@ export const LoadPolicyTestCandidates = FoldkitCommand.define(
       ),
   },
 )
+
+export const LoadRuleTestCandidates = FoldkitCommand.define(
+  "LoadRuleTestCandidates",
+  {
+    args: {
+      requestId: Schema.Int,
+      repository: Repository,
+      ruleId: RuleId,
+    },
+    messages: [M.LoadedRuleTestCandidates, M.FailedToLoadRuleTestCandidates],
+    execute: ({ requestId, repository, ruleId }) =>
+      Effect.gen(function* () {
+        const client = yield* ApiClient
+        const result = yield* client.labelingRules.listRuleTestCandidates({
+          params: repository,
+          query: { limit: 50 },
+        })
+        return M.LoadedRuleTestCandidates({
+          requestId,
+          repository,
+          ruleId,
+          candidates: result.candidates,
+        })
+      }).pipe(
+        Effect.catch((error) =>
+          Effect.succeed(
+            M.FailedToLoadRuleTestCandidates({
+              requestId,
+              repository,
+              ruleId,
+              message: failureMessage(error),
+            }),
+          ),
+        ),
+      ),
+  },
+)
+
+export const TestRule = FoldkitCommand.define("TestRule", {
+  args: {
+    requestId: Schema.Int,
+    repository: Repository,
+    ruleId: RuleId,
+    pullRequestNumber: Schema.Int,
+  },
+  messages: [M.CompletedRuleTest, M.FailedRuleTest],
+  execute: ({ requestId, repository, ruleId, pullRequestNumber }) =>
+    Effect.gen(function* () {
+      const client = yield* ApiClient
+      const result = yield* client.labelingRules.testRule({
+        params: { ...repository, ruleId },
+        payload: { pullRequestNumber },
+      })
+      return M.CompletedRuleTest({ requestId, repository, result })
+    }).pipe(
+      Effect.catch((error) =>
+        Effect.succeed(
+          M.FailedRuleTest({
+            requestId,
+            repository,
+            message: failureMessage(error),
+          }),
+        ),
+      ),
+    ),
+})
 
 export const TestPolicy = FoldkitCommand.define("TestPolicy", {
   args: {

@@ -51,7 +51,8 @@ export class PolicyAi extends Context.Service<PolicyAi, PolicyAiEvaluator>()(
       const model = yield* LanguageModel.LanguageModel
       return {
         evaluate: Effect.fn("PolicyAi.evaluate")(function* (input) {
-          const evidence = JSON.stringify(input.evidence).slice(0, 40_000)
+          const encodedEvidence = JSON.stringify(input.evidence)
+          const evidence = encodedEvidence.slice(0, 40_000)
           const response = yield* model
             .generateObject({
               objectName: "policy_decision",
@@ -72,7 +73,7 @@ export class PolicyAi extends Context.Service<PolicyAi, PolicyAiEvaluator>()(
                         evaluator: input.evaluator,
                         prompt: input.prompt,
                         evidence,
-                        evidenceTruncated: evidence.length === 40_000,
+                        evidenceTruncated: encodedEvidence.length > 40_000,
                       }),
                     },
                   ],

@@ -1,5 +1,6 @@
 import * as GitHubLabel from "@slopcop/domain/GitHub/GitHubLabel"
 import * as GitHubRepository from "@slopcop/domain/GitHub/GitHubRepository"
+import * as AiPromptTemplate from "@slopcop/domain/Labeling/AiPromptTemplate"
 import * as Rule from "@slopcop/domain/Labeling/LabelingRule"
 import * as Audit from "@slopcop/domain/Labeling/LabelingRuleAuditEntry"
 import * as Management from "@slopcop/domain/Labeling/LabelingRuleManagement"
@@ -94,6 +95,15 @@ export type LabelingRulesError =
   | import("effect/unstable/sql/SqlError").SqlError
 
 type Slug = GitHubRepository.GitHubRepositorySlug
+const validateAiPrompt = (
+  prompt: string,
+  evidence: Rule.AiLabelingRule["evidence"],
+) => {
+  const validation = AiPromptTemplate.validate(prompt, evidence)
+  return validation._tag === "Valid"
+    ? Effect.void
+    : Effect.fail(new InvalidLabelingRule({ message: validation.message }))
+}
 const actor = (identity: AdminIdentity) => ({
   _tag: "Administrator" as const,
   actor: identity.actor,
@@ -362,8 +372,11 @@ export class LabelingRules extends Context.Service<
       const repo = yield* repository(slug)
       if (input._tag === "PolicyLabelingRule")
         yield* requirePolicy(repo, input.policyId, input.enabled)
-      else if (input.gatePolicyId !== null)
-        yield* requirePolicy(repo, input.gatePolicyId, true)
+      else {
+        if (input.gatePolicyId !== null)
+          yield* requirePolicy(repo, input.gatePolicyId, true)
+        yield* validateAiPrompt(input.prompt, input.evidence)
+      }
       const canonical = yield* requireLabel(repo, input.label)
       const now = yield* DateTime.now
       const shared = {
@@ -439,6 +452,10 @@ export class LabelingRules extends Context.Service<
             : input.gatePolicyId
         if (gatePolicyId !== null)
           yield* requirePolicy(repo, gatePolicyId, true)
+        yield* validateAiPrompt(
+          input.prompt ?? current.prompt,
+          input.evidence ?? current.evidence,
+        )
       }
       const now = yield* DateTime.now
       const requiresValidation =

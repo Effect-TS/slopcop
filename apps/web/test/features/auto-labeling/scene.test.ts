@@ -6,8 +6,10 @@ import * as PolicyProgram from "@slopcop/domain/Policy/PolicyProgram"
 import * as Schema from "effect/Schema"
 import * as Scene from "foldkit/scene"
 import { describe, expect, it } from "vite-plus/test"
+import * as AiPromptEditor from "../../../src/components/ai-prompt-editor/index.ts"
 import * as PolicyCodeEditor from "../../../src/components/policy-editor/index.ts"
 import * as AutoLabeling from "../../../src/features/auto-labeling.ts"
+import { Toast as RuleToast } from "../../../src/features/auto-labeling/toast.ts"
 
 const repository = { owner: "effect", repo: "slopcop" }
 const timestamp = "2026-08-08T00:00:00.000Z"
@@ -611,7 +613,11 @@ describe("generic policy UI", () => {
       Scene.expect(Scene.text("Preserve")).toExist(),
       Scene.expect(Scene.text("Policy")).toExist(),
       Scene.expect(Scene.text("AI")).toExist(),
-      Scene.expect(Scene.text("Gate: Documentation policy")).toExist(),
+      Scene.expect(Scene.text("Policy: Documentation policy")).toExist(),
+      Scene.expect(
+        Scene.text("Does this pull request change documentation?"),
+      ).toExist(),
+      Scene.expect(Scene.text("Policy / gate")).not.toExist(),
       Scene.expect(Scene.text("area / 10")).not.toExist(),
       Scene.expect(
         Scene.role("switch", { name: "Disable Documentation policy" }),
@@ -620,6 +626,24 @@ describe("generic policy UI", () => {
         Scene.role("button", {
           name: "Actions for Documentation policy / documentation",
         }),
+      ).toExist(),
+    )
+  })
+
+  it("renders rule success messages as dismissible toasts", () => {
+    const model = loadedModel()
+    const [toast] = RuleToast.show(model.toast, {
+      variant: "Success",
+      payload: { message: "Saved label rule for documentation." },
+    })
+    Scene.scene(
+      { update: AutoLabeling.update, view: autoLabelingView() },
+      Scene.given({ ...model, toast }),
+      Scene.expect(Scene.role("status")).toContainText(
+        "Saved label rule for documentation.",
+      ),
+      Scene.expect(
+        Scene.role("button", { name: "Dismiss notification" }),
       ).toExist(),
     )
   })
@@ -658,6 +682,26 @@ describe("generic policy UI", () => {
     )
   })
 
+  it("offers a no-write test action from the rule row menu", () => {
+    Scene.scene(
+      { update: AutoLabeling.update, view: autoLabelingView() },
+      Scene.given(loadedModel()),
+      Scene.click(
+        Scene.role("button", {
+          name: "Actions for Documentation policy / documentation",
+        }),
+      ),
+      Scene.Command.resolve(Menu.FocusItems, Menu.CompletedFocusItems()),
+      Scene.Mount.resolveAll(
+        [Menu.PortalMenuBackdrop, Menu.CompletedPortalMenuBackdrop()],
+        [Menu.AnchorMenu, Menu.CompletedAnchorMenu()],
+      ),
+      Scene.expect(
+        Scene.role("menuitem", { name: "Test label rule" }),
+      ).toExist(),
+    )
+  })
+
   it("creates an AI rule with accessible evidence and an optional gate", () => {
     Scene.scene(
       { update: AutoLabeling.update, view: autoLabelingView() },
@@ -668,7 +712,11 @@ describe("generic policy UI", () => {
         Scene.role("combobox", { name: "Rule type" }),
         "AiLabelingRule",
       ),
-      Scene.expect(Scene.role("textbox", { name: "AI prompt" })).toExist(),
+      Scene.Mount.resolve(
+        AiPromptEditor.MountAiPromptEditor,
+        AiPromptEditor.MountedEditor(),
+      ),
+      Scene.expect(Scene.role("dialog")).toContainText("AI prompt"),
       Scene.expect(
         Scene.role("group", { name: "Information available to AI" }),
       ).toExist(),
@@ -679,8 +727,8 @@ describe("generic policy UI", () => {
         Scene.role("checkbox", { name: "pull_request.title" }),
       ).toBeChecked(),
       Scene.expect(
-        Scene.role("spinbutton", { name: "Minimum confidence" }),
-      ).toHaveValue("0.8"),
+        Scene.role("slider", { name: "Minimum confidence" }),
+      ).toHaveAttr("aria-valuenow", "0.8"),
       Scene.expect(Scene.role("textbox", { name: "Evaluator" })).not.toExist(),
       Scene.expect(
         Scene.role("combobox", { name: "Gate policy (optional)" }),
@@ -726,13 +774,24 @@ describe("generic policy UI", () => {
       Scene.expect(
         Scene.role("button", { name: "New label rule" }),
       ).toBeEnabled(),
-      Scene.expect(Scene.role("link", { name: "View policies" })).toHaveAttr(
-        "href",
-        "/policies",
-      ),
+      Scene.expect(
+        Scene.text(
+          "No policies are published. Policy rules and AI gates are unavailable, but ungated AI rules can still be created.",
+        ),
+      ).not.toExist(),
       Scene.click(Scene.role("button", { name: "New label rule" })),
       Scene.Command.resolve(Dialog.ShowDialog, Dialog.CompletedShowDialog()),
+      Scene.Mount.resolve(
+        AiPromptEditor.MountAiPromptEditor,
+        AiPromptEditor.MountedEditor(),
+      ),
       Scene.expect(Scene.role("dialog")).toContainText("AI rule"),
+      Scene.expect(
+        Scene.role("option", { name: "Policy rule" }),
+      ).toBeDisabled(),
+      Scene.expect(Scene.role("dialog")).toContainText(
+        "No published policies are available. Create and publish a policy before choosing a policy rule. AI rules remain available.",
+      ),
       Scene.expect(
         Scene.role("combobox", { name: "Gate policy (optional)" }),
       ).toHaveValue(""),

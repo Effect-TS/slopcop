@@ -1,11 +1,14 @@
 import * as Dialog from "@foldkit/ui/dialog"
 import * as Menu from "@foldkit/ui/menu"
+import * as Slider from "@foldkit/ui/slider"
+import * as AiPromptTemplate from "@slopcop/domain/Labeling/AiPromptTemplate"
+import type * as Program from "@slopcop/domain/Policy/PolicyProgram"
 import * as Option from "effect/Option"
 import * as Result from "effect/Result"
 import * as FoldkitCommand from "foldkit/command"
 import { evo } from "foldkit/struct"
+import * as AiPromptEditor from "../../components/ai-prompt-editor"
 import * as PolicyCodeEditor from "../../components/policy-editor"
-import type * as Program from "@slopcop/domain/Policy/PolicyProgram"
 import * as C from "./command"
 import type { Command } from "./command"
 import {
@@ -21,7 +24,11 @@ import {
   type DraftItem,
   type PolicyDraft,
 } from "./condition"
-import type { Message } from "./message"
+import {
+  GotConfidenceSliderMessage,
+  GotRuleToastMessage,
+  type Message,
+} from "./message"
 import {
   PolicyActionMenu,
   PolicyEditorState,
@@ -31,6 +38,7 @@ import {
   RuleActionMenu,
   RuleDeleteState,
   RuleEditorState,
+  RuleTestState,
   TestState,
   ValidationState,
   currentRepository,
@@ -41,6 +49,7 @@ import {
   type RuleDraft,
   type RuleId,
 } from "./model"
+import { Toast } from "./toast"
 
 export type UpdateReturn = readonly [Model, ReadonlyArray<Command>]
 const sameRepository = (left: Repository | null, right: Repository): boolean =>
@@ -92,14 +101,17 @@ const resetFeature = (model: Model): Model =>
     ruleEditor: () => RuleEditorState.cases.RuleEditorClosed.make({}),
     ruleDeletion: () => RuleDeleteState.cases.RuleDeleteClosed.make({}),
     test: () => TestState.cases.TestClosed.make({}),
+    ruleTest: () => RuleTestState.cases.RuleTestClosed.make({}),
     rowMutation: () => RowMutationState.cases.RowMutationIdle.make({}),
     refreshError: () => null,
     statusMessage: () => null,
+    toast: () => Toast.init({ id: "auto-labeling-toast" }),
     policyEditorDialog: () => Dialog.init({ id: "policy-editor" }),
     publishDialog: () => Dialog.init({ id: "publish-policy" }),
     ruleEditorDialog: () => Dialog.init({ id: "rule-editor" }),
     ruleDeleteDialog: () => Dialog.init({ id: "delete-rule" }),
     testDialog: () => Dialog.init({ id: "policy-test" }),
+    ruleTestDialog: () => Dialog.init({ id: "rule-test" }),
     policyMenus: () => ({}),
     ruleMenus: () => ({}),
   })
@@ -1172,7 +1184,10 @@ export const update = (model: Model, message: Message): UpdateReturn => {
                   ? {
                       _tag: "AiLabelingRule",
                       ...shared,
-                      prompt: "",
+                      promptEditor: AiPromptEditor.init({
+                        id: "ai-prompt-editor-new",
+                        source: "",
+                      }),
                       evidence: ["pull_request.title"],
                       minimumConfidence: 0.8,
                       evaluator: "boolean-policy-v1",
@@ -1239,7 +1254,10 @@ export const update = (model: Model, message: Message): UpdateReturn => {
           updateRuleDraft(model, () => ({
             _tag: "AiLabelingRule",
             ...shared,
-            prompt: "",
+            promptEditor: AiPromptEditor.init({
+              id: "ai-prompt-editor-new",
+              source: "",
+            }),
             evidence: ["pull_request.title"],
             minimumConfidence: 0.8,
             evaluator: "boolean-policy-v1",
@@ -1267,13 +1285,16 @@ export const update = (model: Model, message: Message): UpdateReturn => {
         ),
         [],
       ]
-    case "UpdatedRulePrompt":
+    case "GotAiPromptEditorMessage":
       return [
-        updateRuleDraft(model, (draft) =>
-          draft._tag === "AiLabelingRule"
-            ? { ...draft, prompt: message.prompt }
-            : draft,
-        ),
+        updateRuleDraft(model, (draft) => {
+          if (draft._tag !== "AiLabelingRule") return draft
+          const [promptEditor] = AiPromptEditor.update(
+            draft.promptEditor,
+            message.message,
+          )
+          return { ...draft, promptEditor }
+        }),
         [],
       ]
     case "ToggledRuleEvidence":
@@ -1289,15 +1310,36 @@ export const update = (model: Model, message: Message): UpdateReturn => {
         }),
         [],
       ]
-    case "UpdatedRuleMinimumConfidence":
+    case "GotConfidenceSliderMessage": {
+      const [confidenceSlider, commands, outMessage] = Slider.update(
+        model.confidenceSlider,
+        message.message,
+      )
+      const next = evo(model, { confidenceSlider: () => confidenceSlider })
       return [
-        updateRuleDraft(model, (draft) =>
-          draft._tag === "AiLabelingRule"
-            ? { ...draft, minimumConfidence: message.minimumConfidence }
-            : draft,
+        Option.match(outMessage, {
+          onNone: () => next,
+          onSome: ({ value }) =>
+            updateRuleDraft(next, (draft) =>
+              draft._tag === "AiLabelingRule"
+                ? { ...draft, minimumConfidence: value }
+                : draft,
+            ),
+        }),
+        FoldkitCommand.mapMessages(commands, (childMessage) =>
+          GotConfidenceSliderMessage({ message: childMessage }),
         ),
-        [],
       ]
+    }
+    case "GotRuleToastMessage": {
+      const [toast, commands] = Toast.update(model.toast, message.message)
+      return [
+        evo(model, { toast: () => toast }),
+        FoldkitCommand.mapMessages(commands, (childMessage) =>
+          GotRuleToastMessage({ message: childMessage }),
+        ),
+      ]
+    }
     case "UpdatedRuleGatePolicy":
       return [
         updateRuleDraft(model, (draft) =>
@@ -1363,14 +1405,17 @@ export const update = (model: Model, message: Message): UpdateReturn => {
       return sameRepository(currentRepository(model), message.repository) &&
         model.ruleEditor._tag === "RuleEditorSaving" &&
         model.ruleEditor.requestId === message.requestId
-        ? closeAndRefresh(
-            evo(model, {
-              ruleEditor: () => RuleEditorState.cases.RuleEditorClosed.make({}),
-              statusMessage: () =>
-                `Saved label rule for ${message.rule.label}.`,
-            }),
-            "ruleEditorDialog",
-            message.repository,
+        ? withRuleToast(
+            closeAndRefresh(
+              evo(model, {
+                ruleEditor: () =>
+                  RuleEditorState.cases.RuleEditorClosed.make({}),
+                statusMessage: () => null,
+              }),
+              "ruleEditorDialog",
+              message.repository,
+            ),
+            `Saved label rule for ${message.rule.label}.`,
           )
         : [model, []]
     case "FailedToSaveRule": {
@@ -1599,6 +1644,182 @@ export const update = (model: Model, message: Message): UpdateReturn => {
     }
     case "GotRuleDeleteDialogMessage":
       return updateDialog(model, "ruleDeleteDialog", message.message)
+
+    case "OpenedRuleTest": {
+      const repository = currentRepository(model)
+      const item = rule(model, message.ruleId)
+      if (repository === null || item === null) return [model, []]
+      const requestId = model.nextRequestId
+      return openDialog(
+        evo(model, {
+          ruleTest: () =>
+            RuleTestState.cases.RuleTestLoadingCandidates.make({
+              rule: item,
+              requestId,
+            }),
+          nextRequestId: (value) => value + 1,
+        }),
+        "ruleTestDialog",
+        [
+          C.LoadRuleTestCandidates({
+            requestId,
+            repository,
+            ruleId: item.id,
+          }),
+        ],
+      )
+    }
+    case "LoadedRuleTestCandidates": {
+      const test = model.ruleTest
+      return sameRepository(currentRepository(model), message.repository) &&
+        test._tag === "RuleTestLoadingCandidates" &&
+        test.rule.id === message.ruleId &&
+        test.requestId === message.requestId
+        ? [
+            evo(model, {
+              ruleTest: () =>
+                RuleTestState.cases.RuleTestConfiguring.make({
+                  rule: test.rule,
+                  candidates: message.candidates,
+                  selectedPullRequest: message.candidates[0]?.number ?? null,
+                }),
+            }),
+            [],
+          ]
+        : [model, []]
+    }
+    case "FailedToLoadRuleTestCandidates": {
+      const test = model.ruleTest
+      return sameRepository(currentRepository(model), message.repository) &&
+        test._tag === "RuleTestLoadingCandidates" &&
+        test.rule.id === message.ruleId &&
+        test.requestId === message.requestId
+        ? [
+            evo(model, {
+              ruleTest: () =>
+                RuleTestState.cases.RuleTestFailed.make({
+                  rule: test.rule,
+                  candidates: [],
+                  selectedPullRequest: null,
+                  message: message.message,
+                }),
+            }),
+            [],
+          ]
+        : [model, []]
+    }
+    case "SelectedRuleTestCandidate": {
+      const test = model.ruleTest
+      return test._tag !== "RuleTestConfiguring" &&
+        test._tag !== "RuleTestFailed"
+        ? [model, []]
+        : [
+            evo(model, {
+              ruleTest: () =>
+                RuleTestState.cases.RuleTestConfiguring.make({
+                  rule: test.rule,
+                  candidates: test.candidates,
+                  selectedPullRequest: message.pullRequestNumber,
+                }),
+            }),
+            [],
+          ]
+    }
+    case "RanRuleTest": {
+      const repository = currentRepository(model)
+      const test = model.ruleTest
+      if (
+        repository === null ||
+        (test._tag !== "RuleTestConfiguring" &&
+          test._tag !== "RuleTestFailed") ||
+        test.selectedPullRequest === null
+      )
+        return [model, []]
+      const requestId = model.nextRequestId
+      return [
+        evo(model, {
+          ruleTest: () =>
+            RuleTestState.cases.RuleTestRunning.make({
+              rule: test.rule,
+              candidates: test.candidates,
+              selectedPullRequest: test.selectedPullRequest,
+              requestId,
+            }),
+          nextRequestId: (value) => value + 1,
+        }),
+        [
+          C.TestRule({
+            requestId,
+            repository,
+            ruleId: test.rule.id,
+            pullRequestNumber: test.selectedPullRequest,
+          }),
+        ],
+      ]
+    }
+    case "CompletedRuleTest": {
+      const test = model.ruleTest
+      return sameRepository(currentRepository(model), message.repository) &&
+        test._tag === "RuleTestRunning" &&
+        test.requestId === message.requestId
+        ? [
+            evo(model, {
+              ruleTest: () =>
+                RuleTestState.cases.RuleTestResult.make({
+                  rule: test.rule,
+                  candidates: test.candidates,
+                  selectedPullRequest: test.selectedPullRequest,
+                  result: message.result,
+                }),
+            }),
+            [],
+          ]
+        : [model, []]
+    }
+    case "FailedRuleTest": {
+      const test = model.ruleTest
+      return sameRepository(currentRepository(model), message.repository) &&
+        test._tag === "RuleTestRunning" &&
+        test.requestId === message.requestId
+        ? [
+            evo(model, {
+              ruleTest: () =>
+                RuleTestState.cases.RuleTestFailed.make({
+                  rule: test.rule,
+                  candidates: test.candidates,
+                  selectedPullRequest: test.selectedPullRequest,
+                  message: message.message,
+                }),
+            }),
+            [],
+          ]
+        : [model, []]
+    }
+    case "ResetRuleTest": {
+      const test = model.ruleTest
+      return test._tag !== "RuleTestResult" && test._tag !== "RuleTestFailed"
+        ? [model, []]
+        : [
+            evo(model, {
+              ruleTest: () =>
+                RuleTestState.cases.RuleTestConfiguring.make({
+                  rule: test.rule,
+                  candidates: test.candidates,
+                  selectedPullRequest: test.selectedPullRequest,
+                }),
+            }),
+            [],
+          ]
+    }
+    case "DismissedRuleTest":
+      return closeDialog(
+        evo(model, {
+          ruleTest: () => RuleTestState.cases.RuleTestClosed.make({}),
+        }),
+        "ruleTestDialog",
+      )
+    case "GotRuleTestDialogMessage":
+      return updateDialog(model, "ruleTestDialog", message.message)
 
     case "OpenedPolicyTest": {
       const repository = currentRepository(model)
@@ -1869,8 +2090,10 @@ export const validRuleDraft = (model: Model, draft: RuleDraft): boolean => {
   const gate =
     draft.gatePolicyId === null ? null : policy(model, draft.gatePolicyId)
   return (
-    draft.prompt.trim().length > 0 &&
-    draft.prompt.length <= 4_000 &&
+    draft.promptEditor.source.trim().length > 0 &&
+    draft.promptEditor.source.length <= 4_000 &&
+    AiPromptTemplate.validate(draft.promptEditor.source, draft.evidence)
+      ._tag === "Valid" &&
     draft.evidence.length > 0 &&
     draft.evidence.length <= 8 &&
     draft.minimumConfidence >= 0 &&
@@ -1915,6 +2138,7 @@ type DialogField =
   | "publishDialog"
   | "ruleEditorDialog"
   | "ruleDeleteDialog"
+  | "ruleTestDialog"
   | "testDialog"
 const dialogMessage = (field: DialogField, message: Dialog.Message): Message =>
   field === "policyEditorDialog"
@@ -1925,7 +2149,9 @@ const dialogMessage = (field: DialogField, message: Dialog.Message): Message =>
         ? { _tag: "GotRuleEditorDialogMessage", message }
         : field === "ruleDeleteDialog"
           ? { _tag: "GotRuleDeleteDialogMessage", message }
-          : { _tag: "GotTestDialogMessage", message }
+          : field === "ruleTestDialog"
+            ? { _tag: "GotRuleTestDialogMessage", message }
+            : { _tag: "GotTestDialogMessage", message }
 const setDialog = (
   model: Model,
   field: DialogField,
@@ -1941,7 +2167,9 @@ const setDialog = (
           ? { ruleEditorDialog: () => dialog }
           : field === "ruleDeleteDialog"
             ? { ruleDeleteDialog: () => dialog }
-            : { testDialog: () => dialog },
+            : field === "ruleTestDialog"
+              ? { ruleTestDialog: () => dialog }
+              : { testDialog: () => dialog },
   )
 const mapDialogCommands = (
   field: DialogField,
@@ -1974,6 +2202,24 @@ const closeAndRefresh = (
   const [refreshing, refreshCommands] = refresh(closed, repository)
   return [refreshing, [...closeCommands, ...refreshCommands]]
 }
+const withRuleToast = (
+  [model, commands]: UpdateReturn,
+  message: string,
+): UpdateReturn => {
+  const [toast, toastCommands] = Toast.show(model.toast, {
+    variant: "Success",
+    payload: { message },
+  })
+  return [
+    evo(model, { toast: () => toast }),
+    [
+      ...commands,
+      ...FoldkitCommand.mapMessages(toastCommands, (childMessage) =>
+        GotRuleToastMessage({ message: childMessage }),
+      ),
+    ],
+  ]
+}
 const dialogLocked = (model: Model, field: DialogField): boolean => {
   switch (field) {
     case "policyEditorDialog":
@@ -1984,6 +2230,8 @@ const dialogLocked = (model: Model, field: DialogField): boolean => {
       return model.ruleEditor._tag === "RuleEditorSaving"
     case "ruleDeleteDialog":
       return model.ruleDeletion._tag === "RuleDeleting"
+    case "ruleTestDialog":
+      return model.ruleTest._tag === "RuleTestRunning"
     case "testDialog":
       return model.test._tag === "TestRunning"
   }
@@ -2018,7 +2266,11 @@ const updateDialog = (
                   ruleDeletion: () =>
                     RuleDeleteState.cases.RuleDeleteClosed.make({}),
                 })
-              : evo(next, { test: () => TestState.cases.TestClosed.make({}) })
+              : field === "ruleTestDialog"
+                ? evo(next, {
+                    ruleTest: () => RuleTestState.cases.RuleTestClosed.make({}),
+                  })
+                : evo(next, { test: () => TestState.cases.TestClosed.make({}) })
   }
   return [next, mapDialogCommands(field, commands)]
 }
@@ -2068,7 +2320,9 @@ const updateRuleMenu = (
   const selected: Message =
     out.value.value === "Edit"
       ? { _tag: "OpenedRuleEditor", ruleId }
-      : { _tag: "OpenedDeleteRule", ruleId }
+      : out.value.value === "Test"
+        ? { _tag: "OpenedRuleTest", ruleId }
+        : { _tag: "OpenedDeleteRule", ruleId }
   const [selectedModel, selectedCommands] = update(next, selected)
   return [selectedModel, [...commands, ...selectedCommands]]
 }

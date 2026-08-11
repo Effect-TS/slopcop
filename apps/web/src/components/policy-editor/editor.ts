@@ -66,7 +66,7 @@ const editorTheme = EditorView.theme({
       "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
   },
   ".cm-content": { padding: "12px 0" },
-  "&.cm-focused": { outline: "2px solid var(--ring)", outlineOffset: "-1px" },
+  "&.cm-focused": { outline: "none" },
 })
 
 const currentGitHubTheme = (): Extension =>

@@ -28,7 +28,7 @@ const sceneView = Scene.withViewInputs(AppSidebar.view, {
         {
           value: "Policies",
           label: "Policies",
-          description: "Policy programs",
+          description: "Department policies",
           icon: ih.span([], ["icon"]),
         },
       ],

@@ -1,5 +1,6 @@
 import * as Dialog from "@foldkit/ui/dialog"
 import * as Menu from "@foldkit/ui/menu"
+import * as Slider from "@foldkit/ui/slider"
 import * as GitHubLabel from "@slopcop/domain/GitHub/GitHubLabel"
 import * as RepositoryManagement from "@slopcop/domain/GitHub/RepositoryManagement"
 import * as LabelingPolicy from "@slopcop/domain/Labeling/LabelingPolicy"
@@ -8,8 +9,10 @@ import * as LabelingRule from "@slopcop/domain/Labeling/LabelingRule"
 import * as RuleManagement from "@slopcop/domain/Labeling/LabelingRuleManagement"
 import * as PolicyProgram from "@slopcop/domain/Policy/PolicyProgram"
 import * as Schema from "effect/Schema"
+import * as AiPromptEditor from "../../components/ai-prompt-editor"
 import * as PolicyCodeEditor from "../../components/policy-editor"
 import { PolicyDraft } from "./condition"
+import { Toast } from "./toast"
 
 export const Repository = RepositoryManagement.RepositoryPath
 export type Repository = typeof Repository.Type
@@ -21,7 +24,7 @@ export const RuleId = LabelingRule.LabelingRuleId
 export type RuleId = typeof RuleId.Type
 export const PolicyAction = Schema.Literals(["Edit", "Test", "Publish"])
 export type PolicyAction = typeof PolicyAction.Type
-export const RuleAction = Schema.Literals(["Edit", "Delete"])
+export const RuleAction = Schema.Literals(["Edit", "Test", "Delete"])
 export type RuleAction = typeof RuleAction.Type
 export const PolicyActionMenu: ReturnType<typeof Menu.create<PolicyAction>> =
   Menu.create<PolicyAction>()
@@ -60,7 +63,7 @@ export const PolicyRuleDraft = Schema.TaggedStruct("PolicyLabelingRule", {
 })
 export const AiRuleDraft = Schema.TaggedStruct("AiLabelingRule", {
   ...RuleDraftShared,
-  prompt: Schema.String,
+  promptEditor: AiPromptEditor.Model,
   evidence: Schema.Array(PolicyProgram.PullRequestFact),
   minimumConfidence: Schema.Number,
   evaluator: Schema.Literal("boolean-policy-v1"),
@@ -268,6 +271,44 @@ export const TestState = Schema.Union([
   TestFailed,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 
+const RuleTestSelection = {
+  rule: RuleManagement.PublicLabelingRule,
+  candidates: Schema.Array(RuleManagement.RuleTestCandidate),
+  selectedPullRequest: Schema.NullOr(Schema.Int),
+}
+export const RuleTestClosed = Schema.TaggedStruct("RuleTestClosed", {})
+export const RuleTestLoadingCandidates = Schema.TaggedStruct(
+  "RuleTestLoadingCandidates",
+  {
+    rule: RuleManagement.PublicLabelingRule,
+    requestId: Schema.Int,
+  },
+)
+export const RuleTestConfiguring = Schema.TaggedStruct(
+  "RuleTestConfiguring",
+  RuleTestSelection,
+)
+export const RuleTestRunning = Schema.TaggedStruct("RuleTestRunning", {
+  ...RuleTestSelection,
+  requestId: Schema.Int,
+})
+export const RuleTestResult = Schema.TaggedStruct("RuleTestResult", {
+  ...RuleTestSelection,
+  result: RuleManagement.TestLabelingRuleResponse,
+})
+export const RuleTestFailed = Schema.TaggedStruct("RuleTestFailed", {
+  ...RuleTestSelection,
+  message: Schema.String,
+})
+export const RuleTestState = Schema.Union([
+  RuleTestClosed,
+  RuleTestLoadingCandidates,
+  RuleTestConfiguring,
+  RuleTestRunning,
+  RuleTestResult,
+  RuleTestFailed,
+]).pipe(Schema.toTaggedUnion("_tag"))
+
 export const RowMutationIdle = Schema.TaggedStruct("RowMutationIdle", {})
 export const RowMutationSaving = Schema.TaggedStruct("RowMutationSaving", {
   ruleId: RuleId,
@@ -299,12 +340,16 @@ export const Model = Schema.Struct({
   ruleEditor: RuleEditorState,
   ruleDeletion: RuleDeleteState,
   test: TestState,
+  ruleTest: RuleTestState,
   rowMutation: RowMutationState,
+  confidenceSlider: Slider.Model,
+  toast: Toast.Model,
   policyEditorDialog: Dialog.Model,
   publishDialog: Dialog.Model,
   ruleEditorDialog: Dialog.Model,
   ruleDeleteDialog: Dialog.Model,
   testDialog: Dialog.Model,
+  ruleTestDialog: Dialog.Model,
   policyMenus: Schema.Record(Schema.String, Menu.Model),
   ruleMenus: Schema.Record(Schema.String, Menu.Model),
 })
@@ -332,7 +377,10 @@ export const ruleDraftFrom = (
     : {
         _tag: rule._tag,
         ...shared,
-        prompt: rule.prompt,
+        promptEditor: AiPromptEditor.init({
+          id: `ai-prompt-editor-${rule.id}`,
+          source: rule.prompt,
+        }),
         evidence: rule.evidence,
         minimumConfidence: rule.minimumConfidence,
         evaluator: rule.evaluator,
