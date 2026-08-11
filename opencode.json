@@ -12,6 +12,11 @@
     }
   },
   "references": {
+    "alchemy": {
+      "repository": "alchemy-run/alchemy",
+      "branch": "main",
+      "description": "Use for understanding how to use Alchemy"
+    },
     "effect": {
       "repository": "Effect-TS/effect",
       "branch": "main",
