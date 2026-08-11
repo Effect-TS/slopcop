@@ -18,8 +18,8 @@ describe("RootApi", () => {
     ).toEqual([{ access: [] }])
     expect(
       specification.paths[
-        "/api/v1/repositories/{owner}/{repo}/policies/{policyId}/publish"
-      ]?.post?.security,
+        "/api/v1/repositories/{owner}/{repo}/policies/{policyId}"
+      ]?.patch?.security,
     ).toEqual([{ access: [] }])
   })
 

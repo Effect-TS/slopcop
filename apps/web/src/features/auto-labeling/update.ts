@@ -31,8 +31,8 @@ import {
 } from "./message"
 import {
   PolicyActionMenu,
+  PolicyDeleteState,
   PolicyEditorState,
-  PublishState,
   RepositoryState,
   RowMutationState,
   RuleActionMenu,
@@ -60,16 +60,15 @@ const policy = (model: Model, id: PolicyId) =>
   data(model)?.policies.find((item) => item.id === id) ?? null
 const rule = (model: Model, id: RuleId) =>
   data(model)?.rules.find((item) => item.id === id) ?? null
-const publishedPolicies = (model: Model) =>
-  data(model)?.policies.filter((item) => item.publishedVersionId !== null) ?? []
+const policies = (model: Model) => data(model)?.policies ?? []
 const policyReferences = (
   model: Model,
   excludedPolicyId?: PolicyId,
 ): ReadonlyArray<PolicyCodeEditor.PolicyReference> =>
-  publishedPolicies(model).flatMap((item) =>
-    item.publishedVersionId === null || item.id === excludedPolicyId
+  policies(model).flatMap((item) =>
+    item.id === excludedPolicyId
       ? []
-      : [{ policyVersionId: item.publishedVersionId, name: item.name }],
+      : [{ policyId: item.id, name: item.name }],
   )
 
 const requestRepository = (
@@ -97,7 +96,7 @@ const resetFeature = (model: Model): Model =>
   evo(model, {
     policyEditor: () => PolicyEditorState.cases.PolicyEditorClosed.make({}),
     validation: () => ValidationState.cases.ValidationIdle.make({}),
-    publishing: () => PublishState.cases.PublishClosed.make({}),
+    policyDeletion: () => PolicyDeleteState.cases.PolicyDeleteClosed.make({}),
     ruleEditor: () => RuleEditorState.cases.RuleEditorClosed.make({}),
     ruleDeletion: () => RuleDeleteState.cases.RuleDeleteClosed.make({}),
     test: () => TestState.cases.TestClosed.make({}),
@@ -107,7 +106,7 @@ const resetFeature = (model: Model): Model =>
     statusMessage: () => null,
     toast: () => Toast.init({ id: "auto-labeling-toast" }),
     policyEditorDialog: () => Dialog.init({ id: "policy-editor" }),
-    publishDialog: () => Dialog.init({ id: "publish-policy" }),
+    policyDeleteDialog: () => Dialog.init({ id: "delete-policy" }),
     ruleEditorDialog: () => Dialog.init({ id: "rule-editor" }),
     ruleDeleteDialog: () => Dialog.init({ id: "delete-rule" }),
     testDialog: () => Dialog.init({ id: "policy-test" }),
@@ -402,7 +401,7 @@ const conditionValid = (condition: DraftCondition): boolean => {
     case "CollectionPredicate":
       return itemValid(condition.item, condition.fact, 1)
     case "PolicyReference":
-      return condition.policyVersionId.length > 0
+      return condition.policyId.length > 0
   }
 }
 export const validPolicyDraft = (draft: PolicyDraft): boolean =>
@@ -425,14 +424,14 @@ const draftFromDetail = (
   return [
     {
       name: detail.policy.name,
-      description: detail.draft.metadata.description ?? "",
+      description: detail.current.metadata.description ?? "",
       target: "pull_request",
       appliesWhen:
-        detail.draft.program.appliesWhen === null
+        detail.current.program.appliesWhen === null
           ? null
-          : draftConditionFrom(detail.draft.program.appliesWhen, nextItemId),
+          : draftConditionFrom(detail.current.program.appliesWhen, nextItemId),
       matchesWhen: draftConditionFrom(
-        detail.draft.program.matchesWhen,
+        detail.current.program.matchesWhen,
         nextItemId,
       ),
     },
@@ -618,13 +617,13 @@ export const update = (model: Model, message: Message): UpdateReturn => {
               draft,
               sourceEditor: PolicyCodeEditor.init({
                 id: "policy-program-editor",
-                program: message.detail.draft.program,
+                program: message.detail.current.program,
                 references: policyReferences(model, message.detail.policy.id),
               }),
               identity: {
                 _tag: "ExistingPolicy",
                 id: message.detail.policy.id,
-                draftVersion: message.detail.draft.version,
+                version: message.detail.current.version,
               },
               dirty: false,
             }),
@@ -937,7 +936,7 @@ export const update = (model: Model, message: Message): UpdateReturn => {
         updatePolicyDraft(model, (draft) =>
           mapProgramConditions(draft, message.clientId, (condition) =>
             condition._tag === "PolicyReference"
-              ? { ...condition, policyVersionId: message.policyVersionId }
+              ? { ...condition, policyId: message.policyId }
               : condition,
           ),
         ),
@@ -975,14 +974,17 @@ export const update = (model: Model, message: Message): UpdateReturn => {
       return sameRepository(currentRepository(model), message.repository) &&
         model.policyEditor._tag === "PolicyEditorSaving" &&
         model.policyEditor.requestId === message.requestId
-        ? closeAndRefresh(
-            evo(model, {
-              policyEditor: () =>
-                PolicyEditorState.cases.PolicyEditorClosed.make({}),
-              statusMessage: () => `Saved policy draft ${message.policy.name}.`,
-            }),
-            "policyEditorDialog",
-            message.repository,
+        ? withToast(
+            closeAndRefresh(
+              evo(model, {
+                policyEditor: () =>
+                  PolicyEditorState.cases.PolicyEditorClosed.make({}),
+                statusMessage: () => null,
+              }),
+              "policyEditorDialog",
+              message.repository,
+            ),
+            `${model.policyEditor.identity._tag === "NewPolicy" ? "Created" : "Updated"} policy ${message.policy.name}.`,
           )
         : [model, []]
     case "FailedToSavePolicy": {
@@ -996,15 +998,14 @@ export const update = (model: Model, message: Message): UpdateReturn => {
       return [
         evo(model, {
           policyEditor: () =>
-            message.currentPolicy !== null &&
-            message.currentDraftVersion !== null
+            message.currentPolicy !== null && message.currentVersion !== null
               ? PolicyEditorState.cases.PolicyEditorConflict.make({
                   draft: editor.draft,
                   sourceEditor: editor.sourceEditor,
                   identity: editor.identity,
                   message: message.message,
                   currentPolicy: message.currentPolicy,
-                  currentDraftVersion: message.currentDraftVersion,
+                  currentVersion: message.currentVersion,
                   dirty: editor.dirty,
                 })
               : PolicyEditorState.cases.PolicyEditorFailed.make({
@@ -1054,7 +1055,7 @@ export const update = (model: Model, message: Message): UpdateReturn => {
                 ValidationState.cases.ValidationResult.make({
                   result: message.result,
                 }),
-              statusMessage: () => "The saved policy draft is valid.",
+              statusMessage: () => "The saved policy is valid.",
             }),
             [],
           ]
@@ -1078,95 +1079,101 @@ export const update = (model: Model, message: Message): UpdateReturn => {
       return updatePolicyMenu(model, message.policyId, message.message)
     case "GotPolicyEditorDialogMessage":
       return updateDialog(model, "policyEditorDialog", message.message)
-
-    case "OpenedPublishPolicy": {
+    case "OpenedDeletePolicy": {
       const item = policy(model, message.policyId)
       return item === null
         ? [model, []]
         : openDialog(
             evo(model, {
-              publishing: () =>
-                PublishState.cases.PublishConfirming.make({ policy: item }),
+              policyDeletion: () =>
+                PolicyDeleteState.cases.PolicyDeleteConfirming.make({
+                  policy: item,
+                }),
             }),
-            "publishDialog",
+            "policyDeleteDialog",
           )
     }
-    case "DismissedPublishPolicy":
-      return model.publishing._tag === "Publishing"
+    case "DismissedDeletePolicy":
+      return model.policyDeletion._tag === "PolicyDeleting"
         ? [model, []]
         : closeDialog(
             evo(model, {
-              publishing: () => PublishState.cases.PublishClosed.make({}),
+              policyDeletion: () =>
+                PolicyDeleteState.cases.PolicyDeleteClosed.make({}),
             }),
-            "publishDialog",
+            "policyDeleteDialog",
           )
-    case "ConfirmedPublishPolicy": {
+    case "ConfirmedDeletePolicy": {
       const repository = currentRepository(model)
-      const publishing = model.publishing
+      const deletion = model.policyDeletion
       if (
         repository === null ||
-        (publishing._tag !== "PublishConfirming" &&
-          publishing._tag !== "PublishFailed")
+        (deletion._tag !== "PolicyDeleteConfirming" &&
+          deletion._tag !== "PolicyDeleteFailed")
       )
         return [model, []]
       const requestId = model.nextRequestId
       return [
         evo(model, {
-          publishing: () =>
-            PublishState.cases.Publishing.make({
-              policy: publishing.policy,
+          policyDeletion: () =>
+            PolicyDeleteState.cases.PolicyDeleting.make({
+              policy: deletion.policy,
               requestId,
             }),
           nextRequestId: (value) => value + 1,
         }),
         [
-          C.PublishPolicy({
+          C.DeletePolicy({
             requestId,
             repository,
-            policyId: publishing.policy.id,
+            policyId: deletion.policy.id,
+            version: deletion.policy.version,
           }),
         ],
       ]
     }
-    case "CompletedPublishPolicy": {
-      const publishing = model.publishing
+    case "CompletedDeletePolicy":
       return sameRepository(currentRepository(model), message.repository) &&
-        publishing._tag === "Publishing" &&
-        publishing.requestId === message.requestId
-        ? closeAndRefresh(
-            evo(model, {
-              publishing: () => PublishState.cases.PublishClosed.make({}),
-              statusMessage: () =>
-                `Published ${message.result.policy.name}. Facts: ${message.result.impact.facts.join(", ") || "none"}. Triggers: ${message.result.impact.triggers.join(", ") || "none"}.`,
-            }),
-            "publishDialog",
-            message.repository,
+        model.policyDeletion._tag === "PolicyDeleting" &&
+        model.policyDeletion.requestId === message.requestId
+        ? withToast(
+            closeAndRefresh(
+              evo(model, {
+                policyDeletion: () =>
+                  PolicyDeleteState.cases.PolicyDeleteClosed.make({}),
+                statusMessage: () => null,
+              }),
+              "policyDeleteDialog",
+              message.repository,
+            ),
+            `Deleted policy ${model.policyDeletion.policy.name}.`,
           )
         : [model, []]
-    }
-    case "FailedToPublishPolicy": {
-      const publishing = model.publishing
-      return sameRepository(currentRepository(model), message.repository) &&
-        publishing._tag === "Publishing" &&
-        publishing.requestId === message.requestId
-        ? [
-            evo(model, {
-              publishing: () =>
-                PublishState.cases.PublishFailed.make({
-                  policy: publishing.policy,
-                  message: message.message,
-                }),
+    case "FailedToDeletePolicy": {
+      const deletion = model.policyDeletion
+      if (
+        !sameRepository(currentRepository(model), message.repository) ||
+        deletion._tag !== "PolicyDeleting" ||
+        deletion.requestId !== message.requestId
+      )
+        return [model, []]
+      return [
+        evo(model, {
+          policyDeletion: () =>
+            PolicyDeleteState.cases.PolicyDeleteFailed.make({
+              policy: message.currentPolicy ?? deletion.policy,
+              message: message.message,
             }),
-            [],
-          ]
-        : [model, []]
+        }),
+        [],
+      ]
     }
-    case "GotPublishDialogMessage":
-      return updateDialog(model, "publishDialog", message.message)
+    case "GotPolicyDeleteDialogMessage":
+      return updateDialog(model, "policyDeleteDialog", message.message)
 
     case "OpenedNewRule": {
       const loaded = data(model)
-      const first = publishedPolicies(model)[0]
+      const first = policies(model)[0]
       if (loaded === null) return [model, []]
       const shared = {
         label: loaded.labels[0]?.name ?? "",
@@ -1248,7 +1255,7 @@ export const update = (model: Model, message: Message): UpdateReturn => {
         priority: editor.draft.priority,
         enabled: editor.draft.enabled,
       }
-      const first = publishedPolicies(model)[0]
+      const first = policies(model)[0]
       if (message.ruleType === "AiLabelingRule")
         return [
           updateRuleDraft(model, () => ({
@@ -1405,7 +1412,7 @@ export const update = (model: Model, message: Message): UpdateReturn => {
       return sameRepository(currentRepository(model), message.repository) &&
         model.ruleEditor._tag === "RuleEditorSaving" &&
         model.ruleEditor.requestId === message.requestId
-        ? withRuleToast(
+        ? withToast(
             closeAndRefresh(
               evo(model, {
                 ruleEditor: () =>
@@ -1455,13 +1462,11 @@ export const update = (model: Model, message: Message): UpdateReturn => {
       if (
         repository === null ||
         item === null ||
-        model.rowMutation._tag !== "RowMutationIdle" ||
-        (!ruleCanEnable(item) && !item.enabled)
+        model.rowMutation._tag !== "RowMutationIdle"
       )
         return [model, []]
       const requestId = model.nextRequestId
       const enabled = !item.enabled
-      if (enabled && !ruleCanEnable(item)) return [model, []]
       return [
         evo(model, {
           rowMutation: () =>
@@ -1523,8 +1528,7 @@ export const update = (model: Model, message: Message): UpdateReturn => {
       if (
         repository === null ||
         mutation._tag !== "RowMutationFailed" ||
-        mutation.currentRule === null ||
-        (mutation.enabled && !ruleCanEnable(mutation.currentRule))
+        mutation.currentRule === null
       )
         return [model, []]
       const requestId = model.nextRequestId
@@ -2016,7 +2020,7 @@ const savePolicy = (model: Model, retry: boolean): UpdateReturn => {
       {
         _tag: "ExistingPolicy",
         id: editor.currentPolicy.id,
-        draftVersion: editor.currentDraftVersion,
+        version: editor.currentVersion,
       },
     )
   }
@@ -2085,7 +2089,7 @@ export const validRuleDraft = (model: Model, draft: RuleDraft): boolean => {
     return false
   if (draft._tag === "PolicyLabelingRule") {
     const selected = policy(model, draft.policyId)
-    return selected !== null && selected.publishedVersionId !== null
+    return selected !== null
   }
   const gate =
     draft.gatePolicyId === null ? null : policy(model, draft.gatePolicyId)
@@ -2098,17 +2102,9 @@ export const validRuleDraft = (model: Model, draft: RuleDraft): boolean => {
     draft.evidence.length <= 8 &&
     draft.minimumConfidence >= 0 &&
     draft.minimumConfidence <= 1 &&
-    (draft.gatePolicyId === null ||
-      (gate !== null && gate.publishedVersionId !== null))
+    (draft.gatePolicyId === null || gate !== null)
   )
 }
-
-const ruleCanEnable = (
-  rule: typeof import("@slopcop/domain/Labeling/LabelingRuleManagement").PublicLabelingRule.Type,
-): boolean =>
-  rule._tag === "PolicyLabelingRule"
-    ? rule.policy.published
-    : rule.gatePolicy === null || rule.gatePolicy.published
 const performRuleSave = (
   model: Model,
   repository: Repository,
@@ -2135,7 +2131,7 @@ const performRuleSave = (
 
 type DialogField =
   | "policyEditorDialog"
-  | "publishDialog"
+  | "policyDeleteDialog"
   | "ruleEditorDialog"
   | "ruleDeleteDialog"
   | "ruleTestDialog"
@@ -2143,8 +2139,8 @@ type DialogField =
 const dialogMessage = (field: DialogField, message: Dialog.Message): Message =>
   field === "policyEditorDialog"
     ? { _tag: "GotPolicyEditorDialogMessage", message }
-    : field === "publishDialog"
-      ? { _tag: "GotPublishDialogMessage", message }
+    : field === "policyDeleteDialog"
+      ? { _tag: "GotPolicyDeleteDialogMessage", message }
       : field === "ruleEditorDialog"
         ? { _tag: "GotRuleEditorDialogMessage", message }
         : field === "ruleDeleteDialog"
@@ -2161,8 +2157,8 @@ const setDialog = (
     model,
     field === "policyEditorDialog"
       ? { policyEditorDialog: () => dialog }
-      : field === "publishDialog"
-        ? { publishDialog: () => dialog }
+      : field === "policyDeleteDialog"
+        ? { policyDeleteDialog: () => dialog }
         : field === "ruleEditorDialog"
           ? { ruleEditorDialog: () => dialog }
           : field === "ruleDeleteDialog"
@@ -2202,7 +2198,7 @@ const closeAndRefresh = (
   const [refreshing, refreshCommands] = refresh(closed, repository)
   return [refreshing, [...closeCommands, ...refreshCommands]]
 }
-const withRuleToast = (
+const withToast = (
   [model, commands]: UpdateReturn,
   message: string,
 ): UpdateReturn => {
@@ -2224,8 +2220,8 @@ const dialogLocked = (model: Model, field: DialogField): boolean => {
   switch (field) {
     case "policyEditorDialog":
       return model.policyEditor._tag === "PolicyEditorSaving"
-    case "publishDialog":
-      return model.publishing._tag === "Publishing"
+    case "policyDeleteDialog":
+      return model.policyDeletion._tag === "PolicyDeleting"
     case "ruleEditorDialog":
       return model.ruleEditor._tag === "RuleEditorSaving"
     case "ruleDeleteDialog":
@@ -2252,9 +2248,10 @@ const updateDialog = (
               PolicyEditorState.cases.PolicyEditorClosed.make({}),
             validation: () => ValidationState.cases.ValidationIdle.make({}),
           })
-        : field === "publishDialog"
+        : field === "policyDeleteDialog"
           ? evo(next, {
-              publishing: () => PublishState.cases.PublishClosed.make({}),
+              policyDeletion: () =>
+                PolicyDeleteState.cases.PolicyDeleteClosed.make({}),
             })
           : field === "ruleEditorDialog"
             ? evo(next, {
@@ -2296,7 +2293,7 @@ const updatePolicyMenu = (
       ? { _tag: "OpenedPolicyEditor", policyId }
       : out.value.value === "Test"
         ? { _tag: "OpenedPolicyTest", policyId }
-        : { _tag: "OpenedPublishPolicy", policyId }
+        : { _tag: "OpenedDeletePolicy", policyId }
   const [selectedModel, selectedCommands] = update(next, selected)
   return [selectedModel, [...commands, ...selectedCommands]]
 }

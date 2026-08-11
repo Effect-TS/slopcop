@@ -23,6 +23,7 @@ const PolicyRequest = Schema.Struct({
   policyId: Policy.LabelingPolicyId,
 })
 const VersionRequest = Schema.Struct({ versionId: Program.PolicyVersionId })
+const PolicyReferenceRequest = Schema.Struct({ policyId: Program.PolicyId })
 export const ResolvedPolicyVersionRow = Schema.Struct({
   ...Policy.LabelingPolicyVersion.select.fields,
   repositoryId: GitHubRepository.GitHubRepositoryId,
@@ -54,6 +55,15 @@ const UpdatePolicyRequest = Schema.Struct({
   expectedVersion: Schema.Int,
   name: Policy.LabelingPolicyName,
 })
+const RemovePolicyRequest = Schema.Struct({
+  repositoryId: GitHubRepository.GitHubRepositoryId,
+  policyId: Policy.LabelingPolicyId,
+  expectedVersion: Schema.Int,
+})
+const PolicyUsage = Schema.Struct({
+  rules: Schema.Int,
+  policies: Schema.Int,
+})
 export class PoliciesRepo extends Context.Service<
   PoliciesRepo,
   {
@@ -76,8 +86,8 @@ export class PoliciesRepo extends Context.Service<
       Option.Option<Policy.LabelingPolicyVersion>,
       PoliciesRepoError
     >
-    readonly findResolvedVersion: (
-      versionId: Program.PolicyVersionId,
+    readonly findCurrentVersion: (
+      policyId: Program.PolicyId,
     ) => Effect.Effect<
       Option.Option<ResolvedPolicyVersionRow>,
       PoliciesRepoError
@@ -112,20 +122,29 @@ export class PoliciesRepo extends Context.Service<
       expectedVersion: number,
       name: Policy.LabelingPolicy["name"],
     ) => Effect.Effect<Policy.LabelingPolicy, PoliciesRepoError>
+    readonly usage: (
+      repositoryId: GitHubRepository.GitHubRepository["id"],
+      policyId: Policy.LabelingPolicy["id"],
+    ) => Effect.Effect<typeof PolicyUsage.Type, PoliciesRepoError>
+    readonly remove: (
+      repositoryId: GitHubRepository.GitHubRepository["id"],
+      policyId: Policy.LabelingPolicy["id"],
+      expectedVersion: number,
+    ) => Effect.Effect<void, PoliciesRepoError>
     readonly insertVersion: (
       input: typeof Policy.LabelingPolicyVersion.insert.Type,
     ) => Effect.Effect<Policy.LabelingPolicyVersion, PoliciesRepoError>
     readonly insertDependencies: (
       versionId: Program.PolicyVersionId,
       repositoryId: GitHubRepository.GitHubRepository["id"],
-      dependencies: ReadonlyArray<Program.PolicyVersionId>,
+      dependencies: ReadonlyArray<Program.PolicyId>,
     ) => Effect.Effect<void, PoliciesRepoError>
     readonly insertTriggers: (
       versionId: Program.PolicyVersionId,
       repositoryId: GitHubRepository.GitHubRepository["id"],
       triggers: ReadonlyArray<string>,
     ) => Effect.Effect<void, PoliciesRepoError>
-    readonly publish: (
+    readonly setCurrentVersion: (
       policyId: Policy.LabelingPolicy["id"],
       expectedVersion: number,
       versionId: Program.PolicyVersionId,
@@ -165,20 +184,22 @@ export class PoliciesRepo extends Context.Service<
       execute: ({ versionId }) =>
         sql`SELECT * FROM labeling_policy_versions WHERE id=${versionId} AND publication_status='published'`,
     })
-    const resolvedVersion = SqlSchema.findOneOption({
-      Request: VersionRequest,
+    const currentVersion = SqlSchema.findOneOption({
+      Request: PolicyReferenceRequest,
       Result: ResolvedPolicyVersionRow,
-      execute: ({ versionId }) => sql`
+      execute: ({ policyId }) => sql`
         SELECT version.*, policy.repository_id, policy.target
-        FROM labeling_policy_versions AS version
-        INNER JOIN labeling_policies AS policy ON policy.id=version.policy_id
-        WHERE version.id=${versionId} AND version.publication_status='published' AND policy.deleted_at IS NULL`,
+        FROM labeling_policies AS policy
+        INNER JOIN labeling_policy_versions AS version ON version.id=policy.published_version_id
+        LEFT JOIN labeling_policy_versions AS legacy ON legacy.id=${policyId}
+        WHERE (policy.id=${policyId} OR legacy.policy_id=policy.id)
+          AND policy.deleted_at IS NULL`,
     })
     const versions = SqlSchema.findAll({
       Request: VersionListRequest,
       Result: Policy.LabelingPolicyVersion,
       execute: ({ policyId }) =>
-        sql`SELECT * FROM labeling_policy_versions WHERE policy_id=${policyId} AND publication_status='published' ORDER BY revision DESC`,
+        sql`SELECT * FROM labeling_policy_versions WHERE policy_id=${policyId} ORDER BY revision DESC`,
     })
     const versionByHash = SqlSchema.findOneOption({
       Request: VersionHashRequest,
@@ -210,6 +231,31 @@ export class PoliciesRepo extends Context.Service<
       execute: ({ expectedVersion, name, policyId }) =>
         sql`UPDATE labeling_policies SET name=${name},version=version+1,updated_at=unixepoch()*1000 WHERE id=${policyId} AND version=${expectedVersion} AND deleted_at IS NULL RETURNING *`,
     })
+    const usage = SqlSchema.findOneOption({
+      Request: PolicyRequest,
+      Result: PolicyUsage,
+      execute: ({ policyId, repositoryId }) => sql`
+        SELECT
+          (SELECT count(*) FROM labeling_rules
+            WHERE repository_id=${repositoryId} AND deleted_at IS NULL
+              AND (policy_id=${policyId} OR gate_policy_id=${policyId})) AS rules,
+          (SELECT count(*) FROM labeling_policy_dependencies AS dependency
+            INNER JOIN labeling_policies AS parent
+              ON parent.published_version_id=dependency.policy_version_id
+            INNER JOIN labeling_policy_versions AS referenced
+              ON referenced.id=dependency.dependency_version_id
+            WHERE parent.repository_id=${repositoryId} AND parent.deleted_at IS NULL
+              AND referenced.policy_id=${policyId}) AS policies`,
+    })
+    const remove = SqlSchema.findOneOption({
+      Request: RemovePolicyRequest,
+      Result: Policy.LabelingPolicy,
+      execute: ({ expectedVersion, policyId, repositoryId }) => sql`
+        UPDATE labeling_policies SET deleted_at=unixepoch()*1000,
+          updated_at=unixepoch()*1000,version=version+1
+        WHERE id=${policyId} AND repository_id=${repositoryId}
+          AND version=${expectedVersion} AND deleted_at IS NULL RETURNING *`,
+    })
     const insertVersion = SqlSchema.findOneOption({
       Request: Policy.LabelingPolicyVersion.insert,
       Result: Policy.LabelingPolicyVersion,
@@ -220,7 +266,7 @@ export class PoliciesRepo extends Context.Service<
       Request: PublishRequest,
       Result: Policy.LabelingPolicy,
       execute: ({ policyId, expectedVersion, versionId }) =>
-        sql`UPDATE labeling_policies SET published_version_id=${versionId},version=version+1,updated_at=unixepoch()*1000 WHERE id=${policyId} AND version=${expectedVersion} RETURNING *`,
+        sql`UPDATE labeling_policies SET published_version_id=${versionId},updated_at=unixepoch()*1000 WHERE id=${policyId} AND version=${expectedVersion} RETURNING *`,
     })
     const activateVersion = SqlSchema.findOneOption({
       Request: VersionRepositoryRequest,
@@ -257,9 +303,9 @@ export class PoliciesRepo extends Context.Service<
         draft({ policyId }).pipe(Effect.mapError(err("FindDraft"))),
       findVersion: (versionId) =>
         version({ versionId }).pipe(Effect.mapError(err("FindVersion"))),
-      findResolvedVersion: (versionId) =>
-        resolvedVersion({ versionId }).pipe(
-          Effect.mapError(err("FindResolvedVersion")),
+      findCurrentVersion: (policyId) =>
+        currentVersion({ policyId }).pipe(
+          Effect.mapError(err("FindCurrentVersion")),
         ),
       findVersionByHash: (policyId, contentHash) =>
         versionByHash({ policyId, contentHash }).pipe(
@@ -287,6 +333,17 @@ export class PoliciesRepo extends Context.Service<
           Effect.mapError(err("UpdatePolicy")),
           Effect.flatMap(one("UpdatePolicy")),
         ),
+      usage: (repositoryId, policyId) =>
+        usage({ repositoryId, policyId }).pipe(
+          Effect.mapError(err("Usage")),
+          Effect.flatMap(one("Usage")),
+        ),
+      remove: (repositoryId, policyId, expectedVersion) =>
+        remove({ repositoryId, policyId, expectedVersion }).pipe(
+          Effect.mapError(err("Remove")),
+          Effect.flatMap(one("Remove")),
+          Effect.asVoid,
+        ),
       insertVersion: (input) =>
         insertVersion(input).pipe(
           Effect.mapError(err("InsertVersion")),
@@ -296,7 +353,12 @@ export class PoliciesRepo extends Context.Service<
         Effect.forEach(
           dependencies,
           (dependency) =>
-            sql`INSERT OR IGNORE INTO labeling_policy_dependencies (policy_version_id,dependency_version_id,repository_id) VALUES (${versionId},${dependency},${repositoryId})`,
+            sql`INSERT OR IGNORE INTO labeling_policy_dependencies (policy_version_id,dependency_version_id,repository_id)
+                SELECT ${versionId},current.published_version_id,${repositoryId}
+                FROM labeling_policies AS current
+                LEFT JOIN labeling_policy_versions AS legacy ON legacy.id=${dependency}
+                WHERE (current.id=${dependency} OR legacy.policy_id=current.id)
+                  AND current.repository_id=${repositoryId}`,
           { discard: true },
         ).pipe(Effect.mapError(err("InsertDependencies"))),
       insertTriggers: (versionId, repositoryId, triggers) =>
@@ -308,10 +370,10 @@ export class PoliciesRepo extends Context.Service<
           },
           { discard: true },
         ).pipe(Effect.mapError(err("InsertTriggers"))),
-      publish: (policyId, expectedVersion, versionId) =>
+      setCurrentVersion: (policyId, expectedVersion, versionId) =>
         publish({ policyId, expectedVersion, versionId }).pipe(
-          Effect.mapError(err("Publish")),
-          Effect.flatMap(one("Publish")),
+          Effect.mapError(err("SetCurrentVersion")),
+          Effect.flatMap(one("SetCurrentVersion")),
         ),
       activateVersion: (versionId, repositoryId) =>
         activateVersion({ versionId, repositoryId }).pipe(

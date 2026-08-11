@@ -26,7 +26,6 @@ export const RulePath = Schema.Struct({
 const PublicPolicy = Schema.Struct({
   id: LabelingPolicyId,
   name: LabelingPolicyName,
-  published: Schema.Boolean,
 })
 const publicSharedFields = {
   id: LabelingRuleId,

@@ -18,11 +18,9 @@ export const Repository = RepositoryManagement.RepositoryPath
 export type Repository = typeof Repository.Type
 export const PolicyId = LabelingPolicy.LabelingPolicyId
 export type PolicyId = typeof PolicyId.Type
-export const PolicyVersionId = PolicyProgram.PolicyVersionId
-export type PolicyVersionId = typeof PolicyVersionId.Type
 export const RuleId = LabelingRule.LabelingRuleId
 export type RuleId = typeof RuleId.Type
-export const PolicyAction = Schema.Literals(["Edit", "Test", "Publish"])
+export const PolicyAction = Schema.Literals(["Edit", "Test", "Delete"])
 export type PolicyAction = typeof PolicyAction.Type
 export const RuleAction = Schema.Literals(["Edit", "Test", "Delete"])
 export type RuleAction = typeof RuleAction.Type
@@ -34,7 +32,7 @@ export const RuleActionMenu: ReturnType<typeof Menu.create<RuleAction>> =
 export const NewPolicy = Schema.TaggedStruct("NewPolicy", {})
 export const ExistingPolicy = Schema.TaggedStruct("ExistingPolicy", {
   id: PolicyId,
-  draftVersion: Schema.Int,
+  version: Schema.Int,
 })
 export const PolicyIdentity = Schema.Union([NewPolicy, ExistingPolicy]).pipe(
   Schema.toTaggedUnion("_tag"),
@@ -136,7 +134,7 @@ export const PolicyEditorConflict = Schema.TaggedStruct(
     ...PolicyEditorFields,
     message: Schema.String,
     currentPolicy: PolicyManagement.PublicPolicy,
-    currentDraftVersion: Schema.Int,
+    currentVersion: Schema.Int,
   },
 )
 export const PolicyEditorState = Schema.Union([
@@ -166,27 +164,24 @@ export const ValidationState = Schema.Union([
   ValidationFailed,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 
-export const PublishClosed = Schema.TaggedStruct("PublishClosed", {})
-export const PublishConfirming = Schema.TaggedStruct("PublishConfirming", {
-  policy: PolicyManagement.PublicPolicy,
-})
-export const Publishing = Schema.TaggedStruct("Publishing", {
+export const PolicyDeleteClosed = Schema.TaggedStruct("PolicyDeleteClosed", {})
+export const PolicyDeleteConfirming = Schema.TaggedStruct(
+  "PolicyDeleteConfirming",
+  { policy: PolicyManagement.PublicPolicy },
+)
+export const PolicyDeleting = Schema.TaggedStruct("PolicyDeleting", {
   policy: PolicyManagement.PublicPolicy,
   requestId: Schema.Int,
 })
-export const PublishResult = Schema.TaggedStruct("PublishResult", {
-  result: PolicyManagement.PublishPolicyResponse,
-})
-export const PublishFailed = Schema.TaggedStruct("PublishFailed", {
+export const PolicyDeleteFailed = Schema.TaggedStruct("PolicyDeleteFailed", {
   policy: PolicyManagement.PublicPolicy,
   message: Schema.String,
 })
-export const PublishState = Schema.Union([
-  PublishClosed,
-  PublishConfirming,
-  Publishing,
-  PublishResult,
-  PublishFailed,
+export const PolicyDeleteState = Schema.Union([
+  PolicyDeleteClosed,
+  PolicyDeleteConfirming,
+  PolicyDeleting,
+  PolicyDeleteFailed,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 
 const RuleEditorFields = { draft: RuleDraft, identity: RuleIdentity }
@@ -336,7 +331,7 @@ export const Model = Schema.Struct({
   nextNodeSequence: Schema.Int,
   policyEditor: PolicyEditorState,
   validation: ValidationState,
-  publishing: PublishState,
+  policyDeletion: PolicyDeleteState,
   ruleEditor: RuleEditorState,
   ruleDeletion: RuleDeleteState,
   test: TestState,
@@ -345,7 +340,7 @@ export const Model = Schema.Struct({
   confidenceSlider: Slider.Model,
   toast: Toast.Model,
   policyEditorDialog: Dialog.Model,
-  publishDialog: Dialog.Model,
+  policyDeleteDialog: Dialog.Model,
   ruleEditorDialog: Dialog.Model,
   ruleDeleteDialog: Dialog.Model,
   testDialog: Dialog.Model,

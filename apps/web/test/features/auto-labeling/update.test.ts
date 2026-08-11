@@ -18,9 +18,9 @@ const otherRepository = { owner: "effect", repo: "platform" }
 const timestamp = "2026-08-08T00:00:00.000Z"
 const draftPolicy = Schema.decodeUnknownSync(PolicyManagement.PublicPolicy)({
   id: "policy-draft",
-  name: "Draft policy",
+  name: "Secondary policy",
   target: "pull_request",
-  publishedVersionId: null,
+  currentVersionId: "version-secondary",
   version: 2,
   createdAt: timestamp,
   updatedAt: timestamp,
@@ -28,9 +28,9 @@ const draftPolicy = Schema.decodeUnknownSync(PolicyManagement.PublicPolicy)({
 const publishedPolicy = Schema.decodeUnknownSync(PolicyManagement.PublicPolicy)(
   {
     id: "policy-published",
-    name: "Published policy",
+    name: "Current policy",
     target: "pull_request",
-    publishedVersionId: "version-published",
+    currentVersionId: "version-current",
     version: 4,
     createdAt: timestamp,
     updatedAt: timestamp,
@@ -58,7 +58,8 @@ const program = Schema.decodeUnknownSync(PolicyProgram.PolicyProgram)({
 })
 const detail = Schema.decodeUnknownSync(PolicyManagement.PublicPolicyDetail)({
   policy: Schema.encodeSync(PolicyManagement.PublicPolicy)(publishedPolicy),
-  draft: {
+  current: {
+    id: "version-current",
     program,
     metadata: { description: "Classifies documentation changes." },
     version: 7,
@@ -83,7 +84,6 @@ const rule = Schema.decodeUnknownSync(RuleManagement.PublicLabelingRule)({
   policy: {
     id: publishedPolicy.id,
     name: publishedPolicy.name,
-    published: true,
   },
 })
 const loaded = AutoLabeling.LoadedRepositoryData({
@@ -138,7 +138,7 @@ const testResult = Schema.decodeUnknownSync(
   PolicyManagement.TestPolicyResponse,
 )({
   policyId: publishedPolicy.id,
-  tested: { _tag: "Draft", version: 7 },
+  policyVersionId: publishedPolicy.currentVersionId,
   pullRequestNumber: 42,
   decision: {
     outcome: "Match",
@@ -357,13 +357,10 @@ describe("generic policy programs", () => {
     expect(NodeKind.literals).not.toContain("AiPrompt")
   })
 
-  it("pins PolicyReference to an exact published version ID", () => {
+  it("references another policy by stable policy ID", () => {
     const model = newPolicyModel()
-    if (
-      model.policyEditor._tag !== "PolicyEditorEditing" ||
-      publishedPolicy.publishedVersionId === null
-    )
-      throw new Error("Expected policy editor and published version")
+    if (model.policyEditor._tag !== "PolicyEditorEditing")
+      throw new Error("Expected policy editor")
     const clientId = model.policyEditor.draft.matchesWhen.clientId
     const [reference] = AutoLabeling.update(
       model,
@@ -372,18 +369,18 @@ describe("generic policy programs", () => {
         kind: "PolicyReference",
       }),
     )
-    const [pinned] = AutoLabeling.update(
+    const [included] = AutoLabeling.update(
       reference,
       AutoLabeling.UpdatedPolicyReference({
         clientId,
-        policyVersionId: publishedPolicy.publishedVersionId,
+        policyId: publishedPolicy.id,
       }),
     )
-    expect(pinned.policyEditor).toMatchObject({
+    expect(included.policyEditor).toMatchObject({
       draft: {
         matchesWhen: {
           _tag: "PolicyReference",
-          policyVersionId: "version-published",
+          policyId: "policy-published",
         },
       },
     })
@@ -426,7 +423,7 @@ describe("generic policy programs", () => {
   })
 })
 
-describe("policy detail, validation, publication, and testing", () => {
+describe("policy detail, validation, saving, and testing", () => {
   it("loads PublicPolicyDetail before editing and rejects stale detail", () => {
     const [loading] = AutoLabeling.update(
       loadedModel(),
@@ -455,16 +452,16 @@ describe("policy detail, validation, publication, and testing", () => {
     })
   })
 
-  it("hydrates the draft program and optimistic draft version from detail", () => {
+  it("hydrates the current program and optimistic version from detail", () => {
     expect(editingDetailModel().policyEditor).toMatchObject({
       _tag: "PolicyEditorEditing",
       identity: {
         _tag: "ExistingPolicy",
         id: publishedPolicy.id,
-        draftVersion: 7,
+        version: 7,
       },
       draft: {
-        name: "Published policy",
+        name: "Current policy",
         description: "Classifies documentation changes.",
         appliesWhen: { clientId: expect.any(String) },
         matchesWhen: { clientId: expect.any(String) },
@@ -472,7 +469,7 @@ describe("policy detail, validation, publication, and testing", () => {
     })
   })
 
-  it("preserves a conflicted local draft and retries the current draft version", () => {
+  it("preserves local changes and retries the current version", () => {
     const [named] = AutoLabeling.update(
       editingDetailModel(),
       AutoLabeling.UpdatedPolicyName({ name: "Local name" }),
@@ -485,25 +482,25 @@ describe("policy detail, validation, publication, and testing", () => {
         repository,
         message: "Conflict",
         currentPolicy: { ...publishedPolicy, version: 5 },
-        currentDraftVersion: 8,
+        currentVersion: 8,
       }),
     )
     expect(conflicted.policyEditor).toMatchObject({
       _tag: "PolicyEditorConflict",
       draft: { name: "Local name" },
-      currentDraftVersion: 8,
+      currentVersion: 8,
     })
     const [, commands] = AutoLabeling.update(
       conflicted,
       AutoLabeling.RetriedPolicySave(),
     )
     expect(commands[0]?.args).toMatchObject({
-      identity: { _tag: "ExistingPolicy", draftVersion: 8 },
+      identity: { _tag: "ExistingPolicy", version: 8 },
       draft: { name: "Local name" },
     })
   })
 
-  it("validates an existing draft and ignores stale validation", () => {
+  it("validates an existing policy and ignores stale validation", () => {
     const [running, commands] = AutoLabeling.update(
       editingDetailModel(),
       AutoLabeling.ValidatedPolicy(),
@@ -538,43 +535,6 @@ describe("policy detail, validation, publication, and testing", () => {
       _tag: "ValidationResult",
       result,
     })
-  })
-
-  it("publishes separately and stores facts/triggers impact", () => {
-    const [confirming] = AutoLabeling.update(
-      loadedModel(),
-      AutoLabeling.OpenedPublishPolicy({ policyId: publishedPolicy.id }),
-    )
-    const [publishing, commands] = AutoLabeling.update(
-      confirming,
-      AutoLabeling.ConfirmedPublishPolicy(),
-    )
-    expect(commands[0]?.name).toBe("PublishPolicy")
-    const result = Schema.decodeUnknownSync(
-      PolicyManagement.PublishPolicyResponse,
-    )({
-      policy: Schema.encodeSync(PolicyManagement.PublicPolicy)(publishedPolicy),
-      published: {
-        id: "version-new",
-        policyId: publishedPolicy.id,
-        revision: 5,
-        program,
-        contentHash: "hash",
-        registryManifest: ["pull_request.title"],
-        triggerManifest: ["pull_request"],
-        publicationStatus: "published",
-        createdAt: timestamp,
-      },
-      impact: { facts: ["pull_request.title"], triggers: ["pull_request"] },
-    })
-    const [published] = AutoLabeling.update(
-      publishing,
-      AutoLabeling.CompletedPublishPolicy({ requestId: 2, repository, result }),
-    )
-    expect(published.publishing._tag).toBe("PublishClosed")
-    expect(published.publishDialog.isOpen).toBe(false)
-    expect(published.statusMessage).toContain("Facts: pull_request.title")
-    expect(published.statusMessage).toContain("Triggers: pull_request")
   })
 
   it("rejects stale candidate responses after close/reopen", () => {
@@ -627,7 +587,7 @@ describe("policy detail, validation, publication, and testing", () => {
     expect(unchanged).toEqual(second)
   })
 
-  it("tests the draft and stores Match plus node trace without writes", () => {
+  it("tests the current policy and stores Match plus node trace without writes", () => {
     const [loading] = AutoLabeling.update(
       loadedModel(),
       AutoLabeling.OpenedPolicyTest({ policyId: publishedPolicy.id }),
@@ -718,7 +678,7 @@ describe("policy detail, validation, publication, and testing", () => {
 })
 
 describe("label rule variants and request safety", () => {
-  it("opens an ungated AI rule when no policy is published", () => {
+  it("opens a policy rule when any policy is available", () => {
     const [loading] = AutoLabeling.update(
       AutoLabeling.init(),
       AutoLabeling.SelectedRepositoryChanged({ repository }),
@@ -738,15 +698,14 @@ describe("label rule variants and request safety", () => {
     expect(editing.ruleEditor).toMatchObject({
       _tag: "RuleEditorEditing",
       draft: {
-        _tag: "AiLabelingRule",
-        gatePolicyId: null,
-        evaluator: "boolean-policy-v1",
+        _tag: "PolicyLabelingRule",
+        policyId: draftPolicy.id,
       },
     })
     expect(commands.some((command) => command.name === "ShowDialog")).toBe(true)
   })
 
-  it("creates a rule bound to a published PolicyId with generic behavior", () => {
+  it("creates a rule bound to a PolicyId with generic behavior", () => {
     const [editing] = AutoLabeling.update(
       loadedModel(),
       AutoLabeling.OpenedNewRule(),
@@ -771,7 +730,7 @@ describe("label rule variants and request safety", () => {
       identity: { _tag: "NewRule" },
       draft: {
         _tag: "PolicyLabelingRule",
-        policyId: publishedPolicy.id,
+        policyId: draftPolicy.id,
         onNoMatch: "ensure-absent",
         conflictGroup: "area",
         priority: 20,
@@ -835,12 +794,12 @@ describe("label rule variants and request safety", () => {
     })
   })
 
-  it("blocks enabling an unpublished policy binding", () => {
+  it("allows enabling a rule for any policy", () => {
     const unpublishedRule = {
       ...rule,
       enabled: false,
       policyId: draftPolicy.id,
-      policy: { id: draftPolicy.id, name: draftPolicy.name, published: false },
+      policy: { id: draftPolicy.id, name: draftPolicy.name },
     }
     const [loading] = AutoLabeling.update(
       AutoLabeling.init(),
@@ -853,12 +812,15 @@ describe("label rule variants and request safety", () => {
         rules: [unpublishedRule],
       }),
     )
-    const [unchanged, commands] = AutoLabeling.update(
+    const [saving, commands] = AutoLabeling.update(
       model,
       AutoLabeling.ToggledRule({ ruleId: rule.id }),
     )
-    expect(unchanged).toEqual(model)
-    expect(commands).toEqual([])
+    expect(saving.rowMutation).toMatchObject({
+      _tag: "RowMutationSaving",
+      enabled: true,
+    })
+    expect(commands[0]?.name).toBe("ToggleRule")
   })
 
   it("preserves rule conflict drafts and retries current versions", () => {
@@ -982,7 +944,7 @@ describe("label rule variants and request safety", () => {
     )
     expect(changed.policyEditor._tag).toBe("PolicyEditorClosed")
     expect(changed.policyEditorDialog.isOpen).toBe(false)
-    expect(changed.publishDialog.isOpen).toBe(false)
+    expect(changed.policyDeleteDialog.isOpen).toBe(false)
     expect(changed.ruleEditorDialog.isOpen).toBe(false)
     expect(changed.ruleDeleteDialog.isOpen).toBe(false)
     expect(changed.testDialog.isOpen).toBe(false)
@@ -1007,48 +969,61 @@ describe("final policy UI lifecycle and boundary safety", () => {
     )
     expect(saved.policyEditor._tag).toBe("PolicyEditorClosed")
     expect(saved.policyEditorDialog.isOpen).toBe(false)
-    expect(saved.statusMessage).toContain("Saved policy draft")
+    expect(saved.statusMessage).toBeNull()
+    expect(saved.toast.entries[0]?.payload.message).toBe(
+      "Created policy Secondary policy.",
+    )
     expect(commands.map((command) => command.name)).toContain(
       "LoadRepositoryData",
     )
   })
 
-  it("closes publish, rule save, and rule delete Dialog.Models on success", () => {
-    const [confirmingPublish] = AutoLabeling.update(
+  it("shows update and delete policy toasts", () => {
+    const [loading] = AutoLabeling.update(
       loadedModel(),
-      AutoLabeling.OpenedPublishPolicy({ policyId: publishedPolicy.id }),
+      AutoLabeling.OpenedPolicyEditor({ policyId: publishedPolicy.id }),
     )
-    const [publishing] = AutoLabeling.update(
-      confirmingPublish,
-      AutoLabeling.ConfirmedPublishPolicy(),
+    const [editing] = AutoLabeling.update(
+      loading,
+      AutoLabeling.LoadedPolicyDetail({ requestId: 2, repository, detail }),
     )
-    const publishResult = Schema.decodeUnknownSync(
-      PolicyManagement.PublishPolicyResponse,
-    )({
-      policy: Schema.encodeSync(PolicyManagement.PublicPolicy)(publishedPolicy),
-      published: {
-        id: "version-success",
-        policyId: publishedPolicy.id,
-        revision: 8,
-        program,
-        contentHash: "hash",
-        registryManifest: [],
-        triggerManifest: [],
-        publicationStatus: "published",
-        createdAt: timestamp,
-      },
-      impact: { facts: [], triggers: [] },
-    })
-    const [published] = AutoLabeling.update(
-      publishing,
-      AutoLabeling.CompletedPublishPolicy({
-        requestId: 2,
+    const [saving] = AutoLabeling.update(editing, AutoLabeling.SavedPolicy())
+    const [saved] = AutoLabeling.update(
+      saving,
+      AutoLabeling.CompletedSavePolicy({
+        requestId: 3,
         repository,
-        result: publishResult,
+        policy: publishedPolicy,
       }),
     )
-    expect(published.publishDialog.isOpen).toBe(false)
+    expect(saved.toast.entries[0]?.payload.message).toBe(
+      "Updated policy Current policy.",
+    )
 
+    const [confirming] = AutoLabeling.update(
+      loadedModel(),
+      AutoLabeling.OpenedDeletePolicy({ policyId: publishedPolicy.id }),
+    )
+    const [deleting, commands] = AutoLabeling.update(
+      confirming,
+      AutoLabeling.ConfirmedDeletePolicy(),
+    )
+    expect(commands[0]?.name).toBe("DeletePolicy")
+    const [deleted] = AutoLabeling.update(
+      deleting,
+      AutoLabeling.CompletedDeletePolicy({
+        requestId: 2,
+        repository,
+        policyId: publishedPolicy.id,
+      }),
+    )
+    expect(deleted.policyDeleteDialog.isOpen).toBe(false)
+    expect(deleted.toast.entries[0]?.payload.message).toBe(
+      "Deleted policy Current policy.",
+    )
+  })
+
+  it("closes rule save and rule delete Dialog.Models on success", () => {
     const [editingRule] = AutoLabeling.update(
       loadedModel(),
       AutoLabeling.OpenedRuleEditor({ ruleId: rule.id }),
@@ -1115,19 +1090,7 @@ describe("final policy UI lifecycle and boundary safety", () => {
     ).toEqual(saving)
   })
 
-  it("rejects closure while publish, rule save, delete, and test commands run", () => {
-    const [publishConfirming] = AutoLabeling.update(
-      loadedModel(),
-      AutoLabeling.OpenedPublishPolicy({ policyId: publishedPolicy.id }),
-    )
-    const [publishing] = AutoLabeling.update(
-      publishConfirming,
-      AutoLabeling.ConfirmedPublishPolicy(),
-    )
-    expect(
-      AutoLabeling.update(publishing, AutoLabeling.DismissedPublishPolicy())[0],
-    ).toEqual(publishing)
-
+  it("rejects closure while rule save, delete, and test commands run", () => {
     const [ruleEditing] = AutoLabeling.update(
       loadedModel(),
       AutoLabeling.OpenedRuleEditor({ ruleId: rule.id }),
@@ -1189,7 +1152,7 @@ describe("final policy UI lifecycle and boundary safety", () => {
     ).toEqual(running)
   })
 
-  it("disables validation for dirty local drafts and validates saved drafts only", () => {
+  it("disables validation for local changes and validates saved policies only", () => {
     const clean = editingDetailModel()
     const [validating, commands] = AutoLabeling.update(
       clean,

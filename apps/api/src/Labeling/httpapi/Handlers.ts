@@ -58,7 +58,6 @@ export const toPublicRule = (
       policy: {
         id: policy.id,
         name: policy.name,
-        published: policy.publishedVersionId !== null,
       },
     }).pipe(Effect.orDie)
   }
@@ -76,7 +75,6 @@ export const toPublicRule = (
         : {
             id: policy.id,
             name: policy.name,
-            published: policy.publishedVersionId !== null,
           },
   }).pipe(Effect.orDie)
 }

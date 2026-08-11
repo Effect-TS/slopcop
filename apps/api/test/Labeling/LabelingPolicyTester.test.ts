@@ -34,6 +34,7 @@ const repository = new GitHubRepository.GitHubRepository({
   deletedAt: Option.none(),
 })
 const policyId = Schema.decodeUnknownSync(Policy.LabelingPolicyId)("policy")
+const versionId = Schema.decodeUnknownSync(Program.PolicyVersionId)("version")
 const draftProgram: Program.PolicyProgram = {
   target: "pull_request",
   appliesWhen: null,
@@ -49,7 +50,7 @@ const policy = new Policy.LabelingPolicy({
   repositoryId: repository.id,
   name: "Draft policy",
   target: "pull_request",
-  publishedVersionId: null,
+  publishedVersionId: versionId,
   version: 3,
   createdAt: now,
   updatedAt: now,
@@ -65,6 +66,18 @@ const draft = new Policy.LabelingPolicyDraft({
   updatedAt: now,
   deletedAt: Option.none(),
 })
+const current = new Policy.LabelingPolicyVersion({
+  id: versionId,
+  policyId,
+  repositoryId: repository.id,
+  revision: 1,
+  program: draftProgram,
+  contentHash: "hash",
+  registryManifest: ["pull_request.draft"],
+  triggerManifest: ["pull_request:unlabeled"],
+  publicationStatus: "published",
+  createdAt: now,
+})
 const unavailable = Effect.die("Unexpected write or service call")
 const unavailableStream = Stream.die("Unexpected stream call")
 const layer = (
@@ -76,9 +89,11 @@ const layer = (
       Layer.mergeAll(
         Layer.succeed(Policies, {
           list: () => unavailable,
-          get: () => Effect.succeed({ policy, draft }),
+          get: () =>
+            Effect.succeed({ policy, current, metadata: draft.metadata }),
           create: () => unavailable,
-          updateDraft: () => unavailable,
+          save: () => unavailable,
+          remove: () => unavailable,
           validate: () =>
             validationError === null
               ? Effect.succeed({
@@ -91,7 +106,6 @@ const layer = (
                   requiresChangedFileContent: false,
                 })
               : Effect.fail(validationError),
-          publish: () => unavailable,
           listVersions: () => unavailable,
         }),
         Layer.succeed(PoliciesRepo, {
@@ -99,17 +113,19 @@ const layer = (
           find: () => unavailable,
           findDraft: () => unavailable,
           findVersion: () => unavailable,
-          findResolvedVersion: () => Effect.succeed(Option.none()),
+          findCurrentVersion: () => Effect.succeed(Option.none()),
           findVersionByHash: () => unavailable,
           listVersions: () => unavailable,
           insertPolicy: () => unavailable,
           insertDraft: () => unavailable,
           updateDraft: () => unavailable,
           updatePolicy: () => unavailable,
+          usage: () => unavailable,
+          remove: () => unavailable,
           insertVersion: () => unavailable,
           insertDependencies: () => unavailable,
           insertTriggers: () => unavailable,
-          publish: () => unavailable,
+          setCurrentVersion: () => unavailable,
           activateVersion: () => unavailable,
           discardStagedVersions: () => unavailable,
         }),
@@ -175,7 +191,7 @@ const layer = (
     ),
   )
 describe("LabelingPolicyTester", () => {
-  it.effect("evaluates the mutable draft without writing", () =>
+  it.effect("evaluates the current saved version without writing", () =>
     Effect.gen(function* () {
       const result = yield* (yield* LabelingPolicyTester).test(
         repository,
@@ -184,7 +200,7 @@ describe("LabelingPolicyTester", () => {
       )
       expect(result).toMatchObject({
         policyId: "policy",
-        tested: { _tag: "Draft", version: 3 },
+        policyVersionId: versionId,
         decision: {
           outcome: "Match",
           trace: [

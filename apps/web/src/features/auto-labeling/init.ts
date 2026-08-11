@@ -2,7 +2,7 @@ import * as Dialog from "@foldkit/ui/dialog"
 import * as Slider from "@foldkit/ui/slider"
 import {
   PolicyEditorState,
-  PublishState,
+  PolicyDeleteState,
   RepositoryState,
   RowMutationState,
   RuleDeleteState,
@@ -23,7 +23,7 @@ export const init = (): Model => ({
   nextNodeSequence: 1,
   policyEditor: PolicyEditorState.cases.PolicyEditorClosed.make({}),
   validation: ValidationState.cases.ValidationIdle.make({}),
-  publishing: PublishState.cases.PublishClosed.make({}),
+  policyDeletion: PolicyDeleteState.cases.PolicyDeleteClosed.make({}),
   ruleEditor: RuleEditorState.cases.RuleEditorClosed.make({}),
   ruleDeletion: RuleDeleteState.cases.RuleDeleteClosed.make({}),
   test: TestState.cases.TestClosed.make({}),
@@ -37,7 +37,7 @@ export const init = (): Model => ({
   }),
   toast: Toast.init({ id: "auto-labeling-toast" }),
   policyEditorDialog: Dialog.init({ id: "policy-editor" }),
-  publishDialog: Dialog.init({ id: "publish-policy" }),
+  policyDeleteDialog: Dialog.init({ id: "delete-policy" }),
   ruleEditorDialog: Dialog.init({ id: "rule-editor" }),
   ruleDeleteDialog: Dialog.init({ id: "delete-rule" }),
   testDialog: Dialog.init({ id: "policy-test" }),

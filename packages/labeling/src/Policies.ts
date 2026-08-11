@@ -22,12 +22,19 @@ export class PolicyConflict extends Data.TaggedError("PolicyConflict")<{
   readonly repository: string
   readonly policyId: string
   readonly currentPolicy: Policy.LabelingPolicy
-  readonly currentDraftVersion: number
+  readonly currentVersion: number
+}> {}
+export class PolicyInUse extends Data.TaggedError("PolicyInUse")<{
+  readonly repository: string
+  readonly policyId: string
+  readonly rules: number
+  readonly policies: number
 }> {}
 export type PoliciesError =
   | RepositoryNotConfigured
   | PolicyNotFound
   | PolicyConflict
+  | PolicyInUse
   | PolicyCompileError
   | import("./repositories/PoliciesRepo.ts").PoliciesRepoError
   | import("@slopcop/github/repositories/GitHubRepositoriesRepo").GitHubRepositoriesRepoError
@@ -60,7 +67,8 @@ export class Policies extends Context.Service<
     ) => Effect.Effect<
       {
         readonly policy: Policy.LabelingPolicy
-        readonly draft: Policy.LabelingPolicyDraft
+        readonly current: Policy.LabelingPolicyVersion
+        readonly metadata: Policy.PolicyDraftMetadata
       },
       PoliciesError
     >
@@ -73,7 +81,7 @@ export class Policies extends Context.Service<
         readonly metadata: Policy.PolicyDraftMetadata
       },
     ) => Effect.Effect<Policy.LabelingPolicy, PoliciesError>
-    readonly updateDraft: (
+    readonly save: (
       slug: Slug,
       id: Policy.LabelingPolicy["id"],
       input: {
@@ -83,22 +91,15 @@ export class Policies extends Context.Service<
         readonly version: number
       },
     ) => Effect.Effect<Policy.LabelingPolicy, PoliciesError>
+    readonly remove: (
+      slug: Slug,
+      id: Policy.LabelingPolicy["id"],
+      version: number,
+    ) => Effect.Effect<void, PoliciesError>
     readonly validate: (
       slug: Slug,
       id: Policy.LabelingPolicy["id"],
     ) => Effect.Effect<CompiledPolicyProgram, PoliciesError>
-    readonly publish: (
-      slug: Slug,
-      id: Policy.LabelingPolicy["id"],
-      version: number,
-    ) => Effect.Effect<
-      {
-        readonly policy: Policy.LabelingPolicy
-        readonly published: Policy.LabelingPolicyVersion
-        readonly compiled: CompiledPolicyProgram
-      },
-      PoliciesError
-    >
     readonly listVersions: (
       slug: Slug,
       id: Policy.LabelingPolicy["id"],
@@ -145,8 +146,8 @@ export class Policies extends Context.Service<
       return found.value
     })
     const resolver = {
-      resolve: (id: Program.PolicyVersionId) =>
-        rows.findResolvedVersion(id).pipe(
+      resolve: (id: Program.PolicyId) =>
+        rows.findCurrentVersion(id).pipe(
           Effect.map(
             Option.match({
               onNone: () => null,
@@ -161,14 +162,54 @@ export class Policies extends Context.Service<
           ),
         ),
     }
-    const validateDraft = Effect.fn("Policies.validateDraft")(function* (
+    const validateProgram = Effect.fn("Policies.validateProgram")(function* (
       repository: GitHubRepository.GitHubRepository,
-      draft: Policy.LabelingPolicyDraft,
+      policyId: Policy.LabelingPolicy["id"],
+      program: Program.PolicyProgram,
     ) {
-      return yield* compilePolicyProgram(draft.program, resolver, {
+      return yield* compilePolicyProgram(program, resolver, {
         repositoryId: repository.id,
-        policyId: draft.policyId,
+        policyId,
       })
+    })
+    const activate = Effect.fn("Policies.activate")(function* (
+      repository: GitHubRepository.GitHubRepository,
+      policy: Policy.LabelingPolicy,
+      program: Program.PolicyProgram,
+      compiled: CompiledPolicyProgram,
+    ) {
+      const contentHash = yield* sha256(JSON.stringify(program))
+      const existing = yield* rows.findVersionByHash(policy.id, contentHash)
+      let version: Policy.LabelingPolicyVersion
+      if (Option.isSome(existing)) version = existing.value
+      else {
+        const previous = yield* rows.listVersions(policy.id)
+        yield* rows.discardStagedVersions(policy.id)
+        const staged = yield* rows.insertVersion(
+          Policy.LabelingPolicyVersion.insert.make({
+            policyId: policy.id,
+            repositoryId: repository.id,
+            revision: (previous[0]?.revision ?? 0) + 1,
+            program,
+            contentHash,
+            registryManifest: compiled.requiresChangedFileContent
+              ? [...compiled.facts, "pull_request.changed_files.content"]
+              : compiled.facts,
+            triggerManifest: compiled.triggers,
+            publicationStatus: "staged",
+          }),
+        )
+        yield* rows.insertDependencies(
+          staged.id,
+          repository.id,
+          compiled.references,
+        )
+        yield* rows.insertTriggers(staged.id, repository.id, compiled.triggers)
+        version = yield* rows.activateVersion(staged.id, repository.id)
+      }
+      if (policy.publishedVersionId !== version.id)
+        yield* rows.setCurrentVersion(policy.id, policy.version, version.id)
+      return version
     })
     const list = Effect.fn("Policies.list")(function* (slug: Slug) {
       const repository = yield* requireRepository(slug)
@@ -183,10 +224,20 @@ export class Policies extends Context.Service<
       id: Policy.LabelingPolicy["id"],
     ) {
       const repository = yield* requireRepository(slug)
-      return {
-        policy: yield* requirePolicy(repository, id),
-        draft: yield* requireDraft(id),
-      }
+      const policy = yield* requirePolicy(repository, id)
+      const content = yield* requireDraft(id)
+      if (policy.publishedVersionId === null)
+        return yield* new PolicyNotFound({
+          repository: repository.slug,
+          policyId: id,
+        })
+      const current = yield* rows.findVersion(policy.publishedVersionId)
+      if (Option.isNone(current))
+        return yield* new PolicyNotFound({
+          repository: repository.slug,
+          policyId: id,
+        })
+      return { policy, current: current.value, metadata: content.metadata }
     })
     const create = Effect.fn("Policies.create")(function* (
       slug: Slug,
@@ -208,6 +259,9 @@ export class Policies extends Context.Service<
           message: "Policy target and program target must match.",
         })
       const repository = yield* requireRepository(slug)
+      const compiled = yield* compilePolicyProgram(input.program, resolver, {
+        repositoryId: repository.id,
+      })
       const stored = yield* rows.insertPolicy(
         Policy.LabelingPolicy.insert.make({
           repositoryId: repository.id,
@@ -226,9 +280,10 @@ export class Policies extends Context.Service<
           version: 1,
         }),
       )
-      return stored
+      yield* activate(repository, stored, input.program, compiled)
+      return yield* requirePolicy(repository, stored.id)
     })
-    const updateDraft = Effect.fn("Policies.updateDraft")(function* (
+    const save = Effect.fn("Policies.save")(function* (
       slug: Slug,
       id: Policy.LabelingPolicy["id"],
       input: {
@@ -246,17 +301,19 @@ export class Policies extends Context.Service<
           repository: repository.slug,
           policyId: id,
           currentPolicy: policy,
-          currentDraftVersion: draft.version,
+          currentVersion: draft.version,
         })
       if (input.program?.target === "issue")
         return yield* new PolicyCompileError({
           reason: "UnsupportedTarget",
           message: "Issue policies are not supported yet.",
         })
+      const program = input.program ?? draft.program
+      const compiled = yield* validateProgram(repository, id, program)
       yield* rows.updateDraft(
         id,
         draft.version,
-        input.program ?? draft.program,
+        program,
         input.metadata ?? draft.metadata,
       )
       const updated = yield* rows.updatePolicy(
@@ -264,17 +321,18 @@ export class Policies extends Context.Service<
         input.version,
         input.name ?? policy.name,
       )
-      return updated
+      yield* activate(repository, updated, program, compiled)
+      return yield* requirePolicy(repository, id)
     })
     const validate = Effect.fn("Policies.validate")(function* (
       slug: Slug,
       id: Policy.LabelingPolicy["id"],
     ) {
       const repository = yield* requireRepository(slug)
-      yield* requirePolicy(repository, id)
-      return yield* validateDraft(repository, yield* requireDraft(id))
+      const { current } = yield* get(slug, id)
+      return yield* validateProgram(repository, id, current.program)
     })
-    const publish = Effect.fn("Policies.publish")(function* (
+    const remove = Effect.fn("Policies.remove")(function* (
       slug: Slug,
       id: Policy.LabelingPolicy["id"],
       version: number,
@@ -282,71 +340,22 @@ export class Policies extends Context.Service<
       const repository = yield* requireRepository(slug)
       const policy = yield* requirePolicy(repository, id)
       const draft = yield* requireDraft(id)
-      if (draft.version !== version)
+      if (policy.version !== version || draft.version !== version)
         return yield* new PolicyConflict({
           repository: repository.slug,
           policyId: id,
           currentPolicy: policy,
-          currentDraftVersion: draft.version,
+          currentVersion: policy.version,
         })
-      const compiled = yield* validateDraft(repository, draft)
-      const previous = yield* rows.listVersions(id)
-      const contentHash = yield* sha256(JSON.stringify(draft.program))
-      const existing = yield* rows.findVersionByHash(id, contentHash)
-      if (
-        Option.isSome(existing) &&
-        existing.value.publicationStatus === "published" &&
-        policy.publishedVersionId === existing.value.id
-      )
-        return { policy, published: existing.value, compiled }
-      let staged: Policy.LabelingPolicyVersion
-      if (Option.isSome(existing)) staged = existing.value
-      else {
-        yield* rows.discardStagedVersions(id)
-        staged = yield* rows.insertVersion(
-          Policy.LabelingPolicyVersion.insert.make({
-            policyId: id,
-            repositoryId: repository.id,
-            revision: (previous[0]?.revision ?? 0) + 1,
-            program: draft.program,
-            contentHash,
-            registryManifest: compiled.requiresChangedFileContent
-              ? [...compiled.facts, "pull_request.changed_files.content"]
-              : compiled.facts,
-            triggerManifest: compiled.triggers,
-            publicationStatus: "staged",
-          }),
-        )
-      }
-      let published: Policy.LabelingPolicyVersion
-      if (staged.publicationStatus === "published") published = staged
-      else {
-        yield* rows.insertDependencies(
-          staged.id,
-          repository.id,
-          compiled.references,
-        )
-        yield* rows.insertTriggers(staged.id, repository.id, compiled.triggers)
-        published = yield* rows.activateVersion(staged.id, repository.id)
-      }
-      const currentPolicy = yield* requirePolicy(repository, id)
-      const currentDraft = yield* requireDraft(id)
-      if (
-        currentDraft.version !== currentPolicy.version ||
-        currentDraft.version !== version
-      )
-        return yield* new PolicyConflict({
+      const usage = yield* rows.usage(repository.id, id)
+      if (usage.rules > 0 || usage.policies > 0)
+        return yield* new PolicyInUse({
           repository: repository.slug,
           policyId: id,
-          currentPolicy,
-          currentDraftVersion: currentDraft.version,
+          rules: usage.rules,
+          policies: usage.policies,
         })
-      const updated = yield* rows.publish(
-        id,
-        currentPolicy.version,
-        published.id,
-      )
-      return { policy: updated, published, compiled }
+      yield* rows.remove(repository.id, id, version)
     })
     const listVersions = Effect.fn("Policies.listVersions")(function* (
       slug: Slug,
@@ -355,7 +364,7 @@ export class Policies extends Context.Service<
       yield* requirePolicy(yield* requireRepository(slug), id)
       return yield* rows.listVersions(id)
     })
-    return { list, get, create, updateDraft, validate, publish, listVersions }
+    return { list, get, create, save, remove, validate, listVersions }
   }),
 }) {
   static readonly layerNoDeps = Layer.effect(this, this.make)

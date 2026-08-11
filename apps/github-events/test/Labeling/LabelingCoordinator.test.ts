@@ -263,7 +263,7 @@ const layer = (
                   version(program),
               ),
             ),
-          findResolvedVersion: () =>
+          findCurrentVersion: () =>
             Effect.succeed(
               Option.some({
                 id: versionId,
@@ -285,10 +285,12 @@ const layer = (
           insertDraft: () => unavailable,
           updateDraft: () => unavailable,
           updatePolicy: () => unavailable,
+          usage: () => unavailable,
+          remove: () => unavailable,
           insertVersion: () => unavailable,
           insertDependencies: () => unavailable,
           insertTriggers: () => unavailable,
-          publish: () => unavailable,
+          setCurrentVersion: () => unavailable,
           activateVersion: () => unavailable,
           discardStagedVersions: () => unavailable,
         }),

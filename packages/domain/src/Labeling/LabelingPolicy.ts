@@ -4,13 +4,12 @@ import { GitHubRepositoryId } from "../GitHub/GitHubRepository.ts"
 import { lifecycleTimestamps } from "../Shared/Timestamps.ts"
 import {
   PolicyProgram,
+  PolicyId,
   PolicyTarget,
   PolicyVersionId,
 } from "../Policy/PolicyProgram.ts"
 
-export const LabelingPolicyId = Schema.String.pipe(
-  Schema.brand("LabelingPolicyId"),
-)
+export const LabelingPolicyId = PolicyId
 export const LabelingPolicyName = Schema.String.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(100),
@@ -62,8 +61,8 @@ export class LabelingPolicyVersion extends Model.Class<LabelingPolicyVersion>(
   createdAt: Model.DateTimeInsertFromNumber,
 }) {}
 
-export const PublishedLabelingPolicy = Schema.Struct({
+export const CurrentLabelingPolicy = Schema.Struct({
   policy: LabelingPolicy,
   version: LabelingPolicyVersion,
 })
-export type PublishedLabelingPolicy = typeof PublishedLabelingPolicy.Type
+export type CurrentLabelingPolicy = typeof CurrentLabelingPolicy.Type

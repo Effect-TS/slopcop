@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect"
 import * as Schema from "effect/Schema"
+import * as SchemaGetter from "effect/SchemaGetter"
 
 export const PolicyTarget = Schema.Literals(["pull_request", "issue"])
 export type PolicyTarget = typeof PolicyTarget.Type
@@ -8,6 +9,9 @@ export const ExecutablePolicyTarget = Schema.Literal("pull_request")
 export const PolicyVersionId = Schema.String.pipe(
   Schema.brand("PolicyVersionId"),
 )
+export const PolicyId = Schema.String.pipe(Schema.brand("PolicyId"))
+export type PolicyId = typeof PolicyId.Type
+const decodePolicyId = Schema.decodeUnknownSync(PolicyId)
 export type PolicyVersionId = typeof PolicyVersionId.Type
 
 export const PullRequestScalarFact = Schema.Literals([
@@ -281,9 +285,36 @@ export type Condition =
     }
   | {
       readonly _tag: "PolicyReference"
-      readonly policyVersionId: PolicyVersionId
+      readonly policyId: PolicyId
     }
 
+const PolicyReference = Schema.Struct({
+  _tag: Schema.Literal("PolicyReference"),
+  policyId: PolicyId,
+})
+const LegacyPolicyReference = Schema.Struct({
+  _tag: Schema.Literal("PolicyReference"),
+  policyVersionId: PolicyId,
+})
+const PolicyReferenceFromJson = Schema.Union([
+  PolicyReference,
+  LegacyPolicyReference,
+]).pipe(
+  Schema.decodeTo(PolicyReference, {
+    decode: SchemaGetter.transform((reference) =>
+      "policyId" in reference
+        ? reference
+        : {
+            _tag: reference._tag,
+            policyId: reference.policyVersionId,
+          },
+    ),
+    encode: SchemaGetter.transform(({ _tag, policyId }) => ({
+      _tag,
+      policyId: decodePolicyId(policyId),
+    })),
+  }),
+)
 export const Condition: Schema.Codec<Condition, unknown> = Schema.suspend(() =>
   Schema.Union([
     Schema.Struct({
@@ -315,10 +346,7 @@ export const Condition: Schema.Codec<Condition, unknown> = Schema.suspend(() =>
       quantifier: Schema.Literals(["Any", "All", "None"]),
       item: ReviewItemPredicate,
     }),
-    Schema.Struct({
-      _tag: Schema.Literal("PolicyReference"),
-      policyVersionId: PolicyVersionId,
-    }),
+    PolicyReferenceFromJson,
   ]),
 )
 
@@ -350,7 +378,7 @@ export const PolicyNodeLocationSegment = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Not") }),
   Schema.Struct({
     _tag: Schema.Literal("PolicyReference"),
-    policyVersionId: PolicyVersionId,
+    policyId: PolicyId,
     root: PolicyNodeRoot,
   }),
 ])
@@ -380,11 +408,11 @@ export const policyNodeLocationNot = (
 })
 export const policyNodeLocationReference = (
   location: PolicyNodeLocation,
-  policyVersionId: PolicyVersionId,
+  policyId: PolicyId,
   root: PolicyNodeRoot,
 ): PolicyNodeLocation => ({
   ...location,
-  path: [...location.path, { _tag: "PolicyReference", policyVersionId, root }],
+  path: [...location.path, { _tag: "PolicyReference", policyId, root }],
 })
 export const policyNodeLocationKey = (location: PolicyNodeLocation): string =>
   JSON.stringify([
@@ -397,7 +425,7 @@ export const policyNodeLocationKey = (location: PolicyNodeLocation): string =>
         case "Not":
           return [segment._tag]
         case "PolicyReference":
-          return [segment._tag, segment.policyVersionId, segment.root]
+          return [segment._tag, segment.policyId, segment.root]
       }
     }),
   ])
@@ -414,7 +442,7 @@ export const formatPolicyNodeLocation = (
         case "Not":
           return "Not condition"
         case "PolicyReference":
-          return `policy version '${segment.policyVersionId}' ${segment.root}`
+          return `policy '${segment.policyId}' ${segment.root}`
       }
     }),
   ].join(" > ")

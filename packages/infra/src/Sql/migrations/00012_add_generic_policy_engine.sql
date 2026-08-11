@@ -143,14 +143,14 @@ SELECT "policy_id","repository_id","program",'{}',1,"created_at","created_at" FR
 INSERT INTO "labeling_policy_triggers" ("policy_version_id","repository_id","event","action")
 SELECT versions."id",versions."repository_id",substr(value,1,instr(value,':')-1),substr(value,instr(value,':')+1)
 FROM "labeling_policy_versions" AS versions,json_each(versions."trigger_manifest");
-CREATE TRIGGER "labeling_policy_pointer_requires_published"
+CREATE TRIGGER "labeling_policy_current_pointer_valid"
 BEFORE UPDATE OF "published_version_id" ON "labeling_policies"
-WHEN NEW."published_version_id" IS NOT NULL AND NOT EXISTS (
+WHEN NEW."published_version_id" IS NULL OR NOT EXISTS (
   SELECT 1 FROM "labeling_policy_versions"
   WHERE "id"=NEW."published_version_id" AND "policy_id"=NEW."id"
     AND "repository_id"=NEW."repository_id" AND "publication_status"='published'
 )
-BEGIN SELECT RAISE(ABORT,'policy pointer requires a published version'); END;
+BEGIN SELECT RAISE(ABORT,'policy current version is invalid'); END;
 CREATE TRIGGER "labeling_policy_versions_immutable"
 BEFORE UPDATE ON "labeling_policy_versions"
 WHEN NOT (
@@ -167,38 +167,38 @@ BEFORE DELETE ON "labeling_policy_versions"
 WHEN OLD."publication_status"='published'
   AND EXISTS (SELECT 1 FROM "labeling_policies" WHERE "id"=OLD."policy_id")
 BEGIN SELECT RAISE(ABORT,'published labeling policy versions cannot be deleted'); END;
-CREATE TRIGGER "labeling_policy_publish_requires_coherent_draft"
-BEFORE UPDATE OF "published_version_id" ON "labeling_policies"
-WHEN NEW."published_version_id" IS NOT OLD."published_version_id" AND NOT EXISTS (
-  SELECT 1 FROM "labeling_policy_drafts"
-  WHERE "policy_id"=OLD."id" AND "version"=OLD."version" AND "deleted_at" IS NULL
-)
-BEGIN SELECT RAISE(ABORT,'policy draft version conflict'); END;
-CREATE TRIGGER "labeling_policy_publish_state"
+CREATE TRIGGER "labeling_policy_current_changed"
 AFTER UPDATE OF "published_version_id" ON "labeling_policies"
 WHEN NEW."published_version_id" IS NOT OLD."published_version_id"
 BEGIN
-  UPDATE "labeling_policy_drafts" SET "version"="version"+1,"updated_at"=unixepoch()*1000
-  WHERE "policy_id"=NEW."id" AND "version"=OLD."version" AND "deleted_at" IS NULL;
   UPDATE "github_repositories" SET "rules_revision"="rules_revision"+1,"updated_at"=unixepoch()*1000
   WHERE "id"=NEW."repository_id";
 END;
-CREATE TRIGGER "labeling_policy_dependencies_published_insert"
+CREATE TRIGGER "labeling_policy_deleted"
+AFTER UPDATE OF "deleted_at" ON "labeling_policies"
+WHEN OLD."deleted_at" IS NULL AND NEW."deleted_at" IS NOT NULL
+BEGIN
+  UPDATE "labeling_policy_drafts" SET "deleted_at"=NEW."deleted_at",
+    "updated_at"=unixepoch()*1000 WHERE "policy_id"=NEW."id";
+  UPDATE "github_repositories" SET "rules_revision"="rules_revision"+1,
+    "updated_at"=unixepoch()*1000 WHERE "id"=NEW."repository_id";
+END;
+CREATE TRIGGER "labeling_policy_dependencies_current_insert"
 BEFORE INSERT ON "labeling_policy_dependencies"
 WHEN EXISTS (SELECT 1 FROM "labeling_policy_versions" WHERE "id"=NEW."policy_version_id" AND "publication_status"='published')
-BEGIN SELECT RAISE(ABORT,'published policy dependencies are immutable'); END;
-CREATE TRIGGER "labeling_policy_dependencies_published_delete"
+BEGIN SELECT RAISE(ABORT,'current policy dependencies are immutable'); END;
+CREATE TRIGGER "labeling_policy_dependencies_current_delete"
 BEFORE DELETE ON "labeling_policy_dependencies"
 WHEN EXISTS (SELECT 1 FROM "labeling_policy_versions" WHERE "id"=OLD."policy_version_id" AND "publication_status"='published')
-BEGIN SELECT RAISE(ABORT,'published policy dependencies are immutable'); END;
-CREATE TRIGGER "labeling_policy_triggers_published_insert"
+BEGIN SELECT RAISE(ABORT,'current policy dependencies are immutable'); END;
+CREATE TRIGGER "labeling_policy_triggers_current_insert"
 BEFORE INSERT ON "labeling_policy_triggers"
 WHEN EXISTS (SELECT 1 FROM "labeling_policy_versions" WHERE "id"=NEW."policy_version_id" AND "publication_status"='published')
-BEGIN SELECT RAISE(ABORT,'published policy triggers are immutable'); END;
-CREATE TRIGGER "labeling_policy_triggers_published_delete"
+BEGIN SELECT RAISE(ABORT,'current policy triggers are immutable'); END;
+CREATE TRIGGER "labeling_policy_triggers_current_delete"
 BEFORE DELETE ON "labeling_policy_triggers"
 WHEN EXISTS (SELECT 1 FROM "labeling_policy_versions" WHERE "id"=OLD."policy_version_id" AND "publication_status"='published')
-BEGIN SELECT RAISE(ABORT,'published policy triggers are immutable'); END;
+BEGIN SELECT RAISE(ABORT,'current policy triggers are immutable'); END;
 
 CREATE TABLE "labeling_rules_new" (
   "id" TEXT NOT NULL,

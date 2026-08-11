@@ -264,9 +264,9 @@ const nodeSnippets = (item: boolean): Completion[] =>
           type: "snippet",
         }),
         snippetCompletion('"policy": "${1}"', {
-          label: "Include published policy",
+          label: "Include policy",
           type: "snippet",
-          detail: "Pin another policy's published version",
+          detail: "Reuse another policy",
         }),
       ]
 
@@ -300,7 +300,7 @@ const propertyCompletions = (
     ]
   }
   if (hasProperty(state, object, "policy"))
-    return [property("policy", "Included published policy")]
+    return [property("policy", "Included policy")]
   if (hasProperty(state, object, "fact"))
     return collectionFacts.some(
       (fact) => fact === propertyValue(state, object, "fact"),
@@ -320,7 +320,7 @@ const propertyCompletions = (
     property("anyOf", "At least one condition must match"),
     property("not", "Negated condition"),
     property("fact", "Pull request fact or collection"),
-    property("policy", "Included published policy"),
+    property("policy", "Included policy"),
   ]
 }
 
@@ -379,7 +379,7 @@ const valueCompletions = (
         label: reference.name,
         displayLabel: reference.name,
         apply: replaceJsonString(reference.name),
-        detail: reference.policyVersionId,
+        detail: reference.policyId,
         type: "reference",
       }))
     default:

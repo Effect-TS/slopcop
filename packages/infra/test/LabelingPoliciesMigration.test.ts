@@ -185,7 +185,7 @@ describe("00012 generic policy engine migration", () => {
       database.exec(
         "UPDATE labeling_policies SET published_version_id='publish-version',version=version+1 WHERE id='publish-policy'",
       ),
-    ).toThrow("policy pointer requires a published version")
+    ).toThrow("policy current version is invalid")
     expect(
       database
         .prepare(
@@ -212,7 +212,7 @@ describe("00012 generic policy engine migration", () => {
         .get(),
     ).toEqual({
       policy_version: 2,
-      draft_version: 2,
+      draft_version: 1,
       rules_revision: beforeRevision + 1,
     })
     expect(() =>
@@ -220,12 +220,26 @@ describe("00012 generic policy engine migration", () => {
         INSERT INTO labeling_policy_triggers (policy_version_id,repository_id,event,action)
         VALUES ('publish-version','${repositoryId}','status','*');
       `),
-    ).toThrow("published policy triggers are immutable")
+    ).toThrow("current policy triggers are immutable")
     expect(() =>
       database.exec(
         "DELETE FROM labeling_policy_triggers WHERE policy_version_id='publish-version'",
       ),
-    ).toThrow("published policy triggers are immutable")
+    ).toThrow("current policy triggers are immutable")
+    database.exec(
+      "UPDATE labeling_policies SET deleted_at=1000 WHERE id='publish-policy'",
+    )
+    expect(
+      database
+        .prepare(
+          `SELECT draft.deleted_at,repository.rules_revision
+           FROM labeling_policy_drafts AS draft
+           INNER JOIN github_repositories AS repository
+             ON repository.id=draft.repository_id
+           WHERE draft.policy_id='publish-policy'`,
+        )
+        .get(),
+    ).toEqual({ deleted_at: 1000, rules_revision: beforeRevision + 2 })
     database.close()
   })
 

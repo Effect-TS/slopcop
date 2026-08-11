@@ -2,6 +2,7 @@ import { RootApi } from "@slopcop/api/RootApi"
 import {
   InvalidPolicyProgram,
   PolicyConflict as ApiPolicyConflict,
+  PolicyInUse as ApiPolicyInUse,
   PolicyNotFound as ApiPolicyNotFound,
   PolicyTestUnavailable,
   UnsupportedTarget,
@@ -20,8 +21,24 @@ import { LabelingPolicyTester } from "../LabelingPolicyTester.ts"
 import type { LabelingPolicyTestError } from "../LabelingPolicyTester.ts"
 
 const decodePolicy = Schema.decodeEffect(Schema.toType(Management.PublicPolicy))
+const policyInput = (
+  policy: Policy.LabelingPolicy,
+  currentVersionId: NonNullable<Policy.LabelingPolicy["publishedVersionId"]>,
+) => ({
+  id: policy.id,
+  name: policy.name,
+  target: policy.target,
+  currentVersionId,
+  version: policy.version,
+  createdAt: policy.createdAt,
+  updatedAt: policy.updatedAt,
+})
 const publicPolicy = (policy: Policy.LabelingPolicy) =>
-  decodePolicy(policy).pipe(Effect.orDie)
+  policy.publishedVersionId === null
+    ? Effect.die(`Policy '${policy.id}' has no current version.`)
+    : decodePolicy(policyInput(policy, policy.publishedVersionId)).pipe(
+        Effect.orDie,
+      )
 const decodeVersion = Schema.decodeEffect(
   Schema.toType(Management.PublicPolicyVersion),
 )
@@ -35,6 +52,7 @@ type PublicPolicyError =
   | ApiRepositoryNotConfigured
   | ApiPolicyNotFound
   | ApiPolicyConflict
+  | ApiPolicyInUse
   | InvalidPolicyProgram
   | UnsupportedTarget
 
@@ -65,12 +83,31 @@ const mapError = (
               repository: error.repository,
               policyId: error.policyId,
               currentPolicy,
-              currentDraftVersion: error.currentDraftVersion,
+              currentVersion: error.currentVersion,
               message: `Policy '${error.policyId}' changed after it was loaded. Refresh and retry.`,
             }),
           ),
         ),
       )
+    case "PolicyInUse": {
+      const uses = [
+        ...(error.rules === 0
+          ? []
+          : [`${error.rules} labeling rule${error.rules === 1 ? "" : "s"}`]),
+        ...(error.policies === 0
+          ? []
+          : [
+              `${error.policies} downstream polic${error.policies === 1 ? "y" : "ies"}`,
+            ]),
+      ]
+      return Effect.fail(
+        new ApiPolicyInUse({
+          repository: error.repository,
+          policyId: error.policyId,
+          message: `Policy '${error.policyId}' is still used by ${uses.join(" and ")}. Remove those references before deleting it.`,
+        }),
+      )
+    }
     case "PolicyCompileError":
       return error.reason === "UnsupportedTarget"
         ? Effect.fail(
@@ -138,18 +175,33 @@ export const LabelingPoliciesApiHandlersLayer = HttpApiBuilder.group(
       getPolicy: ({ params }) =>
         policies.get(params, params.policyId).pipe(
           Effect.catch(mapError),
-          Effect.flatMap(({ draft, policy }) =>
-            decodeDetail({ policy, draft }).pipe(Effect.orDie),
-          ),
+          Effect.flatMap(({ current, metadata, policy }) => {
+            if (policy.publishedVersionId === null)
+              return Effect.die(`Policy '${policy.id}' has no current version.`)
+            return decodeDetail({
+              policy: policyInput(policy, policy.publishedVersionId),
+              current: {
+                id: current.id,
+                program: current.program,
+                metadata,
+                version: policy.version,
+                updatedAt: policy.updatedAt,
+              },
+            }).pipe(Effect.orDie)
+          }),
         ),
       createPolicy: ({ params, payload }) =>
         policies
           .create(params, payload)
           .pipe(Effect.catch(mapError), Effect.flatMap(publicPolicy)),
-      patchPolicyDraft: ({ params, payload }) =>
+      savePolicy: ({ params, payload }) =>
         policies
-          .updateDraft(params, params.policyId, payload)
+          .save(params, params.policyId, payload)
           .pipe(Effect.catch(mapError), Effect.flatMap(publicPolicy)),
+      deletePolicy: ({ params, query }) =>
+        policies
+          .remove(params, params.policyId, query.version)
+          .pipe(Effect.catch(mapError)),
       validatePolicy: ({ params }) =>
         policies.validate(params, params.policyId).pipe(
           Effect.catch(mapError),
@@ -159,20 +211,6 @@ export const LabelingPoliciesApiHandlersLayer = HttpApiBuilder.group(
             references,
             triggers,
           })),
-        ),
-      publishPolicy: ({ params, payload }) =>
-        policies.publish(params, params.policyId, payload.version).pipe(
-          Effect.catch(mapError),
-          Effect.flatMap(({ compiled, policy, published }) =>
-            Effect.all({
-              policy: publicPolicy(policy),
-              published: publicVersion(published),
-              impact: Effect.succeed({
-                facts: compiled.facts,
-                triggers: compiled.triggers,
-              }),
-            }),
-          ),
         ),
       listPolicyVersions: ({ params }) =>
         policies.listVersions(params, params.policyId).pipe(

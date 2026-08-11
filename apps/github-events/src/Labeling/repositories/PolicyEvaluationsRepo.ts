@@ -47,6 +47,11 @@ export class PolicyEvaluationsRepo extends Context.Service<
         INSERT INTO policy_evaluations ${sql.insert(input)}
         ON CONFLICT (delivery_id,rule_id,rule_version,subject_number,subject_generation)
         DO UPDATE SET
+          policy_id=excluded.policy_id,
+          policy_version_id=excluded.policy_version_id,
+          evaluator=excluded.evaluator,
+          gate_policy_id=excluded.gate_policy_id,
+          gate_policy_version_id=excluded.gate_policy_version_id,
           outcome=excluded.outcome,
           confidence=excluded.confidence,
           rationale=excluded.rationale,

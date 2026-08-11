@@ -11,6 +11,7 @@ import {
 import {
   InvalidPolicyProgram,
   PolicyConflict,
+  PolicyInUse,
   PolicyNotFound,
   PolicyTestUnavailable,
   UnsupportedTarget,
@@ -20,6 +21,7 @@ const errors = [
   PullRequestNotFound,
   PolicyNotFound,
   PolicyConflict,
+  PolicyInUse,
   InvalidPolicyProgram,
   UnsupportedTarget,
   PolicyTestUnavailable,
@@ -42,21 +44,21 @@ export class LabelingPoliciesApi extends HttpApiGroup.make("labelingPolicies")
       success: Management.PublicPolicy.pipe(HttpApiSchema.status("Created")),
       error: errors,
     }),
-    HttpApiEndpoint.patch("patchPolicyDraft", "/policies/:policyId/draft", {
+    HttpApiEndpoint.patch("savePolicy", "/policies/:policyId", {
       params: Management.PolicyPath,
-      payload: Management.PatchPolicyDraftRequest,
+      payload: Management.SavePolicyRequest,
       success: Management.PublicPolicy,
+      error: errors,
+    }),
+    HttpApiEndpoint.delete("deletePolicy", "/policies/:policyId", {
+      params: Management.PolicyPath,
+      query: Management.DeletePolicyQuery,
+      success: HttpApiSchema.NoContent,
       error: errors,
     }),
     HttpApiEndpoint.post("validatePolicy", "/policies/:policyId/validate", {
       params: Management.PolicyPath,
       success: Management.ValidatePolicyResponse,
-      error: errors,
-    }),
-    HttpApiEndpoint.post("publishPolicy", "/policies/:policyId/publish", {
-      params: Management.PolicyPath,
-      payload: Management.PublishPolicyRequest,
-      success: Management.PublishPolicyResponse,
       error: errors,
     }),
     HttpApiEndpoint.get("listPolicyVersions", "/policies/:policyId/versions", {

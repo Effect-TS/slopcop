@@ -2,7 +2,7 @@ import * as PolicyProgram from "@slopcop/domain/Policy/PolicyProgram"
 import * as Schema from "effect/Schema"
 
 export const PolicyReference = Schema.Struct({
-  policyVersionId: PolicyProgram.PolicyVersionId,
+  policyId: PolicyProgram.PolicyId,
   name: Schema.String,
 })
 export type PolicyReference = typeof PolicyReference.Type

@@ -326,26 +326,22 @@ describe("policy editor", () => {
     const result = await policyCompletionSource([
       {
         name: "Shared policy",
-        policyVersionId: Schema.decodeUnknownSync(
-          PolicyProgram.PolicyVersionId,
-        )("version-1"),
+        policyId: Schema.decodeUnknownSync(PolicyProgram.PolicyId)("policy-1"),
       },
     ])(new CompletionContext(state, position, true))
 
     expect(result?.options).toContainEqual(
       expect.objectContaining({
         label: "Shared policy",
-        detail: "version-1",
+        detail: "policy-1",
       }),
     )
   })
 
-  it("resolves policy names to immutable published version pins", () => {
+  it("resolves policy names to stable policy identifiers", () => {
     const reference = {
       name: "Shared policy",
-      policyVersionId: Schema.decodeUnknownSync(PolicyProgram.PolicyVersionId)(
-        "version-1",
-      ),
+      policyId: Schema.decodeUnknownSync(PolicyProgram.PolicyId)("policy-1"),
     }
     const validation = PolicyEditor.validateSource(
       JSON.stringify({
@@ -360,7 +356,7 @@ describe("policy editor", () => {
       program: {
         matchesWhen: {
           _tag: "PolicyReference",
-          policyVersionId: "version-1",
+          policyId: "policy-1",
         },
       },
     })
@@ -370,7 +366,7 @@ describe("policy editor", () => {
           target: "pull_request",
           matchesWhen: {
             _tag: "PolicyReference",
-            policyVersionId: "version-1",
+            policyId: "policy-1",
           },
         }),
         [reference],
@@ -378,24 +374,22 @@ describe("policy editor", () => {
     ).toContain('"policy": "Shared policy"')
   })
 
-  it("rejects ambiguous published policy names", () => {
+  it("rejects ambiguous policy names", () => {
     const validation = PolicyEditor.validateSource(
       JSON.stringify({
         target: "pull_request",
         matchesWhen: { policy: "Shared policy" },
       }),
-      ["version-1", "version-2"].map((policyVersionId) => ({
+      ["policy-1", "policy-2"].map((policyId) => ({
         name: "Shared policy",
-        policyVersionId: Schema.decodeUnknownSync(
-          PolicyProgram.PolicyVersionId,
-        )(policyVersionId),
+        policyId: Schema.decodeUnknownSync(PolicyProgram.PolicyId)(policyId),
       })),
     )
 
     expect(validation).toMatchObject({
       _tag: "InvalidPolicy",
       message:
-        "More than one published policy is named 'Shared policy'. Rename one before including it.",
+        "More than one policy is named 'Shared policy'. Rename one before including it.",
     })
   })
 
@@ -489,7 +483,7 @@ describe("policy editor", () => {
     )
     expect(
       currentCompletions(editor.state).map((option) => option.label),
-    ).toContain("Include published policy")
+    ).toContain("Include policy")
     expect(
       currentCompletions(editor.state).map((option) => option.label),
     ).not.toContain("AI prompt node")

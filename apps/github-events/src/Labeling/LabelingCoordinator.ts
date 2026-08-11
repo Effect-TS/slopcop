@@ -18,7 +18,11 @@ import {
   type PolicyAiError,
   type PolicyAiUnavailableError,
 } from "@slopcop/labeling/PolicyAi"
-import { triggersForPullRequestFacts } from "@slopcop/labeling/PolicyCompiler"
+import {
+  compilePolicyProgram,
+  triggersForPullRequestFacts,
+  type CompiledPolicyProgram,
+} from "@slopcop/labeling/PolicyCompiler"
 import { evaluatePolicyProgram } from "@slopcop/labeling/PolicyEngine"
 import { PolicyFacts } from "@slopcop/labeling/PolicyFacts"
 import { LabelingRules } from "@slopcop/labeling/LabelingRules"
@@ -58,6 +62,7 @@ type RuntimeRule =
       readonly _tag: "Policy"
       readonly rule: Rule.PolicyLabelingRule
       readonly version: Policy.LabelingPolicyVersion
+      readonly compiled: CompiledPolicyProgram
     }
   | {
       readonly _tag: "Ai"
@@ -65,6 +70,7 @@ type RuntimeRule =
       readonly gate: {
         readonly policy: Policy.LabelingPolicy
         readonly version: Policy.LabelingPolicyVersion
+        readonly compiled: CompiledPolicyProgram
       } | null
     }
 
@@ -130,6 +136,21 @@ export const triggerMatches = (
   const wildcard = `${trigger.slice(0, separator)}:*`
   return manifest.includes(trigger) || manifest.includes(wildcard)
 }
+const policyReferences = (
+  condition: Program.Condition,
+): ReadonlyArray<Program.PolicyId> => {
+  switch (condition._tag) {
+    case "PolicyReference":
+      return [condition.policyId]
+    case "All":
+    case "Any":
+      return condition.conditions.flatMap(policyReferences)
+    case "Not":
+      return policyReferences(condition.condition)
+    default:
+      return []
+  }
+}
 const decodeDeliveryId = Schema.decodeUnknownEffect(GitHubEvent.GitHubEventId)
 
 export class LabelingCoordinator extends Context.Service<
@@ -149,23 +170,6 @@ export class LabelingCoordinator extends Context.Service<
     const ai = yield* PolicyAi
     const facts = yield* PolicyFacts
     const evaluations = yield* PolicyEvaluationsRepo
-    const resolver = {
-      resolve: (id: Program.PolicyVersionId) =>
-        policies.findResolvedVersion(id).pipe(
-          Effect.map((version) =>
-            version._tag === "Some"
-              ? {
-                  id: version.value.id,
-                  policyId: version.value.policyId,
-                  repositoryId: version.value.repositoryId,
-                  target: version.value.target,
-                  program: version.value.program,
-                }
-              : null,
-          ),
-        ),
-    }
-
     const processPullRequest = Effect.fn(
       "LabelingCoordinator.processPullRequest",
     )(function* (
@@ -174,8 +178,8 @@ export class LabelingCoordinator extends Context.Service<
       summary: PullRequestSummary,
       trigger: string,
     ) {
-      const policyRows = yield* policies.list(repository.id)
       const ruleSnapshot = yield* rules.getActiveSnapshot(repository.id)
+      const policyRows = yield* policies.list(repository.id)
       const ruleRows = ruleSnapshot.rules
       const active = yield* Effect.forEach(policyRows, (policy) =>
         policy.publishedVersionId === null
@@ -191,29 +195,93 @@ export class LabelingCoordinator extends Context.Service<
             : [],
         ),
       )
+      const snapshotByReference = new Map<
+        string,
+        {
+          readonly id: Program.PolicyVersionId
+          readonly policyId: Program.PolicyId
+          readonly repositoryId: string
+          readonly target: Program.PolicyTarget
+          readonly program: Program.PolicyProgram
+        }
+      >()
+      for (const { policy, version } of activeByPolicyId.values()) {
+        const resolved = {
+          id: version.id,
+          policyId: policy.id,
+          repositoryId: policy.repositoryId,
+          target: policy.target,
+          program: version.program,
+        }
+        snapshotByReference.set(policy.id, resolved)
+        snapshotByReference.set(version.id, resolved)
+      }
+      const referencedIds = new Set(
+        active.flatMap(({ version }) => [
+          ...(version._tag === "None" ||
+          version.value.program.appliesWhen === null
+            ? []
+            : policyReferences(version.value.program.appliesWhen)),
+          ...(version._tag === "None"
+            ? []
+            : policyReferences(version.value.program.matchesWhen)),
+        ]),
+      )
+      for (const id of referencedIds) {
+        if (snapshotByReference.has(id)) continue
+        const current = yield* policies.findCurrentVersion(id)
+        if (current._tag === "Some") {
+          const resolved = snapshotByReference.get(current.value.policyId)
+          if (resolved !== undefined) snapshotByReference.set(id, resolved)
+        }
+      }
+      const resolver = {
+        resolve: (id: Program.PolicyId) =>
+          Effect.succeed(snapshotByReference.get(id) ?? null),
+      }
+      const compiledByPolicyId = new Map<
+        Program.PolicyId,
+        CompiledPolicyProgram
+      >()
+      for (const { policy, version } of activeByPolicyId.values())
+        compiledByPolicyId.set(
+          policy.id,
+          yield* compilePolicyProgram(version.program, resolver, {
+            repositoryId: repository.id,
+            policyId: policy.id,
+          }),
+        )
       const runtimeRules: Array<RuntimeRule> = []
       for (const rule of ruleRows) {
         if (rule._tag === "PolicyLabelingRule") {
           const resolved = activeByPolicyId.get(rule.policyId)
-          if (resolved !== undefined)
+          const compiled = compiledByPolicyId.get(rule.policyId)
+          if (resolved !== undefined && compiled !== undefined)
             runtimeRules.push({
               _tag: "Policy",
               rule,
               version: resolved.version,
+              compiled,
             })
         } else if (rule.gatePolicyId === null)
           runtimeRules.push({ _tag: "Ai", rule, gate: null })
         else {
           const gate = activeByPolicyId.get(rule.gatePolicyId)
-          if (gate !== undefined) runtimeRules.push({ _tag: "Ai", rule, gate })
+          const compiled = compiledByPolicyId.get(rule.gatePolicyId)
+          if (gate !== undefined && compiled !== undefined)
+            runtimeRules.push({
+              _tag: "Ai",
+              rule,
+              gate: { ...gate, compiled },
+            })
         }
       }
       const triggers = (runtime: RuntimeRule): ReadonlyArray<string> =>
         runtime._tag === "Policy"
-          ? runtime.version.triggerManifest
+          ? runtime.compiled.triggers
           : [
               ...triggersForPullRequestFacts(runtime.rule.evidence),
-              ...(runtime.gate?.version.triggerManifest ?? []),
+              ...(runtime.gate?.compiled.triggers ?? []),
             ]
       const directlyTriggeredIds = new Set(
         runtimeRules
@@ -260,14 +328,27 @@ export class LabelingCoordinator extends Context.Service<
         baseRef: summary.base.ref,
         headSha: summary.head.sha,
       })
-      const requiredFacts = new Set(
-        relevant.flatMap((runtime) =>
-          runtime._tag === "Policy"
-            ? runtime.version.registryManifest
-            : [
-                ...runtime.rule.evidence,
-                ...(runtime.gate?.version.registryManifest ?? []),
-              ],
+      const requiredFacts = new Set<string>(
+        relevant.flatMap(
+          (runtime): ReadonlyArray<string> =>
+            runtime._tag === "Policy"
+              ? runtime.compiled.requiresChangedFileContent
+                ? [
+                    ...runtime.compiled.facts,
+                    "pull_request.changed_files.content",
+                  ]
+                : runtime.compiled.facts
+              : [
+                  ...runtime.rule.evidence,
+                  ...(runtime.gate === null
+                    ? []
+                    : runtime.gate.compiled.requiresChangedFileContent
+                      ? [
+                          ...runtime.gate.compiled.facts,
+                          "pull_request.changed_files.content",
+                        ]
+                      : runtime.gate.compiled.facts),
+                ],
         ),
       )
       const policyFacts = yield* facts.load(

@@ -11,13 +11,7 @@ import * as AiPromptEditor from "../../components/ai-prompt-editor"
 import * as PolicyCodeEditor from "../../components/policy-editor"
 import { ItemKind, NodeKind, Operator, Quantifier } from "./condition"
 import { Toast } from "./toast"
-import {
-  PolicyId,
-  PolicyVersionId,
-  Repository,
-  RuleDraft,
-  RuleId,
-} from "./model"
+import { PolicyId, Repository, RuleDraft, RuleId } from "./model"
 
 export const SelectedRepositoryChanged = m("SelectedRepositoryChanged", {
   repository: Schema.NullOr(Repository),
@@ -119,7 +113,7 @@ export const UpdatedItemOperand = m("UpdatedItemOperand", {
 })
 export const UpdatedPolicyReference = m("UpdatedPolicyReference", {
   clientId: Schema.String,
-  policyVersionId: PolicyVersionId,
+  policyId: PolicyId,
 })
 export const SavedPolicy = m("SavedPolicy")
 export const RetriedPolicySave = m("RetriedPolicySave")
@@ -134,7 +128,7 @@ export const FailedToSavePolicy = m("FailedToSavePolicy", {
   repository: Repository,
   message: Schema.String,
   currentPolicy: Schema.NullOr(PolicyManagement.PublicPolicy),
-  currentDraftVersion: Schema.NullOr(Schema.Int),
+  currentVersion: Schema.NullOr(Schema.Int),
 })
 export const ValidatedPolicy = m("ValidatedPolicy")
 export const CompletedValidatePolicy = m("CompletedValidatePolicy", {
@@ -156,23 +150,23 @@ export const GotPolicyMenuMessage = m("GotPolicyMenuMessage", {
 export const GotPolicyEditorDialogMessage = m("GotPolicyEditorDialogMessage", {
   message: Dialog.Message,
 })
-
-export const OpenedPublishPolicy = m("OpenedPublishPolicy", {
+export const OpenedDeletePolicy = m("OpenedDeletePolicy", {
   policyId: PolicyId,
 })
-export const DismissedPublishPolicy = m("DismissedPublishPolicy")
-export const ConfirmedPublishPolicy = m("ConfirmedPublishPolicy")
-export const CompletedPublishPolicy = m("CompletedPublishPolicy", {
+export const DismissedDeletePolicy = m("DismissedDeletePolicy")
+export const ConfirmedDeletePolicy = m("ConfirmedDeletePolicy")
+export const CompletedDeletePolicy = m("CompletedDeletePolicy", {
   requestId: Schema.Int,
   repository: Repository,
-  result: PolicyManagement.PublishPolicyResponse,
+  policyId: PolicyId,
 })
-export const FailedToPublishPolicy = m("FailedToPublishPolicy", {
+export const FailedToDeletePolicy = m("FailedToDeletePolicy", {
   requestId: Schema.Int,
   repository: Repository,
   message: Schema.String,
+  currentPolicy: Schema.NullOr(PolicyManagement.PublicPolicy),
 })
-export const GotPublishDialogMessage = m("GotPublishDialogMessage", {
+export const GotPolicyDeleteDialogMessage = m("GotPolicyDeleteDialogMessage", {
   message: Dialog.Message,
 })
 
@@ -377,12 +371,12 @@ export const Message = Schema.Union([
   FailedToValidatePolicy,
   GotPolicyMenuMessage,
   GotPolicyEditorDialogMessage,
-  OpenedPublishPolicy,
-  DismissedPublishPolicy,
-  ConfirmedPublishPolicy,
-  CompletedPublishPolicy,
-  FailedToPublishPolicy,
-  GotPublishDialogMessage,
+  OpenedDeletePolicy,
+  DismissedDeletePolicy,
+  ConfirmedDeletePolicy,
+  CompletedDeletePolicy,
+  FailedToDeletePolicy,
+  GotPolicyDeleteDialogMessage,
   OpenedNewRule,
   OpenedRuleEditor,
   ClosedRuleEditor,

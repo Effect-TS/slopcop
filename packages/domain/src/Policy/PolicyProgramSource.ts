@@ -260,7 +260,7 @@ const toReviewItemPredicate = (
 
 const toCondition = (
   source: ConditionSource,
-  resolvePolicy: (name: string) => PolicyProgram.PolicyVersionId,
+  resolvePolicy: (name: string) => PolicyProgram.PolicyId,
 ): PolicyProgram.Condition => {
   if ("allOf" in source)
     return {
@@ -284,7 +284,7 @@ const toCondition = (
   if ("policy" in source)
     return {
       _tag: "PolicyReference",
-      policyVersionId: resolvePolicy(source.policy),
+      policyId: resolvePolicy(source.policy),
     }
   if ("quantifier" in source) {
     switch (source.fact) {
@@ -313,7 +313,7 @@ const toCondition = (
 
 export const toPolicyProgram = (
   source: PolicyProgramSource,
-  resolvePolicy: (name: string) => PolicyProgram.PolicyVersionId,
+  resolvePolicy: (name: string) => PolicyProgram.PolicyId,
 ): PolicyProgram.PolicyProgram => ({
   target: source.target,
   appliesWhen:
@@ -398,19 +398,19 @@ const fromCondition = (condition: PolicyProgram.Condition): ConditionSource => {
       }
     }
     case "PolicyReference":
-      return { policy: condition.policyVersionId }
+      return { policy: condition.policyId }
   }
 }
 
 export const fromPolicyProgram = (
   program: PolicyProgram.PolicyProgram,
-  formatPolicy: (id: PolicyProgram.PolicyVersionId) => string,
+  formatPolicy: (id: PolicyProgram.PolicyId) => string,
 ): PolicyProgramSource => {
   const formatCondition = (
     condition: PolicyProgram.Condition,
   ): ConditionSource => {
     if (condition._tag === "PolicyReference")
-      return { policy: formatPolicy(condition.policyVersionId) }
+      return { policy: formatPolicy(condition.policyId) }
     switch (condition._tag) {
       case "All":
         return { allOf: condition.conditions.map(formatCondition) }

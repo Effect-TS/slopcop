@@ -20,7 +20,7 @@ export const PublicPolicy = Schema.Struct({
   id: LabelingPolicyId,
   name: LabelingPolicyName,
   target: PolicyTarget,
-  publishedVersionId: Schema.NullOr(PolicyVersionId),
+  currentVersionId: PolicyVersionId,
   version: Schema.Int,
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
@@ -33,12 +33,12 @@ export const PublicPolicyVersion = Schema.Struct({
   contentHash: Schema.String,
   registryManifest: Schema.Array(Schema.String),
   triggerManifest: Schema.Array(Schema.String),
-  publicationStatus: Schema.Literals(["staged", "published"]),
   createdAt: Schema.DateTimeUtcFromString,
 })
 export const PublicPolicyDetail = Schema.Struct({
   policy: PublicPolicy,
-  draft: Schema.Struct({
+  current: Schema.Struct({
+    id: PolicyVersionId,
     program: PolicyProgram,
     metadata: PolicyDraftMetadata,
     version: Schema.Int,
@@ -51,26 +51,18 @@ export const CreatePolicyRequest = Schema.Struct({
   program: PolicyProgram,
   metadata: PolicyDraftMetadata,
 })
-export const PatchPolicyDraftRequest = Schema.Struct({
+export const SavePolicyRequest = Schema.Struct({
   name: Schema.optionalKey(LabelingPolicyName),
   program: Schema.optionalKey(PolicyProgram),
   metadata: Schema.optionalKey(PolicyDraftMetadata),
   version: Schema.Int,
 })
+export const DeletePolicyQuery = Schema.Struct({ version: Schema.Int })
 export const ValidatePolicyResponse = Schema.Struct({
   facts: Schema.Array(Schema.String),
   triggers: Schema.Array(Schema.String),
-  references: Schema.Array(PolicyVersionId),
+  references: Schema.Array(LabelingPolicyId),
   nodeCount: Schema.Int,
-})
-export const PublishPolicyRequest = Schema.Struct({ version: Schema.Int })
-export const PublishPolicyResponse = Schema.Struct({
-  policy: PublicPolicy,
-  published: PublicPolicyVersion,
-  impact: Schema.Struct({
-    facts: Schema.Array(Schema.String),
-    triggers: Schema.Array(Schema.String),
-  }),
 })
 export const ListPoliciesResponse = Schema.Struct({
   repository: Schema.String,
@@ -85,13 +77,7 @@ export const TestPolicyRequest = Schema.Struct({
 })
 export const TestPolicyResponse = Schema.Struct({
   policyId: LabelingPolicyId,
-  tested: Schema.Union([
-    Schema.Struct({ _tag: Schema.Literal("Draft"), version: Schema.Int }),
-    Schema.Struct({
-      _tag: Schema.Literal("Published"),
-      policyVersionId: PolicyVersionId,
-    }),
-  ]),
+  policyVersionId: PolicyVersionId,
   pullRequestNumber: Schema.Int,
   decision: PolicyEvaluationResult,
 })

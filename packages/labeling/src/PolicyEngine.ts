@@ -33,14 +33,14 @@ export interface PullRequestFacts {
 }
 export interface ResolvedRuntimePolicyVersion {
   readonly id: Program.PolicyVersionId
-  readonly policyId: string
+  readonly policyId: Program.PolicyId
   readonly repositoryId: string
   readonly target: Program.PolicyTarget
   readonly program: Program.PolicyProgram
 }
 export interface ProgramResolver {
   readonly resolve: (
-    id: Program.PolicyVersionId,
+    id: Program.PolicyId,
   ) => Effect.Effect<ResolvedRuntimePolicyVersion | null, unknown>
 }
 export class PolicyOperationalError extends Data.TaggedError(
@@ -232,7 +232,7 @@ export const evaluatePolicyProgram = Effect.fn("PolicyEngine.evaluate")(
     readonly resolver: ProgramResolver
   }) {
     const trace: Array<Program.PolicyNodeTrace> = []
-    const activeReferences = new Set<Program.PolicyVersionId>()
+    const activeReferences = new Set<Program.PolicyId>()
 
     const evaluateProgram = (
       program: Program.PolicyProgram,
@@ -403,7 +403,7 @@ export const evaluatePolicyProgram = Effect.fn("PolicyEngine.evaluate")(
           }
           case "PolicyReference": {
             if (
-              activeReferences.has(node.policyVersionId) ||
+              activeReferences.has(node.policyId) ||
               activeReferences.size >= MAX_REFERENCE_DEPTH
             ) {
               value = {
@@ -412,31 +412,29 @@ export const evaluatePolicyProgram = Effect.fn("PolicyEngine.evaluate")(
                   stage: "reference",
                   location,
                   retryable: false,
-                  message: activeReferences.has(node.policyVersionId)
-                    ? `Policy reference cycle includes '${node.policyVersionId}'.`
+                  message: activeReferences.has(node.policyId)
+                    ? `Policy reference cycle includes '${node.policyId}'.`
                     : `Policy references exceed depth ${MAX_REFERENCE_DEPTH}.`,
                   cause: null,
                 }),
               }
               break
             }
-            const resolved = yield* input.resolver
-              .resolve(node.policyVersionId)
-              .pipe(
-                Effect.match({
-                  onFailure: (cause): Evaluated => ({
-                    _tag: "Failure",
-                    error: new PolicyOperationalError({
-                      stage: "reference",
-                      location,
-                      retryable: false,
-                      message: `Policy version '${node.policyVersionId}' could not be resolved.`,
-                      cause,
-                    }),
+            const resolved = yield* input.resolver.resolve(node.policyId).pipe(
+              Effect.match({
+                onFailure: (cause): Evaluated => ({
+                  _tag: "Failure",
+                  error: new PolicyOperationalError({
+                    stage: "reference",
+                    location,
+                    retryable: false,
+                    message: `Policy '${node.policyId}' could not be resolved.`,
+                    cause,
                   }),
-                  onSuccess: (version) => version,
                 }),
-              )
+                onSuccess: (version) => version,
+              }),
+            )
             if (resolved !== null && "_tag" in resolved) value = resolved
             else if (resolved === null)
               value = {
@@ -445,7 +443,7 @@ export const evaluatePolicyProgram = Effect.fn("PolicyEngine.evaluate")(
                   stage: "reference",
                   location,
                   retryable: false,
-                  message: `Pinned policy version '${node.policyVersionId}' is unavailable.`,
+                  message: `Policy '${node.policyId}' is unavailable.`,
                   cause: null,
                 }),
               }
@@ -460,29 +458,27 @@ export const evaluatePolicyProgram = Effect.fn("PolicyEngine.evaluate")(
                   stage: "reference",
                   location,
                   retryable: false,
-                  message: `Pinned policy version '${node.policyVersionId}' violates repository or target ownership.`,
+                  message: `Policy '${node.policyId}' violates repository or target ownership.`,
                   cause: null,
                 }),
               }
             else {
-              activeReferences.add(node.policyVersionId)
+              activeReferences.add(node.policyId)
               value = yield* evaluateProgram(
                 resolved.program,
                 Program.policyNodeLocationReference(
                   location,
-                  node.policyVersionId,
+                  node.policyId,
                   "appliesWhen",
                 ),
                 Program.policyNodeLocationReference(
                   location,
-                  node.policyVersionId,
+                  node.policyId,
                   "matchesWhen",
                 ),
               ).pipe(
                 Effect.ensuring(
-                  Effect.sync(() =>
-                    activeReferences.delete(node.policyVersionId),
-                  ),
+                  Effect.sync(() => activeReferences.delete(node.policyId)),
                 ),
               )
             }

@@ -95,7 +95,7 @@ export type DraftCondition =
   | {
       readonly _tag: "PolicyReference"
       readonly clientId: string
-      readonly policyVersionId: string
+      readonly policyId: string
     }
 
 export const DraftCondition: Schema.Codec<DraftCondition, unknown> =
@@ -128,7 +128,7 @@ export const DraftCondition: Schema.Codec<DraftCondition, unknown> =
       Schema.Struct({
         _tag: Schema.Literal("PolicyReference"),
         clientId: Schema.String,
-        policyVersionId: Schema.String,
+        policyId: Schema.String,
       }),
     ]),
   )
@@ -216,7 +216,7 @@ export const defaultCondition = (
         item: defaultItem(itemClientId),
       }
     case "PolicyReference":
-      return { _tag: "PolicyReference", clientId, policyVersionId: "" }
+      return { _tag: "PolicyReference", clientId, policyId: "" }
   }
 }
 
@@ -394,7 +394,7 @@ const stripCondition = (condition: DraftCondition): unknown => {
     case "PolicyReference":
       return {
         _tag: "PolicyReference",
-        policyVersionId: condition.policyVersionId,
+        policyId: condition.policyId,
       }
   }
 }

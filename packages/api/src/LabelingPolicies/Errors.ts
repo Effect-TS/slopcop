@@ -15,7 +15,16 @@ export class PolicyConflict extends Schema.TaggedErrorClass<PolicyConflict>()(
     repository: Schema.String,
     policyId: Schema.String,
     currentPolicy: Management.PublicPolicy,
-    currentDraftVersion: Schema.Int,
+    currentVersion: Schema.Int,
+    message: Schema.String,
+  },
+  { httpApiStatus: 409 },
+) {}
+export class PolicyInUse extends Schema.TaggedErrorClass<PolicyInUse>()(
+  "PolicyInUse",
+  {
+    repository: Schema.String,
+    policyId: Schema.String,
     message: Schema.String,
   },
   { httpApiStatus: 409 },

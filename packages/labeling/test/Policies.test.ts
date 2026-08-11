@@ -74,6 +74,7 @@ interface LayerOptions {
     readonly target: Program.PolicyTarget
   }
   readonly pointerFails?: boolean
+  readonly usage?: { readonly rules: number; readonly policies: number }
 }
 const layer = (operations: Array<string>, options: LayerOptions = {}) => {
   const existing = options.existing ?? null
@@ -82,6 +83,8 @@ const layer = (operations: Array<string>, options: LayerOptions = {}) => {
     "currentPublishedVersionId" in options
       ? (options.currentPublishedVersionId ?? null)
       : (existing?.id ?? null)
+  let currentPointer = currentPublishedVersionId
+  let storedVersion = existing
   return Policies.layerNoDeps.pipe(
     Layer.provide([
       Layer.succeed(GitHubRepositoriesRepo, {
@@ -103,19 +106,17 @@ const layer = (operations: Array<string>, options: LayerOptions = {}) => {
         find: () =>
           Effect.succeed(
             Option.some(
-              existing === null
-                ? policy
-                : new Policy.LabelingPolicy({
-                    id: policyId,
-                    repositoryId: repository.id,
-                    name: policy.name,
-                    target: policy.target,
-                    publishedVersionId: currentPublishedVersionId,
-                    version: 1,
-                    createdAt: now,
-                    updatedAt: now,
-                    deletedAt: Option.none(),
-                  }),
+              new Policy.LabelingPolicy({
+                id: policyId,
+                repositoryId: repository.id,
+                name: policy.name,
+                target: policy.target,
+                publishedVersionId: currentPointer,
+                version: 1,
+                createdAt: now,
+                updatedAt: now,
+                deletedAt: Option.none(),
+              }),
             ),
           ),
         findDraft: () =>
@@ -133,8 +134,8 @@ const layer = (operations: Array<string>, options: LayerOptions = {}) => {
               }),
             ),
           ),
-        findVersion: () => Effect.succeed(Option.none()),
-        findResolvedVersion: () =>
+        findVersion: () => Effect.succeed(Option.fromNullishOr(storedVersion)),
+        findCurrentVersion: () =>
           Effect.succeed(Option.fromNullishOr(options.resolvedVersion)),
         findVersionByHash: () => Effect.succeed(Option.fromNullishOr(existing)),
         listVersions: () => Effect.succeed([]),
@@ -154,15 +155,35 @@ const layer = (operations: Array<string>, options: LayerOptions = {}) => {
               deletedAt: Option.none(),
             })
           }),
-        updatePolicy: () => unavailable,
+        updatePolicy: (_id, _version, name) =>
+          Effect.sync(() => {
+            operations.push("policy")
+            return new Policy.LabelingPolicy({
+              id: policy.id,
+              repositoryId: policy.repositoryId,
+              name,
+              target: policy.target,
+              publishedVersionId: currentPointer,
+              version: 2,
+              createdAt: policy.createdAt,
+              updatedAt: policy.updatedAt,
+              deletedAt: policy.deletedAt,
+            })
+          }),
+        usage: () => Effect.succeed(options.usage ?? { rules: 0, policies: 0 }),
+        remove: () =>
+          Effect.sync(() => {
+            operations.push("remove")
+          }),
         insertVersion: (input) =>
           Effect.sync(() => {
             operations.push("stage")
-            return new Policy.LabelingPolicyVersion({
+            storedVersion = new Policy.LabelingPolicyVersion({
               ...input,
               id: versionId,
               createdAt: now,
             })
+            return storedVersion
           }),
         insertDependencies: () =>
           Effect.sync(() => {
@@ -172,9 +193,10 @@ const layer = (operations: Array<string>, options: LayerOptions = {}) => {
           Effect.sync(() => {
             operations.push("triggers")
           }),
-        publish: (_id, _version, publishedVersionId) =>
+        setCurrentVersion: (_id, _version, publishedVersionId) =>
           Effect.suspend(() => {
             operations.push("pointer")
+            currentPointer = publishedVersionId
             return options.pointerFails
               ? Effect.fail(
                   new PoliciesRepoError({
@@ -189,7 +211,7 @@ const layer = (operations: Array<string>, options: LayerOptions = {}) => {
                     name: policy.name,
                     target: policy.target,
                     publishedVersionId,
-                    version: 2,
+                    version: _version,
                     createdAt: now,
                     updatedAt: now,
                     deletedAt: Option.none(),
@@ -199,7 +221,7 @@ const layer = (operations: Array<string>, options: LayerOptions = {}) => {
         activateVersion: () =>
           Effect.sync(() => {
             operations.push("activate")
-            return new Policy.LabelingPolicyVersion({
+            storedVersion = new Policy.LabelingPolicyVersion({
               id: versionId,
               policyId,
               repositoryId: repository.id,
@@ -211,6 +233,7 @@ const layer = (operations: Array<string>, options: LayerOptions = {}) => {
               publicationStatus: "published",
               createdAt: now,
             })
+            return storedVersion
           }),
         discardStagedVersions: () =>
           Effect.sync(() => {
@@ -220,7 +243,32 @@ const layer = (operations: Array<string>, options: LayerOptions = {}) => {
     ]),
   )
 }
-describe("Policies publication", () => {
+describe("Policies current saves", () => {
+  it.effect("removes an unreferenced policy", () => {
+    const operations: Array<string> = []
+    return Effect.gen(function* () {
+      yield* (yield* Policies).remove(repository, policyId, 1)
+      expect(operations).toEqual(["remove"])
+    }).pipe(Effect.provide(layer(operations)))
+  })
+
+  it.effect("rejects deleting a referenced policy", () => {
+    const operations: Array<string> = []
+    return Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        (yield* Policies).remove(repository, policyId, 1),
+      )
+      expect(error).toMatchObject({
+        _tag: "PolicyInUse",
+        rules: 2,
+        policies: 1,
+      })
+      expect(operations).toEqual([])
+    }).pipe(
+      Effect.provide(layer(operations, { usage: { rules: 2, policies: 1 } })),
+    )
+  })
+
   it.effect("rejects issue drafts before persistence", () => {
     const operations: Array<string> = []
     return Effect.gen(function* () {
@@ -242,9 +290,14 @@ describe("Policies publication", () => {
     () => {
       const operations: Array<string> = []
       return Effect.gen(function* () {
-        const result = yield* (yield* Policies).publish(repository, policyId, 1)
-        expect(result.published.publicationStatus).toBe("published")
+        const result = yield* (yield* Policies).save(repository, policyId, {
+          program,
+          version: 1,
+        })
+        expect(result.publishedVersionId).toBe(versionId)
         expect(operations).toEqual([
+          "draft",
+          "policy",
           "discard",
           "stage",
           "dependencies",
@@ -260,8 +313,12 @@ describe("Policies publication", () => {
     () => {
       const operations: Array<string> = []
       return Effect.gen(function* () {
-        yield* Effect.flip((yield* Policies).publish(repository, policyId, 1))
+        yield* Effect.flip(
+          (yield* Policies).save(repository, policyId, { program, version: 1 }),
+        )
         expect(operations).toEqual([
+          "draft",
+          "policy",
           "discard",
           "stage",
           "dependencies",
@@ -269,7 +326,7 @@ describe("Policies publication", () => {
           "activate",
           "pointer",
         ])
-        expect(operations).not.toContain("draft")
+        expect(operations).toContain("draft")
         expect(operations).not.toContain("revision")
       }).pipe(Effect.provide(layer(operations, { pointerFails: true })))
     },
@@ -302,10 +359,13 @@ describe("Policies publication", () => {
         createdAt: now,
       })
       const result = yield* Effect.gen(function* () {
-        return yield* (yield* Policies).publish(repository, policyId, 1)
+        return yield* (yield* Policies).save(repository, policyId, {
+          program,
+          version: 1,
+        })
       }).pipe(Effect.provide(layer(operations, { existing })))
-      expect(result.published.id).toBe(versionId)
-      expect(operations).toEqual([])
+      expect(result.publishedVersionId).toBe(versionId)
+      expect(operations).toEqual(["draft", "policy"])
     })
   })
   it.effect(
@@ -339,15 +399,18 @@ describe("Policies publication", () => {
         })
 
         const result = yield* Effect.gen(function* () {
-          return yield* (yield* Policies).publish(repository, policyId, 1)
+          return yield* (yield* Policies).save(repository, policyId, {
+            program,
+            version: 1,
+          })
         }).pipe(
           Effect.provide(
             layer(operations, { existing, currentPublishedVersionId: null }),
           ),
         )
 
-        expect(result.published.id).toBe(versionId)
-        expect(operations).toEqual(["pointer"])
+        expect(result.publishedVersionId).toBe(versionId)
+        expect(operations).toEqual(["draft", "policy", "pointer"])
       })
     },
   )
@@ -374,7 +437,7 @@ describe("Policies publication", () => {
       appliesWhen: null,
       matchesWhen: {
         _tag: "PolicyReference",
-        policyVersionId: referencedVersionId,
+        policyId: referencedPolicyId,
       },
     }
     const resolvedVersion: NonNullable<LayerOptions["resolvedVersion"]> = {
@@ -390,17 +453,30 @@ describe("Policies publication", () => {
       createdAt: now,
       target: "pull_request",
     }
+    const current = new Policy.LabelingPolicyVersion({
+      id: versionId,
+      policyId,
+      repositoryId: repository.id,
+      revision: 1,
+      program: parentProgram,
+      contentHash: "parent-hash",
+      registryManifest: ["pull_request.title"],
+      triggerManifest: ["pull_request:opened"],
+      publicationStatus: "published",
+      createdAt: now,
+    })
 
     return Effect.gen(function* () {
       const compiled = yield* (yield* Policies).validate(repository, policyId)
 
-      expect(compiled.references).toEqual([referencedVersionId])
+      expect(compiled.references).toEqual([referencedPolicyId])
       expect(compiled.facts).toEqual(["pull_request.title"])
       expect(compiled.expandedNodeCount).toBe(2)
     }).pipe(
       Effect.provide(
         layer(operations, {
           draftProgram: parentProgram,
+          existing: current,
           resolvedVersion,
         }),
       ),

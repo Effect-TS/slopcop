@@ -2,7 +2,7 @@ import * as Program from "@slopcop/domain/Policy/PolicyProgram"
 import {
   compilePolicyProgram,
   MAX_DEPTH,
-  type PolicyVersionResolver,
+  type PolicyResolver,
 } from "@slopcop/labeling/PolicyCompiler"
 import {
   evaluatePolicyProgram,
@@ -14,8 +14,9 @@ import * as Effect from "effect/Effect"
 import * as Schema from "effect/Schema"
 
 const versionId = Schema.decodeUnknownSync(Program.PolicyVersionId)
-const context = { repositoryId: "repo-1", policyId: "policy-1" }
-const missingResolver: PolicyVersionResolver & ProgramResolver = {
+const policyId = Schema.decodeUnknownSync(Program.PolicyId)
+const context = { repositoryId: "repo-1", policyId: policyId("policy-1") }
+const missingResolver: PolicyResolver & ProgramResolver = {
   resolve: () => Effect.succeed(null),
 }
 const facts: PullRequestFacts = {
@@ -64,12 +65,12 @@ const evaluate = (
     resolver: options?.resolver ?? missingResolver,
   })
 const resolved = (
-  idValue: Program.PolicyVersionId,
+  idValue: Program.PolicyId,
   referenced: Program.PolicyProgram,
   repositoryId = "repo-1",
 ) => ({
-  id: idValue,
-  policyId: "referenced-policy",
+  id: versionId(`current:${idValue}`),
+  policyId: idValue,
   repositoryId,
   target: referenced.target,
   program: referenced,
@@ -178,10 +179,10 @@ describe("PolicyCompiler", () => {
 
   it.effect("enforces reference repository ownership and target", () =>
     Effect.gen(function* () {
-      const ref = versionId("version-1")
+      const ref = policyId("policy-1")
       const root = program({
         _tag: "PolicyReference",
-        policyVersionId: ref,
+        policyId: ref,
       })
       const ownership = yield* Effect.flip(
         compilePolicyProgram(
@@ -219,10 +220,10 @@ describe("PolicyCompiler", () => {
 
   it.effect("detects pinned reference cycles", () =>
     Effect.gen(function* () {
-      const ref = versionId("cycle")
+      const ref = policyId("cycle")
       const cyclic = program({
         _tag: "PolicyReference",
-        policyVersionId: ref,
+        policyId: ref,
       })
       const error = yield* Effect.flip(
         compilePolicyProgram(
@@ -240,7 +241,7 @@ describe("PolicyCompiler", () => {
     () =>
       Effect.gen(function* () {
         const versions = Array.from({ length: 8 }, (_, index) =>
-          versionId(`version-${index}`),
+          policyId(`policy-${index}`),
         )
         const first = versions[0]
         if (first === undefined)
@@ -250,7 +251,7 @@ describe("PolicyCompiler", () => {
             _tag: "Any",
             conditions: [...versions, first].map((policyVersionId) => ({
               _tag: "PolicyReference" as const,
-              policyVersionId,
+              policyId: policyVersionId,
             })),
           }),
           {
@@ -304,7 +305,7 @@ describe("PolicyEngine composition", () => {
     "evaluates referenced applicability before referenced matching",
     () =>
       Effect.gen(function* () {
-        const ref = versionId("applicability")
+        const ref = policyId("applicability")
         const referenced: Program.PolicyProgram = {
           target: "pull_request",
           appliesWhen: leaf("only-drafts", true),
@@ -313,7 +314,7 @@ describe("PolicyEngine composition", () => {
         const decision = yield* evaluate(
           program({
             _tag: "PolicyReference",
-            policyVersionId: ref,
+            policyId: ref,
           }),
           {
             resolver: {
@@ -328,7 +329,7 @@ describe("PolicyEngine composition", () => {
             path: [
               {
                 _tag: "PolicyReference",
-                policyVersionId: ref,
+                policyId: ref,
                 root: "appliesWhen",
               },
             ],
@@ -340,12 +341,12 @@ describe("PolicyEngine composition", () => {
 
   it.effect("rejects runtime references crossing repository ownership", () =>
     Effect.gen(function* () {
-      const ref = versionId("foreign")
+      const ref = policyId("foreign")
       const error = yield* Effect.flip(
         evaluate(
           program({
             _tag: "PolicyReference",
-            policyVersionId: ref,
+            policyId: ref,
           }),
           {
             resolver: {
@@ -363,18 +364,15 @@ describe("PolicyEngine composition", () => {
 
   it.effect("rejects runtime reference cycles and excessive depth", () =>
     Effect.gen(function* () {
-      const one = versionId("one")
-      const two = versionId("two")
-      const three = versionId("three")
-      const four = versionId("four")
-      const five = versionId("five")
-      const referencing = (
-        referenceId: Program.PolicyVersionId,
-        _label: string,
-      ) =>
+      const one = policyId("one")
+      const two = policyId("two")
+      const three = policyId("three")
+      const four = policyId("four")
+      const five = policyId("five")
+      const referencing = (referenceId: Program.PolicyId, _label: string) =>
         program({
           _tag: "PolicyReference",
-          policyVersionId: referenceId,
+          policyId: referenceId,
         })
       const root = referencing(one, "root-ref")
       const resolver: ProgramResolver = {

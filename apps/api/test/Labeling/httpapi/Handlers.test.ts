@@ -85,7 +85,7 @@ describe("generic labeling HTTP projections", () => {
         id: "rule",
         policyId: "policy",
         conflictGroup: "change-kind",
-        policy: { name: "Bug policy", published: true },
+        policy: { name: "Bug policy" },
       })
       expect(value).not.toHaveProperty("repositoryId")
     }),

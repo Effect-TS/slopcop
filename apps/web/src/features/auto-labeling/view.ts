@@ -40,9 +40,7 @@ export const view = Submodel.defineView<Model, M.Message, ViewInputs>(
     const { surface } = inputs
     const dialogOpen =
       surface === "Policies"
-        ? model.policyEditorDialog.isOpen ||
-          model.publishDialog.isOpen ||
-          model.testDialog.isOpen
+        ? model.policyEditorDialog.isOpen || model.testDialog.isOpen
         : model.ruleEditorDialog.isOpen ||
           model.ruleDeleteDialog.isOpen ||
           model.ruleTestDialog.isOpen
@@ -101,7 +99,7 @@ const header = (
                 ],
                 [
                   surface === "Policies"
-                    ? "Build reusable policy programs and publish exact versions."
+                    ? "Build and maintain reusable policy programs."
                     : "Apply deterministic policies or AI classification to GitHub labels.",
                 ],
               ),
@@ -260,7 +258,7 @@ const policiesView = (
       tableHeader(
         h,
         "Policies",
-        "Draft programs are published as immutable versions.",
+        "Saved changes become the current policy immediately.",
         `${data.policies.length} configured / revision ${data.policyRevision}`,
       ),
       ...(data.policies.length === 0
@@ -286,7 +284,6 @@ const policiesView = (
                           [
                             heading(h, "Policy", "min-w-64"),
                             heading(h, "Target", "text-center"),
-                            heading(h, "Status", "text-center"),
                             heading(h, "Revision", "text-center"),
                             heading(h, "Usage", "text-center"),
                             heading(h, "", "w-12"),
@@ -324,15 +321,6 @@ const policyRow = (
     [
       h.td([h.Class("p-4")], [h.span([h.Class("font-medium")], [policy.name])]),
       h.td([h.Class("p-4 text-center font-mono text-xs")], [policy.target]),
-      h.td(
-        [h.Class("p-4 text-center")],
-        [
-          statusBadge(
-            h,
-            policy.publishedVersionId === null ? "Draft" : "Published",
-          ),
-        ],
-      ),
       h.td(
         [h.Class("p-4 text-center font-mono text-sm")],
         [String(policy.version)],
@@ -463,14 +451,6 @@ const ruleRow = (
             [h.Class("block truncate text-sm"), h.Title(ruleDescription(rule))],
             [ruleDescription(rule)],
           ),
-          ...(!ruleCanEnable(rule)
-            ? [
-                h.p(
-                  [h.Class("mt-1 text-xs text-destructive")],
-                  ["Unpublished policy; cannot enable"],
-                ),
-              ]
-            : []),
         ],
       ),
       h.td([h.Class("p-2 text-center")], [labelBadge(h, rule.label)]),
@@ -498,9 +478,7 @@ const ruleToggle = (
       h.Role("switch"),
       h.AriaChecked(rule.enabled),
       h.AriaLabel(`${rule.enabled ? "Disable" : "Enable"} ${ruleName(rule)}`),
-      ...(saving || (!rule.enabled && !ruleCanEnable(rule))
-        ? [h.Disabled(true)]
-        : []),
+      ...(saving ? [h.Disabled(true)] : []),
       h.OnClick(M.ToggledRule({ ruleId: rule.id })),
       h.Class(
         `relative h-6 w-11 rounded-full outline-hidden transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${rule.enabled ? "bg-primary" : "bg-muted-foreground/30"}`,
@@ -598,9 +576,10 @@ const modals = (
   ...(surface !== "Policies" || model.policyEditor._tag === "PolicyEditorClosed"
     ? []
     : [policyEditor(h, model)]),
-  ...(surface !== "Policies" || model.publishing._tag === "PublishClosed"
+  ...(surface !== "Policies" ||
+  model.policyDeletion._tag === "PolicyDeleteClosed"
     ? []
-    : [publishModal(h, model)]),
+    : [deletePolicyModal(h, model)]),
   ...(surface !== "AutoLabeling" || model.ruleEditor._tag === "RuleEditorClosed"
     ? []
     : [ruleEditor(h, model)]),
@@ -635,7 +614,7 @@ const policyEditor = (h: HtmlBuilder<M.Message>, model: Model): Html => {
         ),
         h.p(
           [h.Class("mt-4 text-sm text-muted-foreground")],
-          ["Loading the current draft program..."],
+          ["Loading the current policy program..."],
         ),
       ],
     )
@@ -651,7 +630,7 @@ const policyEditor = (h: HtmlBuilder<M.Message>, model: Model): Html => {
       modalHeader(
         h,
         model.policyEditorDialog,
-        existing ? "Edit policy draft" : "Create policy",
+        existing ? "Edit policy" : "Create policy",
         editor.draft.name || "New policy",
         M.ClosedPolicyEditor(),
         saving,
@@ -740,7 +719,7 @@ const policyEditor = (h: HtmlBuilder<M.Message>, model: Model): Html => {
           h.p(
             [h.Class("mb-3 mt-1 text-xs text-muted-foreground")],
             [
-              'Edit the complete pull request policy as JSON. Press Ctrl-Space for context-aware completions, including "Include published policy" to pin and reuse another policy.',
+              'Edit the complete pull request policy as JSON. Press Ctrl-Space for context-aware completions, including "Include policy" to reuse another policy.',
             ],
           ),
           h.submodel({
@@ -780,7 +759,7 @@ const policyEditor = (h: HtmlBuilder<M.Message>, model: Model): Html => {
                   [
                     model.validation._tag === "ValidationRunning"
                       ? "Validating..."
-                      : "Validate saved draft",
+                      : "Validate saved policy",
                   ],
                 ),
                 ...(editor.dirty
@@ -801,7 +780,7 @@ const policyEditor = (h: HtmlBuilder<M.Message>, model: Model): Html => {
                     h.OnClick(M.ReloadedPolicyEditor()),
                     h.Class(secondaryButton),
                   ],
-                  ["Reload server draft"],
+                  ["Reload current policy"],
                 ),
                 h.button(
                   [
@@ -809,7 +788,7 @@ const policyEditor = (h: HtmlBuilder<M.Message>, model: Model): Html => {
                     h.OnClick(M.RetriedPolicySave()),
                     h.Class(primaryButton),
                   ],
-                  ["Keep draft and retry"],
+                  ["Keep changes and retry"],
                 ),
               ]
             : []),
@@ -830,7 +809,7 @@ const policyEditor = (h: HtmlBuilder<M.Message>, model: Model): Html => {
                     saving
                       ? "Saving..."
                       : existing
-                        ? "Save draft"
+                        ? "Save policy"
                         : "Create policy",
                   ],
                 ),
@@ -850,14 +829,12 @@ const validationView = (h: HtmlBuilder<M.Message>, model: Model): Html => {
     case "ValidationFailed":
       return alert(h, model.validation.message)
     case "ValidationResult": {
-      const references = model.validation.result.references.map((versionId) => {
-        if (model.repository._tag !== "LoadedRepository") return versionId
+      const references = model.validation.result.references.map((policyId) => {
+        if (model.repository._tag !== "LoadedRepository") return policyId
         const policy = model.repository.data.policies.find(
-          (policy) => policy.publishedVersionId === versionId,
+          (policy) => policy.id === policyId,
         )
-        return policy === undefined
-          ? versionId
-          : `${policy.name} (${versionId})`
+        return policy === undefined ? policyId : `${policy.name} (${policyId})`
       })
       return h.div(
         [
@@ -868,7 +845,7 @@ const validationView = (h: HtmlBuilder<M.Message>, model: Model): Html => {
           ),
         ],
         [
-          h.p([h.Class("font-medium text-success")], ["Draft is valid"]),
+          h.p([h.Class("font-medium text-success")], ["Policy is valid"]),
           h.p(
             [h.Class("mt-1")],
             [
@@ -880,7 +857,7 @@ const validationView = (h: HtmlBuilder<M.Message>, model: Model): Html => {
             : [
                 h.p(
                   [h.Class("mt-1")],
-                  [`Included published policies: ${references.join(", ")}`],
+                  [`Included policies: ${references.join(", ")}`],
                 ),
               ]),
         ],
@@ -889,111 +866,12 @@ const validationView = (h: HtmlBuilder<M.Message>, model: Model): Html => {
   }
 }
 
-const publishModal = (h: HtmlBuilder<M.Message>, model: Model): Html => {
-  const publishing = model.publishing
-  if (publishing._tag === "PublishClosed") return h.empty
-  const title =
-    publishing._tag === "PublishResult"
-      ? publishing.result.policy.name
-      : publishing.policy.name
-  return modalShell(
-    h,
-    model.publishDialog,
-    (message) => M.GotPublishDialogMessage({ message }),
-    "Publish policy",
-    [
-      modalHeader(
-        h,
-        model.publishDialog,
-        "Publish policy",
-        title,
-        M.DismissedPublishPolicy(),
-        publishing._tag === "Publishing",
-      ),
-      ...(publishing._tag === "PublishFailed"
-        ? [alert(h, publishing.message)]
-        : []),
-      ...(publishing._tag === "PublishResult"
-        ? [
-            h.div(
-              [
-                h.Class(
-                  "mt-4 rounded-lg border border-success/30 bg-success/5 p-3 text-sm",
-                ),
-              ],
-              [
-                h.p(
-                  [h.Class("font-medium text-success")],
-                  [
-                    `Published revision ${publishing.result.published.revision}`,
-                  ],
-                ),
-                h.p(
-                  [h.Class("mt-2")],
-                  [
-                    `Facts: ${publishing.result.impact.facts.join(", ") || "none"}`,
-                  ],
-                ),
-                h.p(
-                  [],
-                  [
-                    `Triggers: ${publishing.result.impact.triggers.join(", ") || "none"}`,
-                  ],
-                ),
-              ],
-            ),
-          ]
-        : [
-            h.p(
-              [h.Class("mt-4 text-sm text-muted-foreground")],
-              [
-                "Validate and publish the current draft as an immutable version. The impact response will list facts and triggers.",
-              ],
-            ),
-          ]),
-      h.div(
-        [h.Class("mt-6 flex justify-end gap-2")],
-        [
-          h.button(
-            [
-              h.Type("button"),
-              ...(publishing._tag === "Publishing" ? [h.Disabled(true)] : []),
-              h.OnClick(M.DismissedPublishPolicy()),
-              h.Class(secondaryButton),
-            ],
-            [publishing._tag === "PublishResult" ? "Done" : "Cancel"],
-          ),
-          ...(publishing._tag === "PublishResult"
-            ? []
-            : [
-                h.button(
-                  [
-                    h.Type("button"),
-                    ...(publishing._tag === "Publishing"
-                      ? [h.Disabled(true)]
-                      : []),
-                    h.OnClick(M.ConfirmedPublishPolicy()),
-                    h.Class(primaryButton),
-                  ],
-                  [
-                    publishing._tag === "Publishing"
-                      ? "Publishing..."
-                      : "Publish draft",
-                  ],
-                ),
-              ]),
-        ],
-      ),
-    ],
-  )
-}
-
 const ruleEditor = (h: HtmlBuilder<M.Message>, model: Model): Html => {
   const editor = model.ruleEditor
   if (editor._tag === "RuleEditorClosed") return h.empty
   const loaded =
     model.repository._tag === "LoadedRepository" ? model.repository.data : null
-  const published = publishedPolicies(model)
+  const policies = availablePolicies(model)
   const unavailable = !validRuleDraft(model, editor.draft)
   const saving = editor._tag === "RuleEditorSaving"
   const conflict = editor._tag === "RuleEditorConflict"
@@ -1029,7 +907,7 @@ const ruleEditor = (h: HtmlBuilder<M.Message>, model: Model): Html => {
                 [
                   h.Id("rule-type"),
                   h.Value(editor.draft._tag),
-                  ...(published.length === 0
+                  ...(policies.length === 0
                     ? [h.AriaDescribedBy("rule-type-description")]
                     : []),
                   h.OnInput((value) =>
@@ -1046,7 +924,7 @@ const ruleEditor = (h: HtmlBuilder<M.Message>, model: Model): Html => {
                   h.option(
                     [
                       h.Value("PolicyLabelingRule"),
-                      ...(published.length === 0 ? [h.Disabled(true)] : []),
+                      ...(policies.length === 0 ? [h.Disabled(true)] : []),
                     ],
                     ["Policy rule"],
                   ),
@@ -1054,8 +932,8 @@ const ruleEditor = (h: HtmlBuilder<M.Message>, model: Model): Html => {
                 ],
               ),
               "mt-5",
-              published.length === 0
-                ? "No published policies are available. Create and publish a policy before choosing a policy rule. AI rules remain available."
+              policies.length === 0
+                ? "No policies are available. Create a policy before choosing a policy rule. AI rules remain available."
                 : undefined,
             ),
           ]
@@ -1072,36 +950,36 @@ const ruleEditor = (h: HtmlBuilder<M.Message>, model: Model): Html => {
             field(
               h,
               "rule-policy",
-              "Published policy",
+              "Policy",
               h.select(
                 [
                   h.Id("rule-policy"),
                   h.Value(editor.draft.policyId),
-                  ...(published.length === 0
+                  ...(policies.length === 0
                     ? [
                         h.Disabled(true),
                         h.AriaDescribedBy("rule-policy-description"),
                       ]
                     : []),
                   h.OnInput((value) => {
-                    const item = published.find((policy) => policy.id === value)
+                    const item = policies.find((policy) => policy.id === value)
                     return item === undefined
                       ? M.IgnoredInput()
                       : M.UpdatedRulePolicy({ policyId: item.id })
                   }),
                   h.Class(inputClass),
                 ],
-                published.map((policy) =>
+                policies.map((policy) =>
                   h.option([h.Value(policy.id)], [policy.name]),
                 ),
               ),
               "mt-4",
-              published.length === 0
-                ? "No published policies are available. Create and publish a policy before configuring this rule."
+              policies.length === 0
+                ? "No policies are available. Create a policy before configuring this rule."
                 : undefined,
             ),
           ]
-        : aiRuleFields(h, model, editor.draft, published)),
+        : aiRuleFields(h, model, editor.draft, policies)),
       h.div(
         [h.Class("mt-5 grid gap-4 sm:grid-cols-2")],
         [
@@ -1244,7 +1122,7 @@ const aiRuleFields = (
     Model["ruleEditor"],
     { _tag: "RuleEditorEditing" }
   >["draft"] & { readonly _tag: "AiLabelingRule" },
-  published: ReadonlyArray<Policy>,
+  policies: ReadonlyArray<Policy>,
 ): ReadonlyArray<Html> => [
   field(
     h,
@@ -1318,7 +1196,7 @@ const aiRuleFields = (
             h.Value(draft.gatePolicyId ?? ""),
             h.AriaDescribedBy("rule-gate-policy-description"),
             h.OnInput((value) => {
-              const gate = published.find((policy) => policy.id === value)
+              const gate = policies.find((policy) => policy.id === value)
               return value === ""
                 ? M.UpdatedRuleGatePolicy({ gatePolicyId: null })
                 : gate === undefined
@@ -1329,13 +1207,13 @@ const aiRuleFields = (
           ],
           [
             h.option([h.Value("")], ["No deterministic gate"]),
-            ...published.map((policy) =>
+            ...policies.map((policy) =>
               h.option([h.Value(policy.id)], [policy.name]),
             ),
           ],
         ),
         "sm:col-span-2",
-        "AI runs only when this published policy matches. If it does not match, the current label is preserved.",
+        "AI runs only when this policy matches. If it does not match, the current label is preserved.",
       ),
     ],
   ),
@@ -1414,6 +1292,60 @@ const confidenceSlider = (
     },
     toParentMessage: (message) => M.GotConfidenceSliderMessage({ message }),
   })
+
+const deletePolicyModal = (h: HtmlBuilder<M.Message>, model: Model): Html => {
+  const deletion = model.policyDeletion
+  if (deletion._tag === "PolicyDeleteClosed") return h.empty
+  const deleting = deletion._tag === "PolicyDeleting"
+  return modalShell(
+    h,
+    model.policyDeleteDialog,
+    (message) => M.GotPolicyDeleteDialogMessage({ message }),
+    "Delete policy",
+    [
+      modalHeader(
+        h,
+        model.policyDeleteDialog,
+        "Delete policy",
+        deletion.policy.name,
+        M.DismissedDeletePolicy(),
+        deleting,
+      ),
+      ...(deletion._tag === "PolicyDeleteFailed"
+        ? [alert(h, deletion.message)]
+        : []),
+      h.p(
+        [h.Class("mt-4 text-sm text-muted-foreground")],
+        [
+          "This permanently removes the policy from configuration. Policies used by labeling rules or other policies cannot be deleted.",
+        ],
+      ),
+      h.div(
+        [h.Class("mt-6 flex justify-end gap-2")],
+        [
+          h.button(
+            [
+              h.Type("button"),
+              ...(deleting ? [h.Disabled(true)] : []),
+              h.OnClick(M.DismissedDeletePolicy()),
+              h.Class(secondaryButton),
+            ],
+            ["Cancel"],
+          ),
+          h.button(
+            [
+              h.Type("button"),
+              ...(deleting ? [h.Disabled(true)] : []),
+              h.OnClick(M.ConfirmedDeletePolicy()),
+              h.Class(destructiveButton),
+            ],
+            [deleting ? "Deleting..." : "Delete policy"],
+          ),
+        ],
+      ),
+    ],
+  )
+}
 
 const deleteRuleModal = (h: HtmlBuilder<M.Message>, model: Model): Html => {
   const deletion = model.ruleDeletion
@@ -1651,14 +1583,14 @@ const testModal = (h: HtmlBuilder<M.Message>, model: Model): Html => {
       modalHeader(
         h,
         model.testDialog,
-        "Draft test",
+        "Policy test",
         `Test ${test.policy.name}`,
         M.DismissedPolicyTest(),
         test._tag === "TestRunning",
       ),
       h.p(
         [h.Class("mt-2 text-sm text-muted-foreground")],
-        ["Tests the saved policy draft. No labels are written."],
+        ["Tests the current saved policy. No labels are written."],
       ),
       ...(test._tag === "TestLoadingCandidates"
         ? [h.p([h.Class("mt-4 text-sm")], ["Loading pull requests..."])]
@@ -1761,11 +1693,7 @@ const policyTestResult = (
           ),
           h.p(
             [h.Class("mt-3 text-xs text-muted-foreground")],
-            [
-              result.tested._tag === "Draft"
-                ? `Tested draft version ${result.tested.version}`
-                : `Tested published version ${result.tested.policyVersionId}`,
-            ],
+            [`Tested current policy version ${result.policyVersionId}`],
           ),
         ],
       ),
@@ -2030,11 +1958,9 @@ const labelBadge = (h: HtmlBuilder<M.Message>, label: string): Html =>
     ],
     [label],
   )
-const publishedPolicies = (model: Model): ReadonlyArray<Policy> =>
+const availablePolicies = (model: Model): ReadonlyArray<Policy> =>
   model.repository._tag === "LoadedRepository"
-    ? model.repository.data.policies.filter(
-        (policy) => policy.publishedVersionId !== null,
-      )
+    ? model.repository.data.policies
     : []
 
 const pullRequestFacts = [
@@ -2049,8 +1975,3 @@ const ruleDescription = (rule: Rule): string =>
   rule._tag === "PolicyLabelingRule"
     ? `Policy: ${rule.policy.name}`
     : rule.prompt.replace(/\s+/g, " ").trim()
-
-const ruleCanEnable = (rule: Rule): boolean =>
-  rule._tag === "PolicyLabelingRule"
-    ? rule.policy.published
-    : rule.gatePolicy === null || rule.gatePolicy.published

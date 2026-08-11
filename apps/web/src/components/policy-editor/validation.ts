@@ -46,7 +46,7 @@ export const validateSource = (
         )
           return {
             _tag: "InvalidPolicy" as const,
-            message: `More than one published policy is named '${name}'. Rename one before including it.`,
+            message: `More than one policy is named '${name}'. Rename one before including it.`,
           }
       }
       return {
@@ -54,11 +54,11 @@ export const validateSource = (
         program: PolicyProgramSource.toPolicyProgram(source, (name) => {
           const reference = references.find(
             (reference) =>
-              reference.name === name || reference.policyVersionId === name,
+              reference.name === name || reference.policyId === name,
           )
           return (
-            reference?.policyVersionId ??
-            Schema.decodeUnknownSync(PolicyProgram.PolicyVersionId)(name)
+            reference?.policyId ??
+            Schema.decodeUnknownSync(PolicyProgram.PolicyId)(name)
           )
         }),
       }
@@ -71,9 +71,7 @@ export const formatProgram = (
   references: ReadonlyArray<PolicyReference> = [],
 ): string => {
   const source = PolicyProgramSource.fromPolicyProgram(program, (id) => {
-    const reference = references.find(
-      (reference) => reference.policyVersionId === id,
-    )
+    const reference = references.find((reference) => reference.policyId === id)
     return reference?.name ?? id
   })
   return JSON.stringify(

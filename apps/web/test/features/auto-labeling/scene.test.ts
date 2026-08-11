@@ -17,16 +17,16 @@ const policy = Schema.decodeUnknownSync(PolicyManagement.PublicPolicy)({
   id: "policy-1",
   name: "Documentation policy",
   target: "pull_request",
-  publishedVersionId: "version-1",
+  currentVersionId: "version-1",
   version: 4,
   createdAt: timestamp,
   updatedAt: timestamp,
 })
-const draftPolicy = Schema.decodeUnknownSync(PolicyManagement.PublicPolicy)({
-  id: "policy-draft",
-  name: "Draft only",
+const secondPolicy = Schema.decodeUnknownSync(PolicyManagement.PublicPolicy)({
+  id: "policy-second",
+  name: "Second policy",
   target: "pull_request",
-  publishedVersionId: null,
+  currentVersionId: "version-2",
   version: 1,
   createdAt: timestamp,
   updatedAt: timestamp,
@@ -43,7 +43,8 @@ const program = Schema.decodeUnknownSync(PolicyProgram.PolicyProgram)({
 })
 const detail = Schema.decodeUnknownSync(PolicyManagement.PublicPolicyDetail)({
   policy: Schema.encodeSync(PolicyManagement.PublicPolicy)(policy),
-  draft: {
+  current: {
+    id: "version-1",
     program,
     metadata: { description: "Matches docs." },
     version: 7,
@@ -65,7 +66,7 @@ const rule = Schema.decodeUnknownSync(RuleManagement.PublicLabelingRule)({
   version: 3,
   createdAt: timestamp,
   updatedAt: timestamp,
-  policy: { id: policy.id, name: policy.name, published: true },
+  policy: { id: policy.id, name: policy.name },
 })
 const aiRule = Schema.decodeUnknownSync(RuleManagement.PublicLabelingRule)({
   _tag: "AiLabelingRule",
@@ -86,7 +87,7 @@ const aiRule = Schema.decodeUnknownSync(RuleManagement.PublicLabelingRule)({
   minimumConfidence: 0.8,
   evaluator: "boolean-policy-v1",
   gatePolicyId: policy.id,
-  gatePolicy: { id: policy.id, name: policy.name, published: true },
+  gatePolicy: { id: policy.id, name: policy.name },
 })
 const loadedModel = (): AutoLabeling.Model => {
   const [loading] = AutoLabeling.update(
@@ -100,7 +101,7 @@ const loadedModel = (): AutoLabeling.Model => {
       repository,
       policyRevision: 5,
       ruleRevision: 8,
-      policies: [policy, draftPolicy],
+      policies: [policy, secondPolicy],
       rules: [rule, aiRule],
       activity: {
         windowDays: 30,
@@ -126,7 +127,7 @@ describe("generic policy UI", () => {
       Scene.given(loadedModel()),
       Scene.expect(Scene.role("heading", { name: "Policies" })).toExist(),
       Scene.expect(Scene.text("pull_request")).toExist(),
-      Scene.expect(Scene.text("Published")).toExist(),
+      Scene.expect(Scene.text("Published")).not.toExist(),
       Scene.expect(Scene.role("tab")).not.toExist(),
     )
   })
@@ -145,9 +146,7 @@ describe("generic policy UI", () => {
       Scene.expect(Scene.role("dialog")).toContainText(
         "Ctrl-Space for context-aware completions",
       ),
-      Scene.expect(Scene.role("dialog")).toContainText(
-        "Include published policy",
-      ),
+      Scene.expect(Scene.role("dialog")).toContainText("Include policy"),
       Scene.expect(Scene.role("dialog")).toContainText(
         "Valid pull request policy JSON.",
       ),
@@ -285,14 +284,40 @@ describe("generic policy UI", () => {
         PolicyCodeEditor.MountPolicyEditor,
         PolicyCodeEditor.MountedEditor(),
       ),
-      Scene.expect(Scene.role("dialog")).toContainText("Edit policy draft"),
+      Scene.expect(Scene.role("dialog")).toContainText("Edit policy"),
       Scene.expect(
         Scene.role("textbox", { name: "Description (optional)" }),
       ).toHaveValue("Matches docs."),
       Scene.expect(
-        Scene.role("button", { name: "Validate saved draft" }),
+        Scene.role("button", { name: "Validate saved policy" }),
       ).toExist(),
-      Scene.expect(Scene.role("button", { name: "Save draft" })).toExist(),
+      Scene.expect(Scene.role("button", { name: "Save policy" })).toExist(),
+    )
+  })
+
+  it("opens policy deletion from the actions menu", () => {
+    Scene.scene(
+      { update: AutoLabeling.update, view: policiesView() },
+      Scene.given(loadedModel()),
+      Scene.click(
+        Scene.role("button", { name: "Actions for Documentation policy" }),
+      ),
+      Scene.Command.resolve(Menu.FocusItems, Menu.CompletedFocusItems()),
+      Scene.Mount.resolveAll(
+        [Menu.PortalMenuBackdrop, Menu.CompletedPortalMenuBackdrop()],
+        [Menu.AnchorMenu, Menu.CompletedAnchorMenu()],
+      ),
+      Scene.click(Scene.role("menuitem", { name: "Delete policy" })),
+      Scene.Mount.expectEnded(Menu.PortalMenuBackdrop),
+      Scene.Mount.expectEnded(Menu.AnchorMenu),
+      Scene.Command.resolveAll(
+        [Menu.FocusButton, Menu.CompletedFocusButton()],
+        [Dialog.ShowDialog, Dialog.CompletedShowDialog()],
+      ),
+      Scene.expect(Scene.role("dialog")).toContainText(
+        "Policies used by labeling rules or other policies cannot be deleted.",
+      ),
+      Scene.expect(Scene.role("button", { name: "Delete policy" })).toExist(),
     )
   })
 
@@ -317,7 +342,7 @@ describe("generic policy UI", () => {
         PolicyCodeEditor.MountedEditor(),
       ),
       Scene.expect(
-        Scene.role("button", { name: "Validate saved draft" }),
+        Scene.role("button", { name: "Validate saved policy" }),
       ).toBeDisabled(),
       Scene.expect(Scene.role("dialog")).toContainText(
         "Save local changes before validating.",
@@ -325,7 +350,7 @@ describe("generic policy UI", () => {
     )
   })
 
-  it("shows included published policies after validation", () => {
+  it("shows included policies after validation", () => {
     const [loading] = AutoLabeling.update(
       loadedModel(),
       AutoLabeling.OpenedPolicyEditor({ policyId: policy.id }),
@@ -350,9 +375,7 @@ describe("generic policy UI", () => {
           facts: ["pull_request.title"],
           triggers: ["pull_request:edited"],
           references: [
-            Schema.decodeUnknownSync(PolicyProgram.PolicyVersionId)(
-              "version-1",
-            ),
+            Schema.decodeUnknownSync(PolicyProgram.PolicyId)("policy-1"),
           ],
           nodeCount: 2,
         },
@@ -367,12 +390,12 @@ describe("generic policy UI", () => {
         PolicyCodeEditor.MountedEditor(),
       ),
       Scene.expect(Scene.role("dialog")).toContainText(
-        "Included published policies: Documentation policy (version-1)",
+        "Included policies: Documentation policy (policy-1)",
       ),
     )
   })
 
-  it("preserves a historical pinned policy version in JSON source", () => {
+  it("renders a referenced policy identifier in JSON source", () => {
     const referenceProgram = Schema.decodeUnknownSync(
       PolicyProgram.PolicyProgram,
     )({
@@ -380,14 +403,15 @@ describe("generic policy UI", () => {
       appliesWhen: null,
       matchesWhen: {
         _tag: "PolicyReference",
-        policyVersionId: "version-historical",
+        policyId: "policy-historical",
       },
     })
     const referenceDetail = Schema.decodeUnknownSync(
       PolicyManagement.PublicPolicyDetail,
     )({
       policy: Schema.encodeSync(PolicyManagement.PublicPolicy)(policy),
-      draft: {
+      current: {
+        id: "version-reference",
         program: referenceProgram,
         metadata: {},
         version: 7,
@@ -409,7 +433,7 @@ describe("generic policy UI", () => {
     if (editing.policyEditor._tag !== "PolicyEditorEditing")
       throw new Error("Expected policy editor")
     expect(editing.policyEditor.sourceEditor.source).toContain(
-      "version-historical",
+      "policy-historical",
     )
     Scene.scene(
       { update: AutoLabeling.update, view: policiesView() },
@@ -420,73 +444,6 @@ describe("generic policy UI", () => {
       ),
       Scene.expect(Scene.role("dialog")).toContainText(
         "Valid pull request policy JSON.",
-      ),
-    )
-  })
-
-  it("opens publish from the policy actions menu with resolved menu mounts", () => {
-    Scene.scene(
-      { update: AutoLabeling.update, view: policiesView() },
-      Scene.given(loadedModel()),
-      Scene.click(
-        Scene.role("button", { name: "Actions for Documentation policy" }),
-      ),
-      Scene.Command.resolve(Menu.FocusItems, Menu.CompletedFocusItems()),
-      Scene.Mount.resolveAll(
-        [Menu.PortalMenuBackdrop, Menu.CompletedPortalMenuBackdrop()],
-        [Menu.AnchorMenu, Menu.CompletedAnchorMenu()],
-      ),
-      Scene.click(Scene.role("menuitem", { name: "Publish policy" })),
-      Scene.Mount.expectEnded(Menu.PortalMenuBackdrop),
-      Scene.Mount.expectEnded(Menu.AnchorMenu),
-      Scene.Command.resolveAll(
-        [Menu.FocusButton, Menu.CompletedFocusButton()],
-        [Dialog.ShowDialog, Dialog.CompletedShowDialog()],
-      ),
-      Scene.expect(Scene.role("dialog")).toContainText("Publish policy"),
-      Scene.expect(Scene.role("button", { name: "Publish draft" })).toExist(),
-    )
-  })
-
-  it("opens publish from the policy menu and renders impact", () => {
-    const [confirming] = AutoLabeling.update(
-      loadedModel(),
-      AutoLabeling.OpenedPublishPolicy({ policyId: policy.id }),
-    )
-    const [publishing] = AutoLabeling.update(
-      confirming,
-      AutoLabeling.ConfirmedPublishPolicy(),
-    )
-    const result = Schema.decodeUnknownSync(
-      PolicyManagement.PublishPolicyResponse,
-    )({
-      policy: Schema.encodeSync(PolicyManagement.PublicPolicy)(policy),
-      published: {
-        id: "version-2",
-        policyId: policy.id,
-        revision: 5,
-        program,
-        contentHash: "hash",
-        registryManifest: ["pull_request.title"],
-        triggerManifest: ["pull_request"],
-        publicationStatus: "published",
-        createdAt: timestamp,
-      },
-      impact: { facts: ["pull_request.title"], triggers: ["pull_request"] },
-    })
-    const [published] = AutoLabeling.update(
-      publishing,
-      AutoLabeling.CompletedPublishPolicy({ requestId: 2, repository, result }),
-    )
-    Scene.scene(
-      { update: AutoLabeling.update, view: policiesView() },
-      Scene.given(published),
-      Scene.expect(Scene.role("dialog")).not.toExist(),
-      Scene.expect(Scene.role("status")).toContainText(
-        "Published Documentation policy",
-      ),
-      Scene.expect(Scene.role("status")).toContainText(
-        "Facts: pull_request.title",
       ),
     )
   })
@@ -506,7 +463,7 @@ describe("generic policy UI", () => {
       AutoLabeling.CompletedSavePolicy({
         requestId: 2,
         repository,
-        policy: draftPolicy,
+        policy: secondPolicy,
       }),
     )
     Scene.scene(
@@ -517,7 +474,7 @@ describe("generic policy UI", () => {
     )
   })
 
-  it("renders draft test outcome and keyed node trace", () => {
+  it("renders the current policy test outcome and keyed node trace", () => {
     const [loading] = AutoLabeling.update(
       loadedModel(),
       AutoLabeling.OpenedPolicyTest({ policyId: policy.id }),
@@ -547,7 +504,7 @@ describe("generic policy UI", () => {
       PolicyManagement.TestPolicyResponse,
     )({
       policyId: policy.id,
-      tested: { _tag: "Draft", version: 7 },
+      policyVersionId: policy.currentVersionId,
       pullRequestNumber: 42,
       decision: {
         outcome: "Abstain",
@@ -578,7 +535,7 @@ describe("generic policy UI", () => {
         "matchesWhen > All child 1: NoMatch",
       ),
       Scene.expect(Scene.role("dialog")).toContainText(
-        "Tested draft version 7",
+        "Tested current policy version version-1",
       ),
     )
   })
@@ -606,7 +563,7 @@ describe("generic policy UI", () => {
     )
   })
 
-  it("shows published policy binding behavior and compact row menu", () => {
+  it("shows policy binding behavior and compact row menu", () => {
     Scene.scene(
       { update: AutoLabeling.update, view: autoLabelingView() },
       Scene.given(loadedModel()),
@@ -648,7 +605,7 @@ describe("generic policy UI", () => {
     )
   })
 
-  it("opens the published policy binding editor from the rule row menu", () => {
+  it("opens the policy binding editor from the rule row menu", () => {
     Scene.scene(
       { update: AutoLabeling.update, view: autoLabelingView() },
       Scene.given(loadedModel()),
@@ -669,9 +626,7 @@ describe("generic policy UI", () => {
         [Menu.FocusButton, Menu.CompletedFocusButton()],
         [Dialog.ShowDialog, Dialog.CompletedShowDialog()],
       ),
-      Scene.expect(
-        Scene.role("combobox", { name: "Published policy" }),
-      ).toExist(),
+      Scene.expect(Scene.role("combobox", { name: "Policy" })).toExist(),
       Scene.expect(Scene.role("dialog")).toContainText("Rule type: Policy"),
       Scene.expect(Scene.role("combobox", { name: "Rule type" })).not.toExist(),
       Scene.expect(Scene.role("combobox", { name: "On no match" })).toExist(),
@@ -734,17 +689,17 @@ describe("generic policy UI", () => {
         Scene.role("combobox", { name: "Gate policy (optional)" }),
       ).toExist(),
       Scene.expect(Scene.role("dialog")).toContainText(
-        "AI runs only when this published policy matches. If it does not match, the current label is preserved.",
+        "AI runs only when this policy matches. If it does not match, the current label is preserved.",
       ),
     )
   })
 
-  it("visibly blocks enabling unpublished policy rules", () => {
-    const unpublishedRule = {
+  it("allows every saved policy in labeling rules", () => {
+    const secondPolicyRule = {
       ...rule,
       enabled: false,
-      policyId: draftPolicy.id,
-      policy: { id: draftPolicy.id, name: draftPolicy.name, published: false },
+      policyId: secondPolicy.id,
+      policy: { id: secondPolicy.id, name: secondPolicy.name },
     }
     const [loading] = AutoLabeling.update(
       AutoLabeling.init(),
@@ -757,8 +712,8 @@ describe("generic policy UI", () => {
         repository,
         policyRevision: 1,
         ruleRevision: 1,
-        policies: [draftPolicy],
-        rules: [unpublishedRule],
+        policies: [secondPolicy],
+        rules: [secondPolicyRule],
         activity: { windowDays: 30, totalFires: 0, rules: [] },
         audit: [],
         labels: [{ name: "documentation", description: null, color: "0ea5e9" }],
@@ -767,34 +722,21 @@ describe("generic policy UI", () => {
     Scene.scene(
       { update: AutoLabeling.update, view: autoLabelingView() },
       Scene.given(model),
-      Scene.expect(Scene.text("Unpublished policy; cannot enable")).toExist(),
       Scene.expect(
-        Scene.role("switch", { name: "Enable Draft only" }),
-      ).toBeDisabled(),
+        Scene.text("Unpublished policy; cannot enable"),
+      ).not.toExist(),
+      Scene.expect(
+        Scene.role("switch", { name: "Enable Second policy" }),
+      ).toBeEnabled(),
       Scene.expect(
         Scene.role("button", { name: "New label rule" }),
       ).toBeEnabled(),
-      Scene.expect(
-        Scene.text(
-          "No policies are published. Policy rules and AI gates are unavailable, but ungated AI rules can still be created.",
-        ),
-      ).not.toExist(),
       Scene.click(Scene.role("button", { name: "New label rule" })),
       Scene.Command.resolve(Dialog.ShowDialog, Dialog.CompletedShowDialog()),
-      Scene.Mount.resolve(
-        AiPromptEditor.MountAiPromptEditor,
-        AiPromptEditor.MountedEditor(),
+      Scene.expect(Scene.role("option", { name: "Policy rule" })).toBeEnabled(),
+      Scene.expect(Scene.role("combobox", { name: "Policy" })).toHaveValue(
+        secondPolicy.id,
       ),
-      Scene.expect(Scene.role("dialog")).toContainText("AI rule"),
-      Scene.expect(
-        Scene.role("option", { name: "Policy rule" }),
-      ).toBeDisabled(),
-      Scene.expect(Scene.role("dialog")).toContainText(
-        "No published policies are available. Create and publish a policy before choosing a policy rule. AI rules remain available.",
-      ),
-      Scene.expect(
-        Scene.role("combobox", { name: "Gate policy (optional)" }),
-      ).toHaveValue(""),
     )
   })
 })

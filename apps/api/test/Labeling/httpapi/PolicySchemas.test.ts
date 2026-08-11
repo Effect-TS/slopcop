@@ -34,7 +34,7 @@ describe("policy request schemas", () => {
     ).toThrow()
   })
 
-  it("accepts a pinned published policy reference", () => {
+  it("decodes a legacy version-pinned reference as a policy reference", () => {
     const request = Schema.decodeUnknownSync(Management.CreatePolicyRequest)({
       name: "Composed policy",
       target: "pull_request",
@@ -50,7 +50,7 @@ describe("policy request schemas", () => {
 
     expect(request.program.matchesWhen).toEqual({
       _tag: "PolicyReference",
-      policyVersionId: "published-version-1",
+      policyId: "published-version-1",
     })
   })
 })

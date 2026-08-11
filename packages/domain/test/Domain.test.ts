@@ -15,7 +15,7 @@ const decodes = <S extends Schema.ConstraintDecoder<unknown>>(
   schema: S,
   input: unknown,
 ) => Option.isSome(Schema.decodeUnknownOption(schema)(input))
-const policyVersionId = Schema.decodeUnknownSync(PolicyProgram.PolicyVersionId)
+const policyId = Schema.decodeUnknownSync(PolicyProgram.PolicyId)
 
 describe("domain schemas", () => {
   it("encodes GitHub App JWT claims as JSON", () => {
@@ -151,9 +151,7 @@ describe("domain schemas", () => {
       },
     })
 
-    expect(
-      PolicyProgramSource.toPolicyProgram(source, policyVersionId),
-    ).toEqual({
+    expect(PolicyProgramSource.toPolicyProgram(source, policyId)).toEqual({
       target: "pull_request",
       appliesWhen: {
         _tag: "Not",
@@ -205,7 +203,7 @@ describe("domain schemas", () => {
       appliesWhen: null,
       matchesWhen: {
         _tag: "PolicyReference",
-        policyVersionId: "version-1",
+        policyId: "version-1",
       },
     })
 
@@ -220,9 +218,7 @@ describe("domain schemas", () => {
       matchesWhen: { policy: "Shared policy" },
     })
     expect(
-      PolicyProgramSource.toPolicyProgram(source, () =>
-        policyVersionId("version-1"),
-      ),
+      PolicyProgramSource.toPolicyProgram(source, () => policyId("version-1")),
     ).toEqual(program)
   })
 
@@ -279,9 +275,9 @@ describe("domain schemas", () => {
         { item: { not: { field: "reviewer" } } },
       ],
     })
-    expect(
-      PolicyProgramSource.toPolicyProgram(source, policyVersionId),
-    ).toEqual(program)
+    expect(PolicyProgramSource.toPolicyProgram(source, policyId)).toEqual(
+      program,
+    )
   })
 
   it("builds stable, human-readable structural node locations", () => {
@@ -296,7 +292,7 @@ describe("domain schemas", () => {
           1,
         ),
       ),
-      versionId,
+      policyId("version/1"),
       "appliesWhen",
     )
 
@@ -307,7 +303,7 @@ describe("domain schemas", () => {
         { _tag: "Not" },
         {
           _tag: "PolicyReference",
-          policyVersionId: versionId,
+          policyId: versionId,
           root: "appliesWhen",
         },
       ],
@@ -316,7 +312,7 @@ describe("domain schemas", () => {
       '["matchesWhen",["All",1],["Not"],["PolicyReference","version/1","appliesWhen"]]',
     )
     expect(PolicyProgram.formatPolicyNodeLocation(location)).toBe(
-      "matchesWhen > All child 2 > Not condition > policy version 'version/1' appliesWhen",
+      "matchesWhen > All child 2 > Not condition > policy 'version/1' appliesWhen",
     )
   })
 

@@ -23,7 +23,7 @@ const failureMessage = (error: {
     case "RepositoryNotConfigured":
       return "This repository is not configured for SlopCop."
     case "PolicyConflict":
-      return "The policy draft changed on the server. Your local draft is preserved."
+      return "The policy changed on the server. Your local changes are preserved."
     case "LabelingRuleConflict":
     case "LabelingRulesRevisionConflict":
       return "The label rule changed on the server. Your local draft is preserved."
@@ -140,7 +140,7 @@ export const SavePolicy = FoldkitCommand.define("SavePolicy", {
                     : { description: draft.description },
               },
             })
-          : yield* client.labelingPolicies.patchPolicyDraft({
+          : yield* client.labelingPolicies.savePolicy({
               params: { ...repository, policyId: identity.id },
               payload: {
                 name: draft.name,
@@ -149,7 +149,7 @@ export const SavePolicy = FoldkitCommand.define("SavePolicy", {
                   draft.description.trim() === ""
                     ? {}
                     : { description: draft.description },
-                version: identity.draftVersion,
+                version: identity.version,
               },
             })
       return M.CompletedSavePolicy({ requestId, repository, policy })
@@ -162,10 +162,8 @@ export const SavePolicy = FoldkitCommand.define("SavePolicy", {
             message: failureMessage(error),
             currentPolicy:
               error._tag === "PolicyConflict" ? error.currentPolicy : null,
-            currentDraftVersion:
-              error._tag === "PolicyConflict"
-                ? error.currentDraftVersion
-                : null,
+            currentVersion:
+              error._tag === "PolicyConflict" ? error.currentVersion : null,
           }),
         ),
       ),
@@ -201,27 +199,31 @@ export const ValidatePolicy = FoldkitCommand.define("ValidatePolicy", {
     ),
 })
 
-export const PublishPolicy = FoldkitCommand.define("PublishPolicy", {
-  args: { requestId: Schema.Int, repository: Repository, policyId: PolicyId },
-  messages: [M.CompletedPublishPolicy, M.FailedToPublishPolicy],
-  execute: ({ requestId, repository, policyId }) =>
+export const DeletePolicy = FoldkitCommand.define("DeletePolicy", {
+  args: {
+    requestId: Schema.Int,
+    repository: Repository,
+    policyId: PolicyId,
+    version: Schema.Int,
+  },
+  messages: [M.CompletedDeletePolicy, M.FailedToDeletePolicy],
+  execute: ({ requestId, repository, policyId, version }) =>
     Effect.gen(function* () {
       const client = yield* ApiClient
-      const detail = yield* client.labelingPolicies.getPolicy({
+      yield* client.labelingPolicies.deletePolicy({
         params: { ...repository, policyId },
+        query: { version },
       })
-      const result = yield* client.labelingPolicies.publishPolicy({
-        params: { ...repository, policyId },
-        payload: { version: detail.draft.version },
-      })
-      return M.CompletedPublishPolicy({ requestId, repository, result })
+      return M.CompletedDeletePolicy({ requestId, repository, policyId })
     }).pipe(
       Effect.catch((error) =>
         Effect.succeed(
-          M.FailedToPublishPolicy({
+          M.FailedToDeletePolicy({
             requestId,
             repository,
             message: failureMessage(error),
+            currentPolicy:
+              error._tag === "PolicyConflict" ? error.currentPolicy : null,
           }),
         ),
       ),

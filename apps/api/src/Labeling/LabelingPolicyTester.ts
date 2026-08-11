@@ -44,8 +44,8 @@ export class LabelingPolicyTester extends Context.Service<
     const rows = yield* PoliciesRepo
     const facts = yield* PolicyFacts
     const resolver = {
-      resolve: (id: Program.PolicyVersionId) =>
-        rows.findResolvedVersion(id).pipe(
+      resolve: (id: Program.PolicyId) =>
+        rows.findCurrentVersion(id).pipe(
           Effect.map(
             Option.match({
               onNone: () => null,
@@ -65,7 +65,7 @@ export class LabelingPolicyTester extends Context.Service<
       policyId: LabelingPolicy.LabelingPolicy["id"],
       pullRequestNumber: number,
     ) {
-      const { draft } = yield* policies.get(slug, policyId)
+      const { current } = yield* policies.get(slug, policyId)
       const compiled = yield* policies.validate(slug, policyId)
       const repository = yield* repositories.findBySlug(slug)
       if (Option.isNone(repository))
@@ -98,14 +98,14 @@ export class LabelingPolicyTester extends Context.Service<
         labels,
       )
       const decision = yield* evaluatePolicyProgram({
-        program: draft.program,
+        program: current.program,
         repositoryId: repository.value.id,
         facts: snapshot,
         resolver,
       })
       return {
         policyId,
-        tested: { _tag: "Draft" as const, version: draft.version },
+        policyVersionId: current.id,
         pullRequestNumber,
         decision,
       }

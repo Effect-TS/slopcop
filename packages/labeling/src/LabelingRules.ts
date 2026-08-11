@@ -230,16 +230,11 @@ export class LabelingRules extends Context.Service<
     const requirePolicy = Effect.fn("LabelingRules.requirePolicy")(function* (
       repo: GitHubRepository.GitHubRepository,
       policyId: Rule.PolicyLabelingRule["policyId"],
-      requirePublished: boolean,
     ) {
       const found = yield* policies.find(repo.id, policyId)
       if (Option.isNone(found))
         return yield* new InvalidLabelingRule({
           message: `Policy '${policyId}' does not exist in ${repo.slug}.`,
-        })
-      if (requirePublished && found.value.publishedVersionId === null)
-        return yield* new InvalidLabelingRule({
-          message: "The labeling rule requires a published policy.",
         })
     })
     const mapGitHubError =
@@ -371,10 +366,10 @@ export class LabelingRules extends Context.Service<
     ) {
       const repo = yield* repository(slug)
       if (input._tag === "PolicyLabelingRule")
-        yield* requirePolicy(repo, input.policyId, input.enabled)
+        yield* requirePolicy(repo, input.policyId)
       else {
         if (input.gatePolicyId !== null)
-          yield* requirePolicy(repo, input.gatePolicyId, true)
+          yield* requirePolicy(repo, input.gatePolicyId)
         yield* validateAiPrompt(input.prompt, input.evidence)
       }
       const canonical = yield* requireLabel(repo, input.label)
@@ -436,12 +431,11 @@ export class LabelingRules extends Context.Service<
         return yield* new InvalidLabelingRule({
           message: "A labeling rule cannot be converted to another rule kind.",
         })
-      const enabled = input.enabled ?? current.enabled
       if (
         current._tag === "PolicyLabelingRule" &&
         input._tag === "PolicyLabelingRule"
       )
-        yield* requirePolicy(repo, input.policyId ?? current.policyId, enabled)
+        yield* requirePolicy(repo, input.policyId ?? current.policyId)
       else if (
         current._tag === "AiLabelingRule" &&
         input._tag === "AiLabelingRule"
@@ -450,8 +444,7 @@ export class LabelingRules extends Context.Service<
           input.gatePolicyId === undefined
             ? current.gatePolicyId
             : input.gatePolicyId
-        if (gatePolicyId !== null)
-          yield* requirePolicy(repo, gatePolicyId, true)
+        if (gatePolicyId !== null) yield* requirePolicy(repo, gatePolicyId)
         yield* validateAiPrompt(
           input.prompt ?? current.prompt,
           input.evidence ?? current.evidence,

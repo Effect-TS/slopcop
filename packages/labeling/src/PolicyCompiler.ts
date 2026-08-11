@@ -66,25 +66,25 @@ export class PolicyCompileError extends Data.TaggedError("PolicyCompileError")<{
 
 export interface ResolvedPolicyVersion {
   readonly id: Program.PolicyVersionId
-  readonly policyId: string
+  readonly policyId: Program.PolicyId
   readonly repositoryId: string
   readonly target: Program.PolicyTarget
   readonly program: Program.PolicyProgram
 }
-export interface PolicyVersionResolver {
+export interface PolicyResolver {
   readonly resolve: (
-    id: Program.PolicyVersionId,
+    id: Program.PolicyId,
   ) => Effect.Effect<ResolvedPolicyVersion | null, unknown>
 }
 export interface PolicyCompileContext {
   readonly repositoryId: string
-  readonly policyId?: string
+  readonly policyId?: Program.PolicyId
 }
 export interface CompiledPolicyProgram {
   readonly program: Program.PolicyProgram
   readonly facts: ReadonlyArray<Program.PullRequestFact>
   readonly triggers: ReadonlyArray<string>
-  readonly references: ReadonlyArray<Program.PolicyVersionId>
+  readonly references: ReadonlyArray<Program.PolicyId>
   readonly nodeCount: number
   readonly expandedNodeCount: number
   readonly requiresChangedFileContent: boolean
@@ -98,7 +98,7 @@ type ItemPredicate =
 export const compilePolicyProgram = Effect.fn("PolicyCompiler.compile")(
   function* (
     program: Program.PolicyProgram,
-    resolver: PolicyVersionResolver,
+    resolver: PolicyResolver,
     context: PolicyCompileContext,
   ) {
     if (program.target !== "pull_request")
@@ -109,7 +109,7 @@ export const compilePolicyProgram = Effect.fn("PolicyCompiler.compile")(
       })
 
     const facts = new Set<Program.PullRequestFact>()
-    const references = new Set<Program.PolicyVersionId>()
+    const references = new Set<Program.PolicyId>()
     let localNodes = 0
     let expandedNodes = 0
     let requiresChangedFileContent = false
@@ -231,31 +231,31 @@ export const compilePolicyProgram = Effect.fn("PolicyCompiler.compile")(
                   location,
                 )
               case "PolicyReference": {
-                if (stack.has(condition.policyVersionId))
+                if (stack.has(condition.policyId))
                   return yield* new PolicyCompileError({
                     reason: "ReferenceCycle",
-                    message: `Policy reference cycle includes '${condition.policyVersionId}'.`,
+                    message: `Policy reference cycle includes '${condition.policyId}'.`,
                     location,
                   })
                 if (
                   referenceDepth >= MAX_REFERENCE_DEPTH ||
-                  (!references.has(condition.policyVersionId) &&
+                  (!references.has(condition.policyId) &&
                     references.size >= MAX_REFERENCES)
                 )
                   return yield* new PolicyCompileError({
                     reason: "LimitExceeded",
-                    message: "Policy references exceed 8 versions or depth 4.",
+                    message: "Policy references exceed 8 policies or depth 4.",
                     location,
                   })
-                references.add(condition.policyVersionId)
+                references.add(condition.policyId)
                 const resolved = yield* resolver
-                  .resolve(condition.policyVersionId)
+                  .resolve(condition.policyId)
                   .pipe(
                     Effect.mapError(
                       () =>
                         new PolicyCompileError({
                           reason: "MissingReference",
-                          message: `Policy version '${condition.policyVersionId}' is unavailable.`,
+                          message: `Policy '${condition.policyId}' is unavailable.`,
                           location,
                         }),
                     ),
@@ -263,13 +263,13 @@ export const compilePolicyProgram = Effect.fn("PolicyCompiler.compile")(
                 if (resolved === null)
                   return yield* new PolicyCompileError({
                     reason: "MissingReference",
-                    message: `Policy version '${condition.policyVersionId}' does not exist.`,
+                    message: `Policy '${condition.policyId}' does not exist.`,
                     location,
                   })
                 if (resolved.repositoryId !== context.repositoryId)
                   return yield* new PolicyCompileError({
                     reason: "ReferenceOwnership",
-                    message: `Policy version '${condition.policyVersionId}' belongs to another repository.`,
+                    message: `Policy '${condition.policyId}' belongs to another repository.`,
                     location,
                   })
                 if (
@@ -278,26 +278,26 @@ export const compilePolicyProgram = Effect.fn("PolicyCompiler.compile")(
                 )
                   return yield* new PolicyCompileError({
                     reason: "ReferenceTargetMismatch",
-                    message: `Policy version '${condition.policyVersionId}' has an incompatible target.`,
+                    message: `Policy '${condition.policyId}' has an incompatible target.`,
                     location,
                   })
                 const next = new Set(stack)
-                next.add(condition.policyVersionId)
+                next.add(condition.policyId)
                 yield* visitProgram(
                   resolved.program,
-                  condition.policyVersionId,
+                  condition.policyId,
                   nodeDepth + 1,
                   referenceDepth + 1,
                   next,
                   false,
                   Program.policyNodeLocationReference(
                     location,
-                    condition.policyVersionId,
+                    condition.policyId,
                     "appliesWhen",
                   ),
                   Program.policyNodeLocationReference(
                     location,
-                    condition.policyVersionId,
+                    condition.policyId,
                     "matchesWhen",
                   ),
                 )
