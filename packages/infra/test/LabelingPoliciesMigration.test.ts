@@ -11,6 +11,28 @@ const apply = (database: DatabaseSync, names: ReadonlyArray<string>) => {
     database.exec(readFileSync(new URL(name, directory), "utf8")),
   )
 }
+const repositoryId = "019be000-0000-7000-8000-000000000001"
+const insertRepository = (database: DatabaseSync) =>
+  database.exec(`
+    INSERT INTO github_repositories (
+      id,github_id,owner,repo,installation_id,enabled,rules_revision
+    ) VALUES (
+      '${repositoryId}','test-repository','Test','repository','1',1,0
+    );
+  `)
+const insertLegacyAiRule = (database: DatabaseSync) =>
+  database.exec(`
+    INSERT INTO labeling_rules (
+      id,repository_id,name,label,instructions,confidence_threshold,mode,
+      exclusive_group,enabled,validation_status,validated_at,version,kind,
+      created_at,updated_at
+    ) VALUES (
+      '019be000-0000-7000-8000-000000000005','${repositoryId}',
+      'Bug fixes','bug',
+      'Apply when the primary purpose is to correct behavior that is incorrect, unintended, silently ignored, regressed, or improperly validated. This includes adding validation or an error path that makes existing behavior conform to its intended contract. Prefer bug over enhancement when corrective work also adds implementation logic.',
+      0.75,'add-only','change-kind',1,'valid',100,1,'ai',100,200
+    );
+  `)
 
 describe("00012 generic policy engine migration", () => {
   it("applies the fresh migration chain with valid foreign keys", () => {
@@ -18,6 +40,15 @@ describe("00012 generic policy engine migration", () => {
     database.exec("PRAGMA foreign_keys=ON")
     apply(database, migrations)
     expect(migrations).toContain("00012_add_generic_policy_engine.sql")
+    expect(migrations).not.toContain("00006_seed_effect_labeling.sql")
+    expect(
+      database
+        .prepare("SELECT count(*) AS count FROM github_repositories")
+        .get(),
+    ).toEqual({ count: 0 })
+    expect(
+      database.prepare("SELECT count(*) AS count FROM labeling_rules").get(),
+    ).toEqual({ count: 0 })
     expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([])
     database.close()
   })
@@ -50,18 +81,19 @@ describe("00012 generic policy engine migration", () => {
     const database = new DatabaseSync(":memory:")
     database.exec("PRAGMA foreign_keys=ON")
     apply(database, migrations)
+    insertRepository(database)
     database.exec(`
       INSERT INTO labeling_policies (
         id,repository_id,name,target,published_version_id,version
       ) VALUES (
-        'staged-policy','019be000-0000-7000-8000-000000000001',
+        'staged-policy','${repositoryId}',
         'Staged','pull_request',NULL,1
       );
       INSERT INTO labeling_policy_versions (
         id,policy_id,repository_id,revision,program,content_hash,
         registry_manifest,trigger_manifest,publication_status
       ) VALUES (
-        'staged-version','staged-policy','019be000-0000-7000-8000-000000000001',
+        'staged-version','staged-policy','${repositoryId}',
         1,'{"target":"pull_request","appliesWhen":null,"matchesWhen":{"_tag":"FactPredicate","fact":"pull_request.draft","operator":"Equals","value":false}}',
         'staged-hash','["pull_request.draft"]','["pull_request:opened"]','staged'
       );
@@ -72,7 +104,7 @@ describe("00012 generic policy engine migration", () => {
       INSERT INTO labeling_policy_triggers (
         policy_version_id,repository_id,event,action
       ) VALUES (
-        'staged-version','019be000-0000-7000-8000-000000000001',
+        'staged-version','${repositoryId}',
         'pull_request','opened'
       );
       DELETE FROM labeling_policies WHERE id='staged-policy';
@@ -92,9 +124,31 @@ describe("00012 generic policy engine migration", () => {
     const database = new DatabaseSync(":memory:")
     database.exec("PRAGMA foreign_keys=ON")
     apply(database, migrations)
+    insertRepository(database)
+    database.exec(`
+      INSERT INTO labeling_policies (id,repository_id,name,target,version)
+      VALUES ('published-policy','${repositoryId}','Published','pull_request',1);
+      INSERT INTO labeling_policy_versions (
+        id,policy_id,repository_id,revision,program,content_hash,
+        registry_manifest,trigger_manifest,publication_status
+      ) VALUES (
+        'published-version','published-policy','${repositoryId}',1,
+        '{"target":"pull_request","appliesWhen":null,"matchesWhen":{"_tag":"FactPredicate","fact":"pull_request.draft","operator":"Equals","value":false}}',
+        'published-hash','["pull_request.draft"]','["pull_request:opened"]','staged'
+      );
+      INSERT INTO labeling_policy_drafts (policy_id,repository_id,program,metadata,version)
+      SELECT policy_id,repository_id,program,'{}',1 FROM labeling_policy_versions
+      WHERE id='published-version';
+      INSERT INTO labeling_policy_triggers (policy_version_id,repository_id,event,action)
+      VALUES ('published-version','${repositoryId}','pull_request','opened');
+      UPDATE labeling_policy_versions SET publication_status='published'
+      WHERE id='published-version';
+      UPDATE labeling_policies SET published_version_id='published-version',version=2
+      WHERE id='published-policy';
+    `)
     expect(() =>
       database.exec(
-        "DELETE FROM github_repositories WHERE id='019be000-0000-7000-8000-000000000001'",
+        `DELETE FROM github_repositories WHERE id='${repositoryId}'`,
       ),
     ).not.toThrow()
     expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([])
@@ -105,7 +159,7 @@ describe("00012 generic policy engine migration", () => {
     const database = new DatabaseSync(":memory:")
     database.exec("PRAGMA foreign_keys=ON")
     apply(database, migrations)
-    const repositoryId = "019be000-0000-7000-8000-000000000001"
+    insertRepository(database)
     const before = database
       .prepare("SELECT rules_revision FROM github_repositories WHERE id=?")
       .get(repositoryId)
@@ -182,6 +236,8 @@ describe("00012 generic policy engine migration", () => {
       database,
       migrations.filter((name) => !name.startsWith("00012_")),
     )
+    insertRepository(database)
+    insertLegacyAiRule(database)
     database.exec(`
       INSERT INTO labeling_rules (
         id,repository_id,name,label,instructions,confidence_threshold,mode,
