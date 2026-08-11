@@ -1,15 +1,13 @@
 import * as Schema from "effect/Schema"
 import * as GitHubLabel from "../GitHub/GitHubLabel.ts"
 import { GitHubRepositorySlug } from "../GitHub/GitHubRepository.ts"
+import { LabelingPolicyId, LabelingPolicyName } from "./LabelingPolicy.ts"
 import {
-  LabelingRuleConfidenceThreshold,
-  LabelingRuleExclusiveGroup,
+  LabelingRuleConflictGroup,
   LabelingRuleId,
-  LabelingRuleInstructions,
-  LabelingRuleKind,
-  LabelingRuleMode,
-  LabelingRuleName,
   LabelingRuleValidationStatus,
+  LabelOnMatch,
+  LabelOnNoMatch,
 } from "./LabelingRule.ts"
 import {
   LabelingRuleAuditEntryId,
@@ -17,44 +15,44 @@ import {
 } from "./LabelingRuleAuditEntry.ts"
 
 export const RepositoryPath = GitHubRepositorySlug
-
 export const RulePath = Schema.Struct({
   ...GitHubRepositorySlug.fields,
   ruleId: LabelingRuleId,
 })
-
 export const PublicLabelingRule = Schema.Struct({
   id: LabelingRuleId,
-  name: LabelingRuleName,
+  policyId: LabelingPolicyId,
   label: GitHubLabel.GitHubLabelName,
-  kind: LabelingRuleKind,
-  instructions: LabelingRuleInstructions,
-  confidenceThreshold: LabelingRuleConfidenceThreshold,
-  mode: LabelingRuleMode,
-  exclusiveGroup: LabelingRuleExclusiveGroup,
+  onMatch: LabelOnMatch,
+  onNoMatch: LabelOnNoMatch,
+  conflictGroup: LabelingRuleConflictGroup,
+  priority: Schema.Int,
   enabled: Schema.Boolean,
   validationStatus: LabelingRuleValidationStatus,
   validatedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   version: Schema.Int,
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
+  policy: Schema.Struct({
+    id: LabelingPolicyId,
+    name: LabelingPolicyName,
+    published: Schema.Boolean,
+  }),
 })
+export type PublicLabelingRule = typeof PublicLabelingRule.Type
 
 export const ListLabelingRulesQuery = Schema.Struct({
   includeDisabled: Schema.optionalKey(Schema.Boolean),
 })
-
 export const LabelingRuleFireCount = Schema.Struct({
   ruleId: LabelingRuleId,
   fires: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 })
-
 export const LabelingRuleActivitySummary = Schema.Struct({
   windowDays: Schema.Literal(30),
   totalFires: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   rules: Schema.Array(LabelingRuleFireCount),
 })
-
 export const ListLabelingRulesResponse = Schema.Struct({
   repository: Schema.String,
   revision: Schema.Int,
@@ -64,38 +62,53 @@ export const ListLabelingRulesResponse = Schema.Struct({
 
 export const PublicLabelingRuleAuditValue = Schema.Struct({
   id: LabelingRuleId,
-  name: LabelingRuleName,
+  policyId: LabelingPolicyId,
   label: GitHubLabel.GitHubLabelName,
-  kind: LabelingRuleKind,
-  instructions: LabelingRuleInstructions,
-  confidenceThreshold: LabelingRuleConfidenceThreshold,
-  mode: LabelingRuleMode,
-  exclusiveGroup: LabelingRuleExclusiveGroup,
+  onMatch: LabelOnMatch,
+  onNoMatch: LabelOnNoMatch,
+  conflictGroup: LabelingRuleConflictGroup,
+  priority: Schema.Int,
   enabled: Schema.Boolean,
   validationStatus: LabelingRuleValidationStatus,
   validatedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   version: Schema.Int,
 })
-
+export const PublicLegacyLabelingRuleAuditValue = Schema.Struct({
+  id: LabelingRuleId,
+  name: Schema.optionalKey(Schema.String),
+  label: Schema.String,
+  kind: Schema.optionalKey(Schema.String),
+  instructions: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  confidenceThreshold: Schema.optionalKey(Schema.Finite),
+  mode: Schema.optionalKey(Schema.String),
+  exclusiveGroup: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  enabled: Schema.Boolean,
+  validationStatus: Schema.String,
+  validatedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  version: Schema.Int,
+})
 export const PublicLabelingRuleAuditEntry = Schema.Struct({
   id: LabelingRuleAuditEntryId,
   ruleId: LabelingRuleId,
   actor: Schema.String,
   operation: LabelingRuleAuditOperation,
-  before: Schema.NullOr(PublicLabelingRuleAuditValue),
-  after: Schema.NullOr(PublicLabelingRuleAuditValue),
+  before: Schema.NullOr(
+    Schema.Union([
+      PublicLabelingRuleAuditValue,
+      PublicLegacyLabelingRuleAuditValue,
+    ]),
+  ),
+  after: Schema.NullOr(
+    Schema.Union([
+      PublicLabelingRuleAuditValue,
+      PublicLegacyLabelingRuleAuditValue,
+    ]),
+  ),
   createdAt: Schema.DateTimeUtcFromString,
 })
-
-export const LabelingRuleAuditFilterOperation = Schema.Union([
-  Schema.Literal("all"),
-  LabelingRuleAuditOperation,
-])
-
 export const LabelingRuleAuditCursor = Schema.String.check(
   Schema.isPattern(/^\d+:.+$/),
 )
-
 export const ListLabelingRuleAuditQuery = Schema.Struct({
   ruleId: Schema.optionalKey(LabelingRuleId),
   operation: Schema.optionalKey(LabelingRuleAuditOperation),
@@ -104,17 +117,14 @@ export const ListLabelingRuleAuditQuery = Schema.Struct({
     Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })),
   ),
 })
-
 export const ListLabelingRuleAuditResponse = Schema.Struct({
   entries: Schema.Array(PublicLabelingRuleAuditEntry),
   nextCursor: Schema.NullOr(LabelingRuleAuditCursor),
 })
-
 export const PublicLabelingRuleActivityEntry = Schema.Struct({
   repository: RepositoryPath,
   ...PublicLabelingRuleAuditEntry.fields,
 })
-
 export const ListLabelingRuleActivityQuery = Schema.Struct({
   repository: Schema.optionalKey(Schema.String),
   operation: Schema.optionalKey(LabelingRuleAuditOperation),
@@ -123,7 +133,6 @@ export const ListLabelingRuleActivityQuery = Schema.Struct({
     Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })),
   ),
 })
-
 export const ListLabelingRuleActivityResponse = Schema.Struct({
   entries: Schema.Array(PublicLabelingRuleActivityEntry),
   nextCursor: Schema.NullOr(LabelingRuleAuditCursor),
@@ -132,13 +141,11 @@ export const ListLabelingRuleActivityResponse = Schema.Struct({
 export const ListGitHubLabelsResponse = Schema.Struct({
   labels: Schema.Array(GitHubLabel.GitHubLabel),
 })
-
 export const ListRuleTestCandidatesQuery = Schema.Struct({
   limit: Schema.optionalKey(
     Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })),
   ),
 })
-
 export const RuleTestCandidate = Schema.Struct({
   number: Schema.Int.check(Schema.isGreaterThan(0)),
   title: Schema.String,
@@ -147,71 +154,50 @@ export const RuleTestCandidate = Schema.Struct({
   updatedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
 })
 export type RuleTestCandidate = typeof RuleTestCandidate.Type
-
 export const ListRuleTestCandidatesResponse = Schema.Struct({
   candidates: Schema.Array(RuleTestCandidate),
 })
-
 export const ValidateCandidateLabelRequest = Schema.Struct({
   label: GitHubLabel.GitHubLabelName,
 })
-
 export const ValidateCandidateLabelResponse =
   GitHubLabel.GitHubLabelValidationResult
 
 export const CreateLabelingRuleRequest = Schema.Struct({
-  name: LabelingRuleName,
+  policyId: LabelingPolicyId,
   label: GitHubLabel.GitHubLabelName,
-  kind: Schema.optionalKey(LabelingRuleKind),
-  instructions: LabelingRuleInstructions,
-  confidenceThreshold: LabelingRuleConfidenceThreshold,
-  mode: LabelingRuleMode,
-  exclusiveGroup: LabelingRuleExclusiveGroup,
+  onMatch: LabelOnMatch,
+  onNoMatch: LabelOnNoMatch,
+  conflictGroup: Schema.optionalKey(LabelingRuleConflictGroup),
+  priority: Schema.optionalKey(Schema.Int),
   enabled: Schema.Boolean,
 })
-
 export type CreateLabelingRuleRequest = typeof CreateLabelingRuleRequest.Type
-
 export const PatchLabelingRuleRequest = Schema.Struct({
-  name: Schema.optionalKey(LabelingRuleName),
+  policyId: Schema.optionalKey(LabelingPolicyId),
   label: Schema.optionalKey(GitHubLabel.GitHubLabelName),
-  kind: Schema.optionalKey(LabelingRuleKind),
-  instructions: Schema.optionalKey(LabelingRuleInstructions),
-  confidenceThreshold: Schema.optionalKey(LabelingRuleConfidenceThreshold),
-  mode: Schema.optionalKey(LabelingRuleMode),
-  exclusiveGroup: Schema.optionalKey(LabelingRuleExclusiveGroup),
+  onNoMatch: Schema.optionalKey(LabelOnNoMatch),
+  conflictGroup: Schema.optionalKey(LabelingRuleConflictGroup),
+  priority: Schema.optionalKey(Schema.Int),
   enabled: Schema.optionalKey(Schema.Boolean),
   version: Schema.Int,
 })
-
 export type PatchLabelingRuleRequest = typeof PatchLabelingRuleRequest.Type
-
-export const RuleVersionRequest = Schema.Struct({
-  version: Schema.Int,
-})
-
-export const RuleVersionQuery = Schema.Struct({
-  version: Schema.Int,
-})
-
+export const RuleVersionRequest = Schema.Struct({ version: Schema.Int })
+export const RuleVersionQuery = RuleVersionRequest
 export const TestLabelingRuleRequest = Schema.Struct({
   pullRequestNumber: Schema.Int.check(Schema.isGreaterThan(0)),
 })
-
-export type TestLabelingRuleRequest = typeof TestLabelingRuleRequest.Type
-
 export const TestLabelingRuleResponse = Schema.Struct({
   ruleId: LabelingRuleId,
+  policyId: LabelingPolicyId,
   pullRequestNumber: Schema.Int.check(Schema.isGreaterThan(0)),
-  applies: Schema.Boolean,
-  selected: Schema.Boolean,
-  confidence: LabelingRuleConfidenceThreshold,
-  confidenceThreshold: LabelingRuleConfidenceThreshold,
+  outcome: Schema.Literals(["Match", "NoMatch", "Abstain"]),
+  confidence: Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 })),
   rationale: Schema.String,
+  proposedAction: Schema.Literals(["add", "remove", "preserve"]),
   proposedLabelChanges: Schema.Struct({
     add: Schema.Array(GitHubLabel.GitHubLabelName),
     remove: Schema.Array(GitHubLabel.GitHubLabelName),
   }),
 })
-
-export type TestLabelingRuleResponse = typeof TestLabelingRuleResponse.Type

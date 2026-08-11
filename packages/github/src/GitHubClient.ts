@@ -96,6 +96,7 @@ export interface CheckRun {
     | "timed_out"
     | null
   readonly appId: number | null
+  readonly producer: string | null
 }
 
 export interface CommitStatus {
@@ -148,7 +149,12 @@ const CheckRunsResponse = Schema.Struct({
           "timed_out",
         ]),
       ),
-      app: Schema.NullOr(Schema.Struct({ id: Schema.Finite })),
+      app: Schema.NullOr(
+        Schema.Struct({
+          id: Schema.Finite,
+          slug: Schema.optionalKey(Schema.String),
+        }),
+      ),
     }),
   ),
 })
@@ -761,6 +767,9 @@ export class GitHubClient extends Context.Service<
               status: check.status,
               conclusion: check.conclusion,
               appId: check.app?.id ?? null,
+              producer:
+                check.app?.slug ??
+                (check.app === null ? null : String(check.app.id)),
             })),
             nextPage(pageNumber, response),
           ] as const

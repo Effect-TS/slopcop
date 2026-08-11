@@ -1,55 +1,79 @@
-import * as GitHubLabel from "@slopcop/domain/GitHub/GitHubLabel"
-import * as RepositoryManagement from "@slopcop/domain/GitHub/RepositoryManagement"
-import * as LabelingRule from "@slopcop/domain/Labeling/LabelingRule"
-import * as LabelingRuleManagement from "@slopcop/domain/Labeling/LabelingRuleManagement"
 import * as Dialog from "@foldkit/ui/dialog"
 import * as Menu from "@foldkit/ui/menu"
+import * as GitHubLabel from "@slopcop/domain/GitHub/GitHubLabel"
+import * as RepositoryManagement from "@slopcop/domain/GitHub/RepositoryManagement"
+import * as LabelingPolicy from "@slopcop/domain/Labeling/LabelingPolicy"
+import * as PolicyManagement from "@slopcop/domain/Labeling/LabelingPolicyManagement"
+import * as LabelingRule from "@slopcop/domain/Labeling/LabelingRule"
+import * as RuleManagement from "@slopcop/domain/Labeling/LabelingRuleManagement"
+import * as PolicyProgram from "@slopcop/domain/Policy/PolicyProgram"
 import * as Schema from "effect/Schema"
+import * as PolicyCodeEditor from "../../components/policy-editor"
+import { PolicyDraft } from "./condition"
 
 export const Repository = RepositoryManagement.RepositoryPath
 export type Repository = typeof Repository.Type
-
+export const PolicyId = LabelingPolicy.LabelingPolicyId
+export type PolicyId = typeof PolicyId.Type
+export const PolicyVersionId = PolicyProgram.PolicyVersionId
+export type PolicyVersionId = typeof PolicyVersionId.Type
 export const RuleId = LabelingRule.LabelingRuleId
 export type RuleId = typeof RuleId.Type
-
-export const RuleMode = LabelingRule.LabelingRuleMode
-export type RuleMode = typeof RuleMode.Type
-
-export const RuleKind = LabelingRule.LabelingRuleKind
-export type RuleKind = typeof RuleKind.Type
-
-export const RuleAction = Schema.Literals(["Edit", "Test", "Delete"])
+export const Tab = Schema.Literals(["Policies", "Label rules"])
+export type Tab = typeof Tab.Type
+export const PolicyAction = Schema.Literals(["Edit", "Test", "Publish"])
+export type PolicyAction = typeof PolicyAction.Type
+export const RuleAction = Schema.Literals(["Edit", "Delete"])
 export type RuleAction = typeof RuleAction.Type
+export const PolicyActionMenu: ReturnType<typeof Menu.create<PolicyAction>> =
+  Menu.create<PolicyAction>()
 export const RuleActionMenu: ReturnType<typeof Menu.create<RuleAction>> =
   Menu.create<RuleAction>()
 
+export const NewPolicy = Schema.TaggedStruct("NewPolicy", {})
+export const ExistingPolicy = Schema.TaggedStruct("ExistingPolicy", {
+  id: PolicyId,
+  draftVersion: Schema.Int,
+})
+export const PolicyIdentity = Schema.Union([NewPolicy, ExistingPolicy]).pipe(
+  Schema.toTaggedUnion("_tag"),
+)
+export type PolicyIdentity = typeof PolicyIdentity.Type
+export const NewRule = Schema.TaggedStruct("NewRule", {})
+export const ExistingRule = Schema.TaggedStruct("ExistingRule", {
+  id: RuleId,
+  version: Schema.Int,
+})
+export const RuleIdentity = Schema.Union([NewRule, ExistingRule]).pipe(
+  Schema.toTaggedUnion("_tag"),
+)
+export type RuleIdentity = typeof RuleIdentity.Type
+
 export const RuleDraft = Schema.Struct({
-  name: Schema.String,
+  policyId: PolicyId,
   label: Schema.String,
-  kind: RuleKind,
-  instructions: Schema.String,
-  confidenceThreshold: Schema.Number,
-  mode: RuleMode,
-  exclusiveGroup: Schema.String,
+  onNoMatch: LabelingRule.LabelOnNoMatch,
+  conflictGroup: Schema.String,
+  priority: Schema.Int,
   enabled: Schema.Boolean,
 })
 export type RuleDraft = typeof RuleDraft.Type
 
 export const RepositoryData = Schema.Struct({
   repository: Repository,
-  revision: Schema.Int,
-  rules: Schema.Array(LabelingRuleManagement.PublicLabelingRule),
-  activity: LabelingRuleManagement.LabelingRuleActivitySummary,
+  policyRevision: Schema.Int,
+  ruleRevision: Schema.Int,
+  policies: Schema.Array(PolicyManagement.PublicPolicy),
+  rules: Schema.Array(RuleManagement.PublicLabelingRule),
+  activity: RuleManagement.LabelingRuleActivitySummary,
+  audit: Schema.Array(RuleManagement.PublicLabelingRuleAuditEntry),
   labels: Schema.Array(GitHubLabel.GitHubLabel),
 })
 export type RepositoryData = typeof RepositoryData.Type
-
 export const RepositoryRequest = Schema.Struct({
   requestId: Schema.Int,
   repository: Repository,
 })
-export type RepositoryRequest = typeof RepositoryRequest.Type
-
 export const NoRepository = Schema.TaggedStruct("NoRepository", {})
 export const LoadingRepository = Schema.TaggedStruct("LoadingRepository", {
   repository: Repository,
@@ -67,90 +91,145 @@ export const RepositoryState = Schema.Union([
   LoadedRepository,
   FailedRepository,
 ]).pipe(Schema.toTaggedUnion("_tag"))
-export type RepositoryState = typeof RepositoryState.Type
 
-const EditorFields = {
-  draft: RuleDraft,
-  ruleId: Schema.NullOr(RuleId),
-  version: Schema.NullOr(Schema.Int),
+const PolicyEditorFields = {
+  draft: PolicyDraft,
+  sourceEditor: PolicyCodeEditor.Model,
+  identity: PolicyIdentity,
+  dirty: Schema.Boolean,
 }
-export const RuleVersionConflict = Schema.TaggedStruct("RuleVersionConflict", {
-  expectedVersion: Schema.Int,
-  currentRule: LabelingRuleManagement.PublicLabelingRule,
+export const PolicyEditorClosed = Schema.TaggedStruct("PolicyEditorClosed", {})
+export const PolicyEditorLoading = Schema.TaggedStruct("PolicyEditorLoading", {
+  policy: PolicyManagement.PublicPolicy,
+  requestId: Schema.Int,
 })
-export const RepositoryRevisionConflict = Schema.TaggedStruct(
-  "RepositoryRevisionConflict",
+export const PolicyEditorEditing = Schema.TaggedStruct(
+  "PolicyEditorEditing",
+  PolicyEditorFields,
+)
+export const PolicyEditorSaving = Schema.TaggedStruct("PolicyEditorSaving", {
+  ...PolicyEditorFields,
+  requestId: Schema.Int,
+})
+export const PolicyEditorFailed = Schema.TaggedStruct("PolicyEditorFailed", {
+  ...PolicyEditorFields,
+  message: Schema.String,
+})
+export const PolicyEditorConflict = Schema.TaggedStruct(
+  "PolicyEditorConflict",
   {
-    expectedRevision: Schema.Int,
-    actualRevision: Schema.Int,
-    currentRule: Schema.NullOr(LabelingRuleManagement.PublicLabelingRule),
+    ...PolicyEditorFields,
+    message: Schema.String,
+    currentPolicy: PolicyManagement.PublicPolicy,
+    currentDraftVersion: Schema.Int,
   },
 )
-export const MutationConflict = Schema.Union([
-  RuleVersionConflict,
-  RepositoryRevisionConflict,
+export const PolicyEditorState = Schema.Union([
+  PolicyEditorClosed,
+  PolicyEditorLoading,
+  PolicyEditorEditing,
+  PolicyEditorSaving,
+  PolicyEditorFailed,
+  PolicyEditorConflict,
 ]).pipe(Schema.toTaggedUnion("_tag"))
-export type MutationConflict = typeof MutationConflict.Type
 
-export const EditorClosed = Schema.TaggedStruct("EditorClosed", {})
-export const EditorEditing = Schema.TaggedStruct("EditorEditing", EditorFields)
-export const EditorSaving = Schema.TaggedStruct("EditorSaving", {
-  ...EditorFields,
+export const ValidationIdle = Schema.TaggedStruct("ValidationIdle", {})
+export const ValidationRunning = Schema.TaggedStruct("ValidationRunning", {
+  requestId: Schema.Int,
+  policyId: PolicyId,
+})
+export const ValidationResult = Schema.TaggedStruct("ValidationResult", {
+  result: PolicyManagement.ValidatePolicyResponse,
+})
+export const ValidationFailed = Schema.TaggedStruct("ValidationFailed", {
+  message: Schema.String,
+})
+export const ValidationState = Schema.Union([
+  ValidationIdle,
+  ValidationRunning,
+  ValidationResult,
+  ValidationFailed,
+]).pipe(Schema.toTaggedUnion("_tag"))
+
+export const PublishClosed = Schema.TaggedStruct("PublishClosed", {})
+export const PublishConfirming = Schema.TaggedStruct("PublishConfirming", {
+  policy: PolicyManagement.PublicPolicy,
+})
+export const Publishing = Schema.TaggedStruct("Publishing", {
+  policy: PolicyManagement.PublicPolicy,
   requestId: Schema.Int,
 })
-export const EditorFailed = Schema.TaggedStruct("EditorFailed", {
-  ...EditorFields,
+export const PublishResult = Schema.TaggedStruct("PublishResult", {
+  result: PolicyManagement.PublishPolicyResponse,
+})
+export const PublishFailed = Schema.TaggedStruct("PublishFailed", {
+  policy: PolicyManagement.PublicPolicy,
   message: Schema.String,
 })
-export const EditorConflict = Schema.TaggedStruct("EditorConflict", {
-  ...EditorFields,
-  message: Schema.String,
-  conflict: MutationConflict,
-})
-export const EditorState = Schema.Union([
-  EditorClosed,
-  EditorEditing,
-  EditorSaving,
-  EditorFailed,
-  EditorConflict,
+export const PublishState = Schema.Union([
+  PublishClosed,
+  PublishConfirming,
+  Publishing,
+  PublishResult,
+  PublishFailed,
 ]).pipe(Schema.toTaggedUnion("_tag"))
-export type EditorState = typeof EditorState.Type
 
-export const DeleteClosed = Schema.TaggedStruct("DeleteClosed", {})
-export const DeleteConfirming = Schema.TaggedStruct("DeleteConfirming", {
-  rule: LabelingRuleManagement.PublicLabelingRule,
-})
-export const DeleteDeleting = Schema.TaggedStruct("DeleteDeleting", {
-  rule: LabelingRuleManagement.PublicLabelingRule,
+const RuleEditorFields = { draft: RuleDraft, identity: RuleIdentity }
+export const RuleEditorClosed = Schema.TaggedStruct("RuleEditorClosed", {})
+export const RuleEditorEditing = Schema.TaggedStruct(
+  "RuleEditorEditing",
+  RuleEditorFields,
+)
+export const RuleEditorSaving = Schema.TaggedStruct("RuleEditorSaving", {
+  ...RuleEditorFields,
   requestId: Schema.Int,
 })
-export const DeleteFailed = Schema.TaggedStruct("DeleteFailed", {
-  rule: LabelingRuleManagement.PublicLabelingRule,
+export const RuleEditorFailed = Schema.TaggedStruct("RuleEditorFailed", {
+  ...RuleEditorFields,
   message: Schema.String,
 })
-export const DeleteConflict = Schema.TaggedStruct("DeleteConflict", {
-  rule: LabelingRuleManagement.PublicLabelingRule,
+export const RuleEditorConflict = Schema.TaggedStruct("RuleEditorConflict", {
+  ...RuleEditorFields,
   message: Schema.String,
-  conflict: MutationConflict,
+  currentRule: RuleManagement.PublicLabelingRule,
 })
-export const DeleteState = Schema.Union([
-  DeleteClosed,
-  DeleteConfirming,
-  DeleteDeleting,
-  DeleteFailed,
-  DeleteConflict,
+export const RuleEditorState = Schema.Union([
+  RuleEditorClosed,
+  RuleEditorEditing,
+  RuleEditorSaving,
+  RuleEditorFailed,
+  RuleEditorConflict,
 ]).pipe(Schema.toTaggedUnion("_tag"))
-export type DeleteState = typeof DeleteState.Type
+
+export const RuleDeleteClosed = Schema.TaggedStruct("RuleDeleteClosed", {})
+export const RuleDeleteConfirming = Schema.TaggedStruct(
+  "RuleDeleteConfirming",
+  { rule: RuleManagement.PublicLabelingRule },
+)
+export const RuleDeleting = Schema.TaggedStruct("RuleDeleting", {
+  rule: RuleManagement.PublicLabelingRule,
+  requestId: Schema.Int,
+})
+export const RuleDeleteFailed = Schema.TaggedStruct("RuleDeleteFailed", {
+  rule: RuleManagement.PublicLabelingRule,
+  message: Schema.String,
+})
+export const RuleDeleteState = Schema.Union([
+  RuleDeleteClosed,
+  RuleDeleteConfirming,
+  RuleDeleting,
+  RuleDeleteFailed,
+]).pipe(Schema.toTaggedUnion("_tag"))
 
 const TestSelection = {
-  rule: LabelingRuleManagement.PublicLabelingRule,
-  candidates: Schema.Array(LabelingRuleManagement.RuleTestCandidate),
+  policy: PolicyManagement.PublicPolicy,
+  candidates: Schema.Array(RuleManagement.RuleTestCandidate),
   selectedPullRequest: Schema.NullOr(Schema.Int),
 }
 export const TestClosed = Schema.TaggedStruct("TestClosed", {})
 export const TestLoadingCandidates = Schema.TaggedStruct(
   "TestLoadingCandidates",
-  { rule: LabelingRuleManagement.PublicLabelingRule },
+  { policy: PolicyManagement.PublicPolicy, requestId: Schema.Int },
 )
 export const TestConfiguring = Schema.TaggedStruct(
   "TestConfiguring",
@@ -162,7 +241,7 @@ export const TestRunning = Schema.TaggedStruct("TestRunning", {
 })
 export const TestResult = Schema.TaggedStruct("TestResult", {
   ...TestSelection,
-  result: LabelingRuleManagement.TestLabelingRuleResponse,
+  result: PolicyManagement.TestPolicyResponse,
 })
 export const TestFailed = Schema.TaggedStruct("TestFailed", {
   ...TestSelection,
@@ -176,70 +255,64 @@ export const TestState = Schema.Union([
   TestResult,
   TestFailed,
 ]).pipe(Schema.toTaggedUnion("_tag"))
-export type TestState = typeof TestState.Type
 
 export const RowMutationIdle = Schema.TaggedStruct("RowMutationIdle", {})
 export const RowMutationSaving = Schema.TaggedStruct("RowMutationSaving", {
   ruleId: RuleId,
   requestId: Schema.Int,
-  expectedVersion: Schema.Int,
   enabled: Schema.Boolean,
 })
 export const RowMutationFailed = Schema.TaggedStruct("RowMutationFailed", {
   ruleId: RuleId,
-  message: Schema.String,
-})
-export const RowMutationConflict = Schema.TaggedStruct("RowMutationConflict", {
-  ruleId: RuleId,
-  expectedVersion: Schema.Int,
   enabled: Schema.Boolean,
   message: Schema.String,
-  conflict: MutationConflict,
+  currentRule: Schema.NullOr(RuleManagement.PublicLabelingRule),
 })
 export const RowMutationState = Schema.Union([
   RowMutationIdle,
   RowMutationSaving,
   RowMutationFailed,
-  RowMutationConflict,
 ]).pipe(Schema.toTaggedUnion("_tag"))
-export type RowMutationState = typeof RowMutationState.Type
 
 export const Model = Schema.Struct({
+  tab: Tab,
   repository: RepositoryState,
   repositoryRequest: Schema.NullOr(RepositoryRequest),
+  refreshError: Schema.NullOr(Schema.String),
+  statusMessage: Schema.NullOr(Schema.String),
   nextRequestId: Schema.Int,
-  editor: EditorState,
-  deletion: DeleteState,
+  nextNodeSequence: Schema.Int,
+  policyEditor: PolicyEditorState,
+  validation: ValidationState,
+  publishing: PublishState,
+  ruleEditor: RuleEditorState,
+  ruleDeletion: RuleDeleteState,
   test: TestState,
   rowMutation: RowMutationState,
-  editorDialog: Dialog.Model,
-  deleteDialog: Dialog.Model,
+  policyEditorDialog: Dialog.Model,
+  publishDialog: Dialog.Model,
+  ruleEditorDialog: Dialog.Model,
+  ruleDeleteDialog: Dialog.Model,
   testDialog: Dialog.Model,
+  policyMenus: Schema.Record(Schema.String, Menu.Model),
   ruleMenus: Schema.Record(Schema.String, Menu.Model),
 })
 export type Model = typeof Model.Type
 
-export const draftFromRule = (
-  rule: typeof LabelingRuleManagement.PublicLabelingRule.Type,
+export const currentRepository = (model: Model): Repository | null =>
+  model.repository._tag === "NoRepository"
+    ? null
+    : model.repository._tag === "LoadedRepository"
+      ? model.repository.data.repository
+      : model.repository.repository
+
+export const ruleDraftFrom = (
+  rule: typeof RuleManagement.PublicLabelingRule.Type,
 ): RuleDraft => ({
-  name: rule.name,
+  policyId: rule.policyId,
   label: rule.label,
-  kind: rule.kind,
-  instructions: rule.instructions,
-  confidenceThreshold: rule.confidenceThreshold,
-  mode: rule.mode,
-  exclusiveGroup: rule.exclusiveGroup ?? "",
+  onNoMatch: rule.onNoMatch,
+  conflictGroup: rule.conflictGroup ?? "",
+  priority: rule.priority,
   enabled: rule.enabled,
 })
-
-export const currentRepository = (model: Model): Repository | null => {
-  switch (model.repository._tag) {
-    case "NoRepository":
-      return null
-    case "LoadingRepository":
-    case "FailedRepository":
-      return model.repository.repository
-    case "LoadedRepository":
-      return model.repository.data.repository
-  }
-}

@@ -4,14 +4,16 @@ import {
   GitHubEventProcessorError,
   GitHubEventProcessors,
 } from "../GitHub/GitHubEventProcessors.ts"
-import { ReadyForReview } from "./ReadyForReview.ts"
+import {
+  LabelingCoordinator,
+  LabelingCoordinatorLayer,
+} from "./LabelingCoordinator.ts"
 
-const PROCESSOR_ID = "ready-for-review"
-
-export const ReadyForReviewProcessorLayerNoDeps = Layer.effectDiscard(
+const PROCESSOR_ID = "labeling-coordinator"
+export const LabelingCoordinatorProcessorLayerNoDeps = Layer.effectDiscard(
   Effect.gen(function* () {
     const registry = yield* GitHubEventProcessors
-    const readyForReview = yield* ReadyForReview
+    const coordinator = yield* LabelingCoordinator
     yield* registry.register({
       id: PROCESSOR_ID,
       events: [
@@ -21,15 +23,9 @@ export const ReadyForReviewProcessorLayerNoDeps = Layer.effectDiscard(
         "check_run",
         "status",
       ],
-      accepts: (event) =>
-        event.name !== "pull_request" ||
-        event.payload.action === "opened" ||
-        event.payload.action === "reopened" ||
-        event.payload.action === "synchronize" ||
-        event.payload.action === "ready_for_review" ||
-        event.payload.action === "converted_to_draft",
+      accepts: () => true,
       process: (event) =>
-        readyForReview.process(event).pipe(
+        coordinator.process(event).pipe(
           Effect.mapError(
             (cause) =>
               new GitHubEventProcessorError({
@@ -42,6 +38,7 @@ export const ReadyForReviewProcessorLayerNoDeps = Layer.effectDiscard(
     })
   }),
 )
-
-export const ReadyForReviewProcessorLayer =
-  ReadyForReviewProcessorLayerNoDeps.pipe(Layer.provide(ReadyForReview.layer))
+export const LabelingCoordinatorProcessorLayer =
+  LabelingCoordinatorProcessorLayerNoDeps.pipe(
+    Layer.provide(LabelingCoordinatorLayer),
+  )

@@ -1,63 +1,41 @@
 import * as Dialog from "@foldkit/ui/dialog"
-import type * as GitHubLabel from "@slopcop/domain/GitHub/GitHubLabel"
-import type * as LabelingRuleManagement from "@slopcop/domain/Labeling/LabelingRuleManagement"
+import * as PolicyManagement from "@slopcop/domain/Labeling/LabelingPolicyManagement"
+import * as PolicyProgram from "@slopcop/domain/Policy/PolicyProgram"
+import * as RuleManagement from "@slopcop/domain/Labeling/LabelingRuleManagement"
+import * as Option from "effect/Option"
 import type { Html, HtmlBuilder } from "foldkit/html"
 import * as Submodel from "foldkit/submodel"
+import * as PolicyCodeEditor from "../../components/policy-editor"
 import * as Icon from "../icon"
+import * as M from "./message"
 import {
-  ClosedRuleEditor,
-  ConfirmedDeleteRule,
-  DismissedDeleteRule,
-  DismissedRowMutationError,
-  DismissedRuleTest,
-  GotDeleteDialogMessage,
-  GotEditorDialogMessage,
-  GotRuleMenuMessage,
-  GotTestDialogMessage,
-  OpenedNewRule,
-  RanRuleTest,
-  ResetRuleTest,
-  ReloadedRuleEditor,
-  RetriedDeleteRule,
-  RetriedRepositoryLoad,
-  RetriedRuleSave,
-  RetriedToggleRule,
-  SavedRule,
-  SelectedRuleTestCandidate,
-  ToggledRule,
-  UpdatedRuleConfidence,
-  UpdatedRuleExclusiveGroup,
-  UpdatedRuleKind,
-  UpdatedRuleLabel,
-  UpdatedRuleMode,
-  UpdatedRuleName,
-  UpdatedRulePrompt,
-  type Message,
-} from "./message"
-import type {
-  Model,
-  RepositoryData,
-  RuleDraft,
-  RuleKind,
-  RuleMode,
-  MutationConflict,
+  PolicyAction,
+  PolicyActionMenu,
+  RuleAction,
+  RuleActionMenu,
+  type Model,
+  type RepositoryData,
+  type Tab,
 } from "./model"
-import { RuleAction, RuleActionMenu } from "./model"
+import { validPolicyDraft } from "./update"
 
-type Rule = typeof LabelingRuleManagement.PublicLabelingRule.Type
-type Label = typeof GitHubLabel.GitHubLabel.Type
-
+type Policy = typeof PolicyManagement.PublicPolicy.Type
+type Rule = typeof RuleManagement.PublicLabelingRule.Type
 const primaryButton =
   "inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-sm outline-hidden hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
 const secondaryButton =
   "inline-flex min-h-9 items-center justify-center rounded-lg border border-border bg-background px-3 py-1.5 text-sm font-medium text-foreground outline-hidden hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
+const destructiveButton =
+  "inline-flex min-h-10 items-center justify-center rounded-lg bg-destructive px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
 const inputClass =
   "min-h-10 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-xs outline-hidden focus:border-ring focus:ring-2 focus:ring-ring/20"
 
-export const view = Submodel.defineView<Model, Message>((model, h) => {
+export const view = Submodel.defineView<Model, M.Message>((model, h) => {
   const dialogOpen =
-    model.editorDialog.isOpen ||
-    model.deleteDialog.isOpen ||
+    model.policyEditorDialog.isOpen ||
+    model.publishDialog.isOpen ||
+    model.ruleEditorDialog.isOpen ||
+    model.ruleDeleteDialog.isOpen ||
     model.testDialog.isOpen
   return h.div(
     [h.Class("w-full self-stretch")],
@@ -68,204 +46,339 @@ export const view = Submodel.defineView<Model, Message>((model, h) => {
           h.Inert(dialogOpen),
           h.Class("px-4 py-6 sm:px-6 lg:px-8"),
         ],
-        [pageHeader(h, model), repositoryView(h, model)],
+        [header(h, model), tabPanel(h, model)],
       ),
-      ...modalViews(h, model),
+      ...modals(h, model),
     ],
   )
 })
 
-const pageHeader = (h: HtmlBuilder<Message>, model: Model): Html =>
+const header = (h: HtmlBuilder<M.Message>, model: Model): Html =>
   h.div(
-    [
-      h.Class(
-        "flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between",
-      ),
-    ],
+    [],
     [
       h.div(
-        [],
         [
-          h.p(
-            [h.Class("mb-2 font-mono text-xs text-muted-foreground")],
-            [repositoryName(model)],
+          h.Class(
+            "flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between",
           ),
-          h.h2(
+        ],
+        [
+          h.div(
+            [],
             [
-              h.Id("auto-labeling-title"),
-              h.Class("text-2xl font-semibold tracking-tight sm:text-3xl"),
+              h.p(
+                [h.Class("mb-2 font-mono text-xs text-muted-foreground")],
+                [repositoryName(model)],
+              ),
+              h.h2(
+                [
+                  h.Id("auto-labeling-title"),
+                  h.Class("text-2xl font-semibold tracking-tight sm:text-3xl"),
+                ],
+                ["Auto-labeling"],
+              ),
+              h.p(
+                [
+                  h.Class(
+                    "mt-2 max-w-2xl text-sm leading-6 text-muted-foreground",
+                  ),
+                ],
+                [
+                  "Build reusable policy programs, publish exact versions, and bind labels to published policies.",
+                ],
+              ),
             ],
-            ["Auto-labeling rules"],
           ),
-          h.p(
-            [h.Class("mt-2 max-w-2xl text-sm leading-6 text-muted-foreground")],
+          h.button(
             [
-              "Describe intent in plain language. SlopCop evaluates each prompt against new pull requests and applies the matching GitHub label.",
+              h.Type("button"),
+              ...(model.repository._tag !== "LoadedRepository" ||
+              (model.tab === "Label rules" &&
+                publishedPolicies(model).length === 0)
+                ? [h.Disabled(true)]
+                : []),
+              h.OnClick(
+                model.tab === "Policies"
+                  ? M.OpenedNewPolicy()
+                  : M.OpenedNewRule(),
+              ),
+              h.Class(primaryButton),
+            ],
+            [
+              Icon.plus(),
+              model.tab === "Policies" ? "New policy" : "New label rule",
             ],
           ),
         ],
       ),
-      h.button(
-        [
-          h.Type("button"),
-          ...(model.repository._tag === "LoadedRepository"
-            ? []
-            : [h.Disabled(true)]),
-          h.OnClick(OpenedNewRule()),
-          h.Class(primaryButton),
-        ],
-        [Icon.plus(), "New rule"],
-      ),
+      tabs(h, model.tab),
     ],
   )
 
-const repositoryName = (model: Model): string => {
-  switch (model.repository._tag) {
-    case "NoRepository":
-      return "Select a repository"
-    case "LoadingRepository":
-    case "FailedRepository":
-      return `${model.repository.repository.owner}/${model.repository.repository.repo}`
-    case "LoadedRepository":
-      return `${model.repository.data.repository.owner}/${model.repository.data.repository.repo}`
-  }
-}
+const tabs = (h: HtmlBuilder<M.Message>, selected: Tab): Html =>
+  h.div(
+    [
+      h.Role("tablist"),
+      h.AriaLabel("Auto-labeling sections"),
+      h.Class("mt-6 flex gap-1 border-b"),
+    ],
+    (["Policies", "Label rules"] as const).map((tab) =>
+      h.button(
+        [
+          h.Type("button"),
+          h.Id(tabId(tab)),
+          h.Role("tab"),
+          h.AriaSelected(selected === tab),
+          h.AriaControls(panelId(tab)),
+          h.Tabindex(selected === tab ? 0 : -1),
+          h.OnClick(M.SelectedTab({ tab })),
+          h.OnKeyDownFocus((key) => {
+            const target = tabKeyTarget(key, selected)
+            return target === null
+              ? Option.none()
+              : Option.some({
+                  focusSelector: `#${tabId(target)}`,
+                  message: M.SelectedTab({ tab: target }),
+                })
+          }),
+          h.Class(
+            `border-b-2 px-4 py-2 text-sm font-medium ${selected === tab ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`,
+          ),
+        ],
+        [tab],
+      ),
+    ),
+  )
+const tabSlug = (tab: Tab) => (tab === "Policies" ? "policies" : "label-rules")
+const tabId = (tab: Tab) => `auto-labeling-tab-${tabSlug(tab)}`
+const panelId = (tab: Tab) => `auto-labeling-panel-${tabSlug(tab)}`
+const tabKeyTarget = (key: string, selected: Tab): Tab | null =>
+  key === "Home"
+    ? "Policies"
+    : key === "End"
+      ? "Label rules"
+      : key === "ArrowLeft" || key === "ArrowRight"
+        ? selected === "Policies"
+          ? "Label rules"
+          : "Policies"
+        : null
+const tabPanel = (h: HtmlBuilder<M.Message>, model: Model): Html =>
+  h.div(
+    [
+      h.Id(panelId(model.tab)),
+      h.Role("tabpanel"),
+      h.AriaLabelledBy(tabId(model.tab)),
+      h.Tabindex(0),
+    ],
+    [
+      ...(model.statusMessage === null
+        ? []
+        : [
+            h.div(
+              [
+                h.Role("status"),
+                h.AriaLive("polite"),
+                h.Class(
+                  "mt-4 rounded-lg border border-success/30 bg-success/5 p-3 text-sm text-success",
+                ),
+              ],
+              [model.statusMessage],
+            ),
+          ]),
+      repositoryView(h, model),
+    ],
+  )
 
-const repositoryView = (h: HtmlBuilder<Message>, model: Model): Html => {
+const repositoryName = (model: Model): string =>
+  model.repository._tag === "NoRepository"
+    ? "Select a repository"
+    : model.repository._tag === "LoadedRepository"
+      ? `${model.repository.data.repository.owner}/${model.repository.data.repository.repo}`
+      : `${model.repository.repository.owner}/${model.repository.repository.repo}`
+const repositoryView = (h: HtmlBuilder<M.Message>, model: Model): Html => {
   switch (model.repository._tag) {
     case "NoRepository":
       return statusPanel(
         h,
         "No repository selected",
-        "Choose a repository from the sidebar to manage its rules.",
+        "Choose a repository from the sidebar.",
       )
     case "LoadingRepository":
       return statusPanel(
         h,
-        "Loading rules",
-        "Loading rules, 30-day activity, and GitHub labels...",
+        "Loading auto-labeling",
+        "Loading policies, rules, activity, audit, and GitHub labels...",
       )
     case "FailedRepository":
-      return h.div(
-        [
-          h.Class(
-            "mt-6 rounded-xl border border-destructive/30 bg-destructive/5 p-5",
-          ),
-        ],
-        [
-          h.h3([h.Class("font-semibold")], ["Rules could not be loaded"]),
-          h.p(
-            [h.Class("mt-2 text-sm text-muted-foreground")],
-            [model.repository.message],
-          ),
-          h.button(
-            [
-              h.Type("button"),
-              h.OnClick(RetriedRepositoryLoad()),
-              h.Class(`mt-4 ${secondaryButton}`),
-            ],
-            ["Retry"],
-          ),
-        ],
+      return errorPanel(
+        h,
+        model.repository.message,
+        "Retry",
+        M.RetriedRepositoryLoad(),
       )
     case "LoadedRepository":
-      return tableView(h, model, model.repository.data)
+      return h.div(
+        [],
+        [
+          ...(model.refreshError === null
+            ? []
+            : [
+                errorPanel(
+                  h,
+                  `${model.refreshError} Existing data is still shown.`,
+                  "Retry refresh",
+                  M.RetriedRepositoryLoad(),
+                ),
+              ]),
+          model.tab === "Policies"
+            ? policiesView(h, model, model.repository.data)
+            : rulesView(h, model, model.repository.data),
+        ],
+      )
   }
 }
 
-const statusPanel = (
-  h: HtmlBuilder<Message>,
-  title: string,
-  description: string,
+const policiesView = (
+  h: HtmlBuilder<M.Message>,
+  model: Model,
+  data: RepositoryData,
 ): Html =>
   h.div(
-    [h.Class("mt-6 rounded-xl border bg-card p-6 text-center shadow-sm")],
+    [h.Class("mt-6 overflow-hidden rounded-xl border bg-card shadow-sm")],
     [
-      h.h3([h.Class("font-semibold")], [title]),
-      h.p([h.Class("mt-2 text-sm text-muted-foreground")], [description]),
+      tableHeader(
+        h,
+        "Policies",
+        "Draft programs are published as immutable versions.",
+        `${data.policies.length} configured / revision ${data.policyRevision}`,
+      ),
+      ...(data.policies.length === 0
+        ? [
+            statusPanel(
+              h,
+              "No policies yet",
+              "Create a pull request policy program.",
+            ),
+          ]
+        : [
+            h.div(
+              [h.Class("overflow-x-auto")],
+              [
+                h.table(
+                  [h.Class("w-full min-w-200 border-collapse text-left")],
+                  [
+                    h.thead(
+                      [h.Class("bg-muted/35 text-xs text-muted-foreground")],
+                      [
+                        h.tr(
+                          [],
+                          [
+                            heading(h, "Policy", "min-w-64"),
+                            heading(h, "Target", "text-center"),
+                            heading(h, "Status", "text-center"),
+                            heading(h, "Revision", "text-center"),
+                            heading(h, "Usage", "text-center"),
+                            heading(h, "", "w-12"),
+                          ],
+                        ),
+                      ],
+                    ),
+                    h.tbody(
+                      [h.Class("divide-y")],
+                      data.policies.map((policy) =>
+                        policyRow(h, model, data, policy),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ]),
     ],
   )
+const policyRow = (
+  h: HtmlBuilder<M.Message>,
+  model: Model,
+  data: RepositoryData,
+  policy: Policy,
+): Html => {
+  const usage = data.rules.filter((rule) => rule.policyId === policy.id).length
+  return h.keyed("tr")(
+    policy.id,
+    [],
+    [
+      h.td([h.Class("p-4")], [h.span([h.Class("font-medium")], [policy.name])]),
+      h.td([h.Class("p-4 text-center font-mono text-xs")], [policy.target]),
+      h.td(
+        [h.Class("p-4 text-center")],
+        [
+          statusBadge(
+            h,
+            policy.publishedVersionId === null ? "Draft" : "Published",
+          ),
+        ],
+      ),
+      h.td(
+        [h.Class("p-4 text-center font-mono text-sm")],
+        [String(policy.version)],
+      ),
+      h.td([h.Class("p-4 text-center font-mono text-sm")], [String(usage)]),
+      h.td([h.Class("w-12 p-2 align-middle")], [policyMenu(h, model, policy)]),
+    ],
+  )
+}
 
-const tableView = (
-  h: HtmlBuilder<Message>,
+const rulesView = (
+  h: HtmlBuilder<M.Message>,
   model: Model,
   data: RepositoryData,
 ): Html => {
-  const live = data.rules.filter((rule) => rule.enabled).length
-  const paused = data.rules.length - live
   const fires = new Map(
     data.activity.rules.map((item) => [item.ruleId, item.fires]),
   )
   return h.div(
     [h.Class("mt-6")],
     [
-      h.div(
-        [h.Class("grid gap-3 sm:grid-cols-3")],
-        [
-          metricCard(h, "Live rules", String(live), "Writing labels to GitHub"),
-          metricCard(
-            h,
-            "Paused rules",
-            String(paused),
-            "Kept in the rule book",
-          ),
-          metricCard(
-            h,
-            "Total fires",
-            String(data.activity.totalFires),
-            `Across the last ${data.activity.windowDays} days`,
-          ),
-        ],
-      ),
       ...(model.rowMutation._tag === "RowMutationFailed"
-        ? [rowMutationError(h, model.rowMutation.message, false)]
-        : model.rowMutation._tag === "RowMutationConflict"
-          ? [
-              rowMutationError(
-                h,
-                `${model.rowMutation.message} ${conflictSummary(model.rowMutation.conflict)}`,
-                model.rowMutation.conflict.currentRule !== null,
-              ),
-            ]
-          : []),
+        ? [
+            errorPanel(
+              h,
+              model.rowMutation.message,
+              model.rowMutation.currentRule === null
+                ? "Dismiss"
+                : "Retry current version",
+              model.rowMutation.currentRule === null
+                ? M.DismissedRowMutationError()
+                : M.RetriedToggleRule(),
+            ),
+          ]
+        : []),
+      ...(publishedPolicies(model).length === 0
+        ? [
+            errorPanel(
+              h,
+              "Publish a policy before creating or enabling label rules.",
+              "View policies",
+              M.SelectedTab({ tab: "Policies" }),
+            ),
+          ]
+        : []),
       h.div(
-        [h.Class("mt-4 overflow-hidden rounded-xl border bg-card shadow-sm")],
+        [h.Class("overflow-hidden rounded-xl border bg-card shadow-sm")],
         [
-          h.div(
-            [
-              h.Class(
-                "flex flex-col gap-2 border-b px-4 py-4 sm:flex-row sm:items-center sm:justify-between",
-              ),
-            ],
-            [
-              h.div(
-                [],
-                [
-                  h.h3([h.Class("font-semibold")], ["Rule book"]),
-                  h.p(
-                    [h.Class("mt-1 text-sm text-muted-foreground")],
-                    [
-                      "Rules are evaluated independently for each new pull request.",
-                    ],
-                  ),
-                ],
-              ),
-              h.span(
-                [
-                  h.Class(
-                    "w-fit rounded-md border bg-muted px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground",
-                  ),
-                ],
-                [`${data.rules.length} configured / revision ${data.revision}`],
-              ),
-            ],
+          tableHeader(
+            h,
+            "Label rules",
+            "Bind a published policy to a GitHub label.",
+            `${data.rules.length} configured / revision ${data.ruleRevision}`,
           ),
           ...(data.rules.length === 0
             ? [
                 statusPanel(
                   h,
-                  "No rules yet",
-                  "Create a rule to begin labeling pull requests.",
+                  "No label rules yet",
+                  "Bind a published policy to a label.",
                 ),
               ]
             : [
@@ -273,11 +386,7 @@ const tableView = (
                   [h.Class("overflow-x-auto")],
                   [
                     h.table(
-                      [
-                        h.Class(
-                          "w-full min-w-[62rem] border-collapse text-left",
-                        ),
-                      ],
+                      [h.Class("w-full min-w-248 border-collapse text-left")],
                       [
                         h.thead(
                           [
@@ -289,27 +398,21 @@ const tableView = (
                             h.tr(
                               [],
                               [
-                                tableHeading(h, "On", "w-20"),
-                                tableHeading(h, "Rule", "min-w-80"),
-                                tableHeading(h, "Applies"),
-                                tableHeading(h, "Confidence", "text-right"),
-                                tableHeading(h, "Fires", "text-right"),
-                                tableHeading(h, "Mode"),
-                                tableHeading(h, "", "w-24"),
+                                heading(h, "On", "w-20 text-center"),
+                                heading(h, "Policy", "min-w-64"),
+                                heading(h, "Label", "text-center"),
+                                heading(h, "No match", "text-center"),
+                                heading(h, "Group / priority", "text-center"),
+                                heading(h, "Fires", "text-center"),
+                                heading(h, "", "w-12"),
                               ],
                             ),
                           ],
                         ),
                         h.tbody(
                           [h.Class("divide-y")],
-                          data.rules.map((rule, index) =>
-                            tableRow(
-                              h,
-                              model,
-                              rule,
-                              index,
-                              fires.get(rule.id) ?? 0,
-                            ),
+                          data.rules.map((rule) =>
+                            ruleRow(h, model, rule, fires.get(rule.id) ?? 0),
                           ),
                         ),
                       ],
@@ -319,116 +422,57 @@ const tableView = (
               ]),
         ],
       ),
+      h.p(
+        [h.Class("mt-3 text-xs text-muted-foreground")],
+        [`${data.audit.length} recent audit entries loaded.`],
+      ),
     ],
   )
 }
-
-const metricCard = (
-  h: HtmlBuilder<Message>,
-  label: string,
-  value: string,
-  description: string,
-): Html =>
-  h.div(
-    [h.Class("rounded-xl border bg-card p-4 shadow-sm")],
-    [
-      h.p(
-        [
-          h.Class(
-            "font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground",
-          ),
-        ],
-        [label],
-      ),
-      h.p([h.Class("mt-2 text-2xl font-semibold tabular-nums")], [value]),
-      h.p([h.Class("mt-1 text-xs text-muted-foreground")], [description]),
-    ],
-  )
-
-const tableHeading = (
-  h: HtmlBuilder<Message>,
-  label: string,
-  className = "",
-): Html => h.th([h.Class(`px-4 py-3 font-medium ${className}`)], [label])
-
-const tableRow = (
-  h: HtmlBuilder<Message>,
+const ruleRow = (
+  h: HtmlBuilder<M.Message>,
   model: Model,
   rule: Rule,
-  index: number,
   fires: number,
-): Html => {
-  const saving = model.rowMutation._tag !== "RowMutationIdle"
-  return h.keyed("tr")(
+): Html =>
+  h.keyed("tr")(
     rule.id,
     [h.Class(rule.enabled ? "" : "bg-muted/15 text-muted-foreground")],
     [
-      h.td([h.Class("px-4 py-4 align-top")], [ruleToggle(h, rule, saving)]),
       h.td(
-        [h.Class("px-4 py-4")],
+        [h.Class("p-2 text-center")],
+        [ruleToggle(h, rule, model.rowMutation._tag !== "RowMutationIdle")],
+      ),
+      h.td(
+        [h.Class("p-2")],
         [
-          h.div(
-            [h.Class("flex items-baseline gap-2")],
-            [
-              h.span(
-                [h.Class("font-mono text-[10px] text-muted-foreground")],
-                [String(index + 1).padStart(2, "0")],
-              ),
-              h.span([h.Class("font-medium text-foreground")], [rule.name]),
-            ],
-          ),
-          h.p(
-            [
-              h.Class(
-                "mt-2 max-w-xl overflow-hidden text-ellipsis whitespace-nowrap font-mono text-xs text-muted-foreground",
-              ),
-            ],
-            [rule.instructions],
-          ),
+          h.span([h.Class("font-medium")], [rule.policy.name]),
+          ...(!rule.policy.published
+            ? [
+                h.p(
+                  [h.Class("mt-1 text-xs text-destructive")],
+                  ["Unpublished; cannot enable"],
+                ),
+              ]
+            : []),
         ],
       ),
-      h.td([h.Class("px-4 py-4 align-top")], [labelBadge(h, rule.label)]),
+      h.td([h.Class("p-2 text-center")], [labelBadge(h, rule.label)]),
       h.td(
-        [
-          h.Class(
-            "px-4 py-4 text-right align-top font-mono text-sm tabular-nums",
-          ),
-        ],
-        [`${Math.round(rule.confidenceThreshold * 100)}%`],
+        [h.Class("p-2 text-center text-sm")],
+        [rule.onNoMatch === "preserve" ? "Preserve" : "Ensure absent"],
       ),
       h.td(
-        [
-          h.Class(
-            "px-4 py-4 text-right align-top font-mono text-sm tabular-nums",
-          ),
-        ],
-        [String(fires)],
+        [h.Class("p-2 text-center font-mono text-xs")],
+        [`${rule.conflictGroup ?? "none"} / ${rule.priority}`],
       ),
-      h.td(
-        [h.Class("px-4 py-4 align-top")],
-        [
-          h.span(
-            [
-              h.Class(
-                rule.enabled
-                  ? "rounded-full border border-success/25 bg-success/10 px-2 py-1 font-mono text-[10px] font-semibold uppercase text-success"
-                  : "rounded-full border bg-muted px-2 py-1 font-mono text-[10px] font-semibold uppercase text-muted-foreground",
-              ),
-            ],
-            [rule.enabled ? "Live" : "Paused"],
-          ),
-        ],
-      ),
-      h.td(
-        [h.Class("px-4 py-4 text-right align-top")],
-        [ruleActionsMenu(h, model, rule)],
-      ),
+      h.td([h.Class("p-2 text-center font-mono text-sm")], [String(fires)]),
+      h.td([h.Class("w-12 p-2")], [ruleMenu(h, model, rule)]),
     ],
   )
-}
 
 const ruleToggle = (
-  h: HtmlBuilder<Message>,
+  h: HtmlBuilder<M.Message>,
   rule: Rule,
   saving: boolean,
 ): Html =>
@@ -437,18 +481,20 @@ const ruleToggle = (
       h.Type("button"),
       h.Role("switch"),
       h.AriaChecked(rule.enabled),
-      h.AriaLabel(`${rule.enabled ? "Disable" : "Enable"} ${rule.name}`),
-      ...(saving ? [h.Disabled(true)] : []),
-      h.OnClick(ToggledRule({ ruleId: rule.id })),
+      h.AriaLabel(`${rule.enabled ? "Disable" : "Enable"} ${rule.policy.name}`),
+      ...(saving || (!rule.enabled && !rule.policy.published)
+        ? [h.Disabled(true)]
+        : []),
+      h.OnClick(M.ToggledRule({ ruleId: rule.id })),
       h.Class(
-        `relative h-6 w-11 rounded-full outline-hidden transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 disabled:opacity-50 ${rule.enabled ? "bg-primary" : "bg-muted-foreground/30"}`,
+        `relative h-6 w-11 rounded-full outline-hidden transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${rule.enabled ? "bg-primary" : "bg-muted-foreground/30"}`,
       ),
     ],
     [
       h.span(
         [
           h.Class(
-            `absolute top-1 size-4 rounded-full bg-white shadow-sm transition-transform ${rule.enabled ? "left-6" : "left-1"}`,
+            `absolute top-1 size-4 rounded-full bg-white shadow-sm ${rule.enabled ? "left-6" : "left-1"}`,
           ),
         ],
         [],
@@ -456,8 +502,30 @@ const ruleToggle = (
     ],
   )
 
-const ruleActionsMenu = (
-  h: HtmlBuilder<Message>,
+const policyMenu = (
+  h: HtmlBuilder<M.Message>,
+  model: Model,
+  policy: Policy,
+): Html => {
+  const menu = model.policyMenus[policy.id]
+  return menu === undefined
+    ? h.empty
+    : h.submodel({
+        slotId: menu.id,
+        model: menu,
+        view: PolicyActionMenu.view,
+        toParentMessage: (message) =>
+          M.GotPolicyMenuMessage({ policyId: policy.id, message }),
+        viewInputs: menuInputs(
+          h,
+          `Actions for ${policy.name}`,
+          PolicyAction.literals,
+          "policy",
+        ),
+      })
+}
+const ruleMenu = (
+  h: HtmlBuilder<M.Message>,
   model: Model,
   rule: Rule,
 ): Html => {
@@ -469,44 +537,825 @@ const ruleActionsMenu = (
         model: menu,
         view: RuleActionMenu.view,
         toParentMessage: (message) =>
-          GotRuleMenuMessage({ ruleId: rule.id, message }),
-        viewInputs: {
-          items: RuleAction.literals,
-          anchor: { placement: "bottom-end", gap: 4, padding: 8 },
-          ariaLabel: `Actions for ${rule.name}`,
-          buttonContent: h.span([], ["..."]),
-          buttonClassName:
-            "grid size-8 place-items-center rounded-md font-mono text-base tracking-widest text-muted-foreground outline-hidden hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50",
-          itemsClassName:
-            "z-20 w-40 overflow-hidden rounded-lg border bg-popover p-1 text-left text-popover-foreground shadow-lg",
-          itemToConfig: (action) => ({
-            content: h.span(
-              [
-                h.Class(
-                  `block w-full rounded-md px-3 py-2 text-left text-sm ${action === "Delete" ? "text-destructive hover:bg-destructive/10" : "hover:bg-muted"}`,
-                ),
-              ],
-              [`${action} rule`],
-            ),
-          }),
-          backdropClassName: "fixed inset-0 z-10",
-        },
+          M.GotRuleMenuMessage({ ruleId: rule.id, message }),
+        viewInputs: menuInputs(
+          h,
+          `Actions for ${rule.policy.name} / ${rule.label}`,
+          RuleAction.literals,
+          "label rule",
+        ),
       })
 }
+const menuInputs = <Action extends string>(
+  h: HtmlBuilder<M.Message>,
+  ariaLabel: string,
+  items: ReadonlyArray<Action>,
+  noun: string,
+) => ({
+  items,
+  anchor: { placement: "bottom-end" as const, gap: 4, padding: 8 },
+  ariaLabel,
+  className: "flex justify-center",
+  buttonContent: h.span([], [Icon.ellipsis()]),
+  buttonClassName:
+    "grid size-8 cursor-pointer place-items-center rounded-md text-muted-foreground outline-hidden hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50",
+  itemsClassName:
+    "z-20 w-40 overflow-hidden rounded-lg border bg-popover p-1 shadow-lg",
+  itemToConfig: (action: Action) => ({
+    content: h.span(
+      [
+        h.Class(
+          `block w-full cursor-pointer rounded-md px-3 py-2 text-left text-sm ${action === "Delete" ? "text-destructive hover:bg-destructive/10" : "hover:bg-muted"}`,
+        ),
+      ],
+      [`${action} ${noun}`],
+    ),
+  }),
+  backdropClassName: "fixed inset-0 z-10",
+})
 
-const modalViews = (
-  h: HtmlBuilder<Message>,
+const modals = (
+  h: HtmlBuilder<M.Message>,
   model: Model,
 ): ReadonlyArray<Html> => [
-  ...(model.editor._tag === "EditorClosed" ? [] : [editorModal(h, model)]),
-  ...(model.deletion._tag === "DeleteClosed" ? [] : [deleteModal(h, model)]),
+  ...(model.policyEditor._tag === "PolicyEditorClosed"
+    ? []
+    : [policyEditor(h, model)]),
+  ...(model.publishing._tag === "PublishClosed"
+    ? []
+    : [publishModal(h, model)]),
+  ...(model.ruleEditor._tag === "RuleEditorClosed"
+    ? []
+    : [ruleEditor(h, model)]),
+  ...(model.ruleDeletion._tag === "RuleDeleteClosed"
+    ? []
+    : [deleteRuleModal(h, model)]),
   ...(model.test._tag === "TestClosed" ? [] : [testModal(h, model)]),
 ]
 
+const policyEditor = (h: HtmlBuilder<M.Message>, model: Model): Html => {
+  const editor = model.policyEditor
+  if (editor._tag === "PolicyEditorClosed") return h.empty
+  if (editor._tag === "PolicyEditorLoading")
+    return modalShell(
+      h,
+      model.policyEditorDialog,
+      (message) => M.GotPolicyEditorDialogMessage({ message }),
+      "Policy editor",
+      [
+        modalHeader(
+          h,
+          model.policyEditorDialog,
+          "Loading policy",
+          editor.policy.name,
+          M.ClosedPolicyEditor(),
+        ),
+        h.p(
+          [h.Class("mt-4 text-sm text-muted-foreground")],
+          ["Loading the current draft program..."],
+        ),
+      ],
+    )
+  const saving = editor._tag === "PolicyEditorSaving"
+  const conflict = editor._tag === "PolicyEditorConflict"
+  const existing = editor.identity._tag === "ExistingPolicy"
+  return modalShell(
+    h,
+    model.policyEditorDialog,
+    (message) => M.GotPolicyEditorDialogMessage({ message }),
+    "Policy editor",
+    [
+      modalHeader(
+        h,
+        model.policyEditorDialog,
+        existing ? "Edit policy draft" : "Create policy",
+        editor.draft.name || "New policy",
+        M.ClosedPolicyEditor(),
+        saving,
+      ),
+      ...(editor._tag === "PolicyEditorFailed"
+        ? [alert(h, editor.message)]
+        : conflict
+          ? [conflictAlert(h, editor.message)]
+          : []),
+      h.div(
+        [h.Class("mt-5 grid gap-4 sm:grid-cols-2")],
+        [
+          field(
+            h,
+            "policy-name",
+            "Policy name",
+            h.input([
+              h.Id("policy-name"),
+              h.Type("text"),
+              h.Value(editor.draft.name),
+              h.AriaInvalid(editor.draft.name.trim().length === 0),
+              h.AriaDescribedBy("policy-name-error"),
+              h.OnInput((name) => M.UpdatedPolicyName({ name })),
+              h.Class(inputClass),
+            ]),
+          ),
+          field(
+            h,
+            "policy-target",
+            "Target",
+            h.select(
+              [
+                h.Id("policy-target"),
+                h.Value("pull_request"),
+                h.Disabled(true),
+                h.Class(inputClass),
+              ],
+              [
+                h.option([h.Value("pull_request")], ["Pull request"]),
+                h.option(
+                  [h.Value("issue"), h.Disabled(true)],
+                  ["Issue (unsupported)"],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+      ...(editor.draft.name.trim().length === 0
+        ? [
+            h.p(
+              [
+                h.Id("policy-name-error"),
+                h.Class("mt-2 text-sm text-destructive"),
+              ],
+              ["Policy name is required."],
+            ),
+          ]
+        : []),
+      field(
+        h,
+        "policy-description",
+        "Description (optional)",
+        h.textarea([
+          h.Id("policy-description"),
+          h.Value(editor.draft.description),
+          h.OnInput((description) =>
+            M.UpdatedPolicyDescription({ description }),
+          ),
+          h.Class(
+            "mt-3 min-h-20 w-full rounded-lg border bg-background p-3 text-sm",
+          ),
+        ]),
+        "mt-4",
+      ),
+      h.section(
+        [
+          h.AriaLabelledBy("policy-program-title"),
+          h.Class("mt-4 rounded-xl border bg-muted/15 p-4"),
+        ],
+        [
+          h.h4(
+            [h.Id("policy-program-title"), h.Class("font-semibold")],
+            ["Policy program"],
+          ),
+          h.p(
+            [h.Class("mb-3 mt-1 text-xs text-muted-foreground")],
+            [
+              "Edit the complete pull request policy as JSON. Press Ctrl-Space for context-aware completions.",
+            ],
+          ),
+          h.submodel({
+            slotId: "policy-program-editor",
+            model: editor.sourceEditor,
+            view: PolicyCodeEditor.view,
+            toParentMessage: (message) =>
+              M.GotPolicyCodeEditorMessage({ message }),
+          }),
+        ],
+      ),
+      validationView(h, model),
+      h.div(
+        [h.Class("mt-6 flex flex-wrap justify-end gap-2 border-t pt-4")],
+        [
+          h.button(
+            [
+              h.Type("button"),
+              ...(saving ? [h.Disabled(true)] : []),
+              h.OnClick(M.ClosedPolicyEditor()),
+              h.Class(secondaryButton),
+            ],
+            ["Cancel"],
+          ),
+          ...(existing
+            ? [
+                h.button(
+                  [
+                    h.Type("button"),
+                    ...(editor.dirty ||
+                    model.validation._tag === "ValidationRunning"
+                      ? [h.Disabled(true)]
+                      : []),
+                    h.OnClick(M.ValidatedPolicy()),
+                    h.Class(secondaryButton),
+                  ],
+                  [
+                    model.validation._tag === "ValidationRunning"
+                      ? "Validating..."
+                      : "Validate saved draft",
+                  ],
+                ),
+                ...(editor.dirty
+                  ? [
+                      h.p(
+                        [h.Class("self-center text-xs text-muted-foreground")],
+                        ["Save local changes before validating."],
+                      ),
+                    ]
+                  : []),
+              ]
+            : []),
+          ...(conflict
+            ? [
+                h.button(
+                  [
+                    h.Type("button"),
+                    h.OnClick(M.ReloadedPolicyEditor()),
+                    h.Class(secondaryButton),
+                  ],
+                  ["Reload server draft"],
+                ),
+                h.button(
+                  [
+                    h.Type("button"),
+                    h.OnClick(M.RetriedPolicySave()),
+                    h.Class(primaryButton),
+                  ],
+                  ["Keep draft and retry"],
+                ),
+              ]
+            : []),
+          ...(!conflict
+            ? [
+                h.button(
+                  [
+                    h.Type("button"),
+                    ...(saving ||
+                    !validPolicyDraft(editor.draft) ||
+                    editor.sourceEditor.program === null
+                      ? [h.Disabled(true)]
+                      : []),
+                    h.OnClick(M.SavedPolicy()),
+                    h.Class(primaryButton),
+                  ],
+                  [
+                    saving
+                      ? "Saving..."
+                      : existing
+                        ? "Save draft"
+                        : "Create policy",
+                  ],
+                ),
+              ]
+            : []),
+        ],
+      ),
+    ],
+  )
+}
+
+const validationView = (h: HtmlBuilder<M.Message>, model: Model): Html => {
+  switch (model.validation._tag) {
+    case "ValidationIdle":
+    case "ValidationRunning":
+      return h.empty
+    case "ValidationFailed":
+      return alert(h, model.validation.message)
+    case "ValidationResult":
+      return h.div(
+        [
+          h.Role("status"),
+          h.AriaLive("polite"),
+          h.Class(
+            "mt-4 rounded-lg border border-success/30 bg-success/5 p-3 text-sm",
+          ),
+        ],
+        [
+          h.p([h.Class("font-medium text-success")], ["Draft is valid"]),
+          h.p(
+            [h.Class("mt-1")],
+            [
+              `${model.validation.result.nodeCount} nodes / facts: ${model.validation.result.facts.join(", ") || "none"} / triggers: ${model.validation.result.triggers.join(", ") || "none"}`,
+            ],
+          ),
+        ],
+      )
+  }
+}
+
+const publishModal = (h: HtmlBuilder<M.Message>, model: Model): Html => {
+  const publishing = model.publishing
+  if (publishing._tag === "PublishClosed") return h.empty
+  const title =
+    publishing._tag === "PublishResult"
+      ? publishing.result.policy.name
+      : publishing.policy.name
+  return modalShell(
+    h,
+    model.publishDialog,
+    (message) => M.GotPublishDialogMessage({ message }),
+    "Publish policy",
+    [
+      modalHeader(
+        h,
+        model.publishDialog,
+        "Publish policy",
+        title,
+        M.DismissedPublishPolicy(),
+        publishing._tag === "Publishing",
+      ),
+      ...(publishing._tag === "PublishFailed"
+        ? [alert(h, publishing.message)]
+        : []),
+      ...(publishing._tag === "PublishResult"
+        ? [
+            h.div(
+              [
+                h.Class(
+                  "mt-4 rounded-lg border border-success/30 bg-success/5 p-3 text-sm",
+                ),
+              ],
+              [
+                h.p(
+                  [h.Class("font-medium text-success")],
+                  [
+                    `Published revision ${publishing.result.published.revision}`,
+                  ],
+                ),
+                h.p(
+                  [h.Class("mt-2")],
+                  [
+                    `Facts: ${publishing.result.impact.facts.join(", ") || "none"}`,
+                  ],
+                ),
+                h.p(
+                  [],
+                  [
+                    `Triggers: ${publishing.result.impact.triggers.join(", ") || "none"}`,
+                  ],
+                ),
+              ],
+            ),
+          ]
+        : [
+            h.p(
+              [h.Class("mt-4 text-sm text-muted-foreground")],
+              [
+                "Validate and publish the current draft as an immutable version. The impact response will list facts and triggers.",
+              ],
+            ),
+          ]),
+      h.div(
+        [h.Class("mt-6 flex justify-end gap-2")],
+        [
+          h.button(
+            [
+              h.Type("button"),
+              ...(publishing._tag === "Publishing" ? [h.Disabled(true)] : []),
+              h.OnClick(M.DismissedPublishPolicy()),
+              h.Class(secondaryButton),
+            ],
+            [publishing._tag === "PublishResult" ? "Done" : "Cancel"],
+          ),
+          ...(publishing._tag === "PublishResult"
+            ? []
+            : [
+                h.button(
+                  [
+                    h.Type("button"),
+                    ...(publishing._tag === "Publishing"
+                      ? [h.Disabled(true)]
+                      : []),
+                    h.OnClick(M.ConfirmedPublishPolicy()),
+                    h.Class(primaryButton),
+                  ],
+                  [
+                    publishing._tag === "Publishing"
+                      ? "Publishing..."
+                      : "Publish draft",
+                  ],
+                ),
+              ]),
+        ],
+      ),
+    ],
+  )
+}
+
+const ruleEditor = (h: HtmlBuilder<M.Message>, model: Model): Html => {
+  const editor = model.ruleEditor
+  if (editor._tag === "RuleEditorClosed") return h.empty
+  const loaded =
+    model.repository._tag === "LoadedRepository" ? model.repository.data : null
+  const published = publishedPolicies(model)
+  const selected =
+    loaded?.policies.find((policy) => policy.id === editor.draft.policyId) ??
+    null
+  const unavailable = selected === null || selected.publishedVersionId === null
+  const saving = editor._tag === "RuleEditorSaving"
+  const conflict = editor._tag === "RuleEditorConflict"
+  return modalShell(
+    h,
+    model.ruleEditorDialog,
+    (message) => M.GotRuleEditorDialogMessage({ message }),
+    "Label rule editor",
+    [
+      modalHeader(
+        h,
+        model.ruleEditorDialog,
+        editor.identity._tag === "NewRule"
+          ? "Create label rule"
+          : "Edit label rule",
+        "Published policy binding",
+        M.ClosedRuleEditor(),
+        saving,
+      ),
+      ...(editor._tag === "RuleEditorFailed"
+        ? [alert(h, editor.message)]
+        : conflict
+          ? [conflictAlert(h, editor.message)]
+          : []),
+      ...(unavailable
+        ? [
+            alert(
+              h,
+              "This policy is unpublished. Select a published policy before saving or enabling the rule.",
+            ),
+          ]
+        : []),
+      h.div(
+        [h.Class("mt-5 grid gap-4 sm:grid-cols-2")],
+        [
+          field(
+            h,
+            "rule-policy",
+            "Published policy",
+            h.select(
+              [
+                h.Id("rule-policy"),
+                h.Value(editor.draft.policyId),
+                h.OnInput((value) => {
+                  const item = published.find((policy) => policy.id === value)
+                  return item === undefined
+                    ? M.IgnoredInput()
+                    : M.UpdatedRulePolicy({ policyId: item.id })
+                }),
+                h.Class(inputClass),
+              ],
+              published.map((policy) =>
+                h.option([h.Value(policy.id)], [policy.name]),
+              ),
+            ),
+          ),
+          field(
+            h,
+            "rule-label",
+            "GitHub label",
+            h.select(
+              [
+                h.Id("rule-label"),
+                h.Value(editor.draft.label),
+                h.AriaInvalid(editor.draft.label.length === 0),
+                h.AriaDescribedBy("rule-label-error"),
+                h.OnInput((label) => M.UpdatedRuleLabel({ label })),
+                h.Class(inputClass),
+              ],
+              (loaded?.labels ?? []).map((label) =>
+                h.option([h.Value(label.name)], [label.name]),
+              ),
+            ),
+          ),
+          field(
+            h,
+            "rule-no-match",
+            "On no match",
+            h.select(
+              [
+                h.Id("rule-no-match"),
+                h.Value(editor.draft.onNoMatch),
+                h.OnInput((value) =>
+                  M.UpdatedRuleNoMatch({
+                    onNoMatch:
+                      value === "ensure-absent" ? "ensure-absent" : "preserve",
+                  }),
+                ),
+                h.Class(inputClass),
+              ],
+              [
+                h.option([h.Value("preserve")], ["Preserve current label"]),
+                h.option([h.Value("ensure-absent")], ["Ensure label absent"]),
+              ],
+            ),
+          ),
+          field(
+            h,
+            "rule-group",
+            "Conflict group (optional)",
+            h.input([
+              h.Id("rule-group"),
+              h.Type("text"),
+              h.Value(editor.draft.conflictGroup),
+              h.OnInput((conflictGroup) =>
+                M.UpdatedRuleConflictGroup({ conflictGroup }),
+              ),
+              h.Class(inputClass),
+            ]),
+          ),
+          field(
+            h,
+            "rule-priority",
+            "Priority",
+            h.input([
+              h.Id("rule-priority"),
+              h.Type("number"),
+              h.Value(String(editor.draft.priority)),
+              h.OnInput((value) =>
+                M.UpdatedRulePriority({ priority: Number(value) }),
+              ),
+              h.Class(inputClass),
+            ]),
+          ),
+        ],
+      ),
+      ...(editor.draft.label.length === 0
+        ? [
+            h.p(
+              [
+                h.Id("rule-label-error"),
+                h.Class("mt-2 text-sm text-destructive"),
+              ],
+              ["GitHub label is required."],
+            ),
+          ]
+        : []),
+      h.div(
+        [h.Class("mt-6 flex justify-end gap-2 border-t pt-4")],
+        [
+          h.button(
+            [
+              h.Type("button"),
+              ...(saving ? [h.Disabled(true)] : []),
+              h.OnClick(M.ClosedRuleEditor()),
+              h.Class(secondaryButton),
+            ],
+            ["Cancel"],
+          ),
+          ...(conflict
+            ? [
+                h.button(
+                  [
+                    h.Type("button"),
+                    h.OnClick(M.ReloadedRuleEditor()),
+                    h.Class(secondaryButton),
+                  ],
+                  ["Reload server values"],
+                ),
+                h.button(
+                  [
+                    h.Type("button"),
+                    h.OnClick(M.RetriedRuleSave()),
+                    h.Class(primaryButton),
+                  ],
+                  ["Keep draft and retry"],
+                ),
+              ]
+            : [
+                h.button(
+                  [
+                    h.Type("button"),
+                    ...(saving || unavailable || editor.draft.label.length === 0
+                      ? [h.Disabled(true)]
+                      : []),
+                    h.OnClick(M.SavedRule()),
+                    h.Class(primaryButton),
+                  ],
+                  [saving ? "Saving..." : "Save label rule"],
+                ),
+              ]),
+        ],
+      ),
+    ],
+  )
+}
+
+const deleteRuleModal = (h: HtmlBuilder<M.Message>, model: Model): Html => {
+  const deletion = model.ruleDeletion
+  if (deletion._tag === "RuleDeleteClosed") return h.empty
+  const deleting = deletion._tag === "RuleDeleting"
+  return modalShell(
+    h,
+    model.ruleDeleteDialog,
+    (message) => M.GotRuleDeleteDialogMessage({ message }),
+    "Delete label rule",
+    [
+      modalHeader(
+        h,
+        model.ruleDeleteDialog,
+        "Delete label rule",
+        `${deletion.rule.policy.name} / ${deletion.rule.label}`,
+        M.DismissedDeleteRule(),
+        deleting,
+      ),
+      ...(deletion._tag === "RuleDeleteFailed"
+        ? [alert(h, deletion.message)]
+        : []),
+      h.p(
+        [h.Class("mt-4 text-sm text-muted-foreground")],
+        [
+          deletion.rule.enabled
+            ? "Disable this rule before deleting it."
+            : "This removes only the binding; policy versions remain intact.",
+        ],
+      ),
+      h.div(
+        [h.Class("mt-6 flex justify-end gap-2")],
+        [
+          h.button(
+            [
+              h.Type("button"),
+              ...(deleting ? [h.Disabled(true)] : []),
+              h.OnClick(M.DismissedDeleteRule()),
+              h.Class(secondaryButton),
+            ],
+            ["Cancel"],
+          ),
+          h.button(
+            [
+              h.Type("button"),
+              ...(deletion.rule.enabled || deleting ? [h.Disabled(true)] : []),
+              h.OnClick(M.ConfirmedDeleteRule()),
+              h.Class(destructiveButton),
+            ],
+            [
+              deleting
+                ? "Deleting..."
+                : deletion.rule.enabled
+                  ? "Disable before deleting"
+                  : "Delete rule",
+            ],
+          ),
+        ],
+      ),
+    ],
+  )
+}
+
+const testModal = (h: HtmlBuilder<M.Message>, model: Model): Html => {
+  const test = model.test
+  if (test._tag === "TestClosed") return h.empty
+  return modalShell(
+    h,
+    model.testDialog,
+    (message) => M.GotTestDialogMessage({ message }),
+    "No-write policy test",
+    [
+      modalHeader(
+        h,
+        model.testDialog,
+        "Draft test",
+        `Test ${test.policy.name}`,
+        M.DismissedPolicyTest(),
+        test._tag === "TestRunning",
+      ),
+      h.p(
+        [h.Class("mt-2 text-sm text-muted-foreground")],
+        ["Tests the saved policy draft. No labels are written."],
+      ),
+      ...(test._tag === "TestLoadingCandidates"
+        ? [h.p([h.Class("mt-4 text-sm")], ["Loading pull requests..."])]
+        : test._tag === "TestResult"
+          ? [testResult(h, test.result)]
+          : [
+              ...(test._tag === "TestFailed"
+                ? [alert(h, `Error: ${test.message}`)]
+                : []),
+              ...(test.candidates.length === 0
+                ? [h.p([h.Class("mt-4 text-sm")], ["No candidates available."])]
+                : [
+                    h.div(
+                      [h.Class("mt-4 grid gap-3 sm:grid-cols-[1fr_auto]")],
+                      [
+                        field(
+                          h,
+                          "test-pr",
+                          "Pull request",
+                          h.select(
+                            [
+                              h.Id("test-pr"),
+                              h.Value(String(test.selectedPullRequest ?? "")),
+                              h.OnInput((value) =>
+                                M.SelectedPolicyTestCandidate({
+                                  pullRequestNumber: Number(value),
+                                }),
+                              ),
+                              h.Class(inputClass),
+                            ],
+                            test.candidates.map((candidate) =>
+                              h.option(
+                                [h.Value(String(candidate.number))],
+                                [`#${candidate.number} ${candidate.title}`],
+                              ),
+                            ),
+                          ),
+                        ),
+                        h.button(
+                          [
+                            h.Type("button"),
+                            ...(test._tag === "TestRunning"
+                              ? [h.Disabled(true)]
+                              : []),
+                            h.OnClick(M.RanPolicyTest()),
+                            h.Class(`self-end ${primaryButton}`),
+                          ],
+                          [
+                            test._tag === "TestRunning"
+                              ? "Running..."
+                              : "Run test",
+                          ],
+                        ),
+                      ],
+                    ),
+                  ]),
+            ]),
+    ],
+  )
+}
+const testResult = (
+  h: HtmlBuilder<M.Message>,
+  result: typeof PolicyManagement.TestPolicyResponse.Type,
+): Html =>
+  h.div(
+    [h.Role("status"), h.AriaLive("polite"), h.Class("mt-5")],
+    [
+      h.div(
+        [h.Class("rounded-xl border p-4")],
+        [
+          h.div(
+            [h.Class("flex items-center justify-between")],
+            [
+              h.h4([h.Class("font-semibold")], [result.decision.outcome]),
+              h.span(
+                [h.Class("font-mono text-xs")],
+                [`${Math.round(result.decision.confidence * 100)}% confidence`],
+              ),
+            ],
+          ),
+          h.p(
+            [h.Class("mt-2 text-sm text-muted-foreground")],
+            [result.decision.rationale],
+          ),
+          h.h5(
+            [h.Class("mt-4 text-xs font-semibold uppercase")],
+            ["Node trace"],
+          ),
+          h.div(
+            [h.Class("mt-2 space-y-1")],
+            result.decision.trace.map((trace) =>
+              h.keyed("p")(
+                PolicyProgram.policyNodeLocationKey(trace.location),
+                [h.Class("text-xs")],
+                [
+                  `${PolicyProgram.formatPolicyNodeLocation(trace.location)}: ${trace.outcome} / ${trace.rationale}`,
+                ],
+              ),
+            ),
+          ),
+          h.p(
+            [h.Class("mt-3 text-xs text-muted-foreground")],
+            [
+              result.tested._tag === "Draft"
+                ? `Tested draft version ${result.tested.version}`
+                : `Tested published version ${result.tested.policyVersionId}`,
+            ],
+          ),
+        ],
+      ),
+      h.div(
+        [h.Class("mt-4 flex justify-end")],
+        [
+          h.button(
+            [
+              h.Type("button"),
+              h.OnClick(M.ResetPolicyTest()),
+              h.Class(secondaryButton),
+            ],
+            ["Test another pull request"],
+          ),
+        ],
+      ),
+    ],
+  )
+
 const modalShell = (
-  h: HtmlBuilder<Message>,
+  h: HtmlBuilder<M.Message>,
   dialogModel: Dialog.Model,
-  toParentMessage: (message: Dialog.Message) => Message,
+  toParentMessage: (message: Dialog.Message) => M.Message,
+  descriptionText: string,
   content: ReadonlyArray<Html>,
 ): Html =>
   h.submodel({
@@ -527,28 +1376,25 @@ const modalShell = (
           [
             ...dialog,
             h.Class(
-              "fixed inset-0 z-50 m-0 size-full max-h-none max-w-none border-0 bg-transparent p-4 sm:p-6",
+              "fixed inset-0 z-50 m-0 size-full max-h-none max-w-none border-0 bg-transparent p-4",
             ),
           ],
           isVisible
             ? [
-                h.div([
-                  ...backdrop,
-                  h.Class("fixed inset-0 bg-black/65 backdrop-blur-[2px]"),
-                ]),
+                h.div([...backdrop, h.Class("fixed inset-0 bg-black/65")]),
                 h.div(
                   [
                     ...panel,
                     ...initialFocus,
                     h.Tabindex(-1),
                     h.Class(
-                      "relative z-10 mx-auto max-h-[calc(100svh-2rem)] w-full max-w-2xl overflow-y-auto rounded-2xl border bg-card p-5 shadow-2xl sm:max-h-[calc(100svh-3rem)] sm:p-6",
+                      "relative z-10 mx-auto max-h-[calc(100svh-2rem)] w-full max-w-4xl overflow-y-auto rounded-2xl border bg-card p-5 shadow-2xl",
                     ),
                   ],
                   [
                     h.p(
                       [...description, h.Class("sr-only")],
-                      ["Rule management dialog"],
+                      [descriptionText],
                     ),
                     ...content,
                   ],
@@ -558,749 +1404,57 @@ const modalShell = (
         ),
     },
   })
-
-const editorModal = (h: HtmlBuilder<Message>, model: Model): Html => {
-  if (model.editor._tag === "EditorClosed") return h.div([], [])
-  const draft = model.editor.draft
-  const saving = model.editor._tag === "EditorSaving"
-  const conflicted = model.editor._tag === "EditorConflict"
-  const labels =
-    model.repository._tag === "LoadedRepository"
-      ? model.repository.data.labels
-      : []
-  const editorRuleId = model.editor.ruleId
-  const isNew = editorRuleId === null
-  const recoveryRule =
-    model.editor._tag === "EditorConflict"
-      ? (model.editor.conflict.currentRule ??
-        (editorRuleId !== null && model.repository._tag === "LoadedRepository"
-          ? (model.repository.data.rules.find(
-              (rule) => rule.id === editorRuleId,
-            ) ?? null)
-          : null))
-      : null
-  return modalShell(
-    h,
-    model.editorDialog,
-    (message) => GotEditorDialogMessage({ message }),
-    [
-      h.div(
-        [h.Class("flex items-start justify-between gap-4")],
-        [
-          h.div(
-            [],
-            [
-              h.p(
-                [
-                  h.Class(
-                    "font-mono text-[10px] font-semibold uppercase tracking-widest text-primary",
-                  ),
-                ],
-                [isNew ? "Create rule" : "Edit rule"],
-              ),
-              h.h3(
-                [
-                  h.Id(Dialog.titleId(model.editorDialog)),
-                  h.Class("mt-2 text-xl font-semibold"),
-                ],
-                [isNew ? "New auto-labeling rule" : draft.name],
-              ),
-              h.div([h.Class("mt-3")], [labelBadge(h, draft.label)]),
-            ],
-          ),
-          h.button(
-            [
-              h.Type("button"),
-              h.AriaLabel("Close rule editor"),
-              h.OnClick(ClosedRuleEditor()),
-              h.Class(
-                "grid size-9 place-items-center rounded-lg text-lg text-muted-foreground hover:bg-muted hover:text-foreground",
-              ),
-            ],
-            ["x"],
-          ),
-        ],
-      ),
-      ...(model.editor._tag === "EditorFailed"
-        ? [errorBanner(h, model.editor.message)]
-        : model.editor._tag === "EditorConflict"
-          ? [
-              editorConflict(
-                h,
-                model.editor.message,
-                model.editor.conflict,
-                recoveryRule,
-                editorRuleId === null || recoveryRule !== null,
-              ),
-            ]
-          : []),
-      h.p(
-        [h.Class("mt-5 text-sm leading-6 text-muted-foreground")],
-        [
-          "Describe when this label should be applied. Include exclusions when nearby changes should not match.",
-        ],
-      ),
-      h.div(
-        [
-          h.Class(
-            "mt-5 grid gap-5 rounded-xl border bg-muted/20 p-4 sm:grid-cols-2",
-          ),
-        ],
-        [
-          field(
-            h,
-            "rule-name",
-            "Rule name",
-            h.input([
-              h.Id("rule-name"),
-              h.Type("text"),
-              h.Value(draft.name),
-              h.OnInput((name) => UpdatedRuleName({ name })),
-              h.Class(inputClass),
-            ]),
-          ),
-          field(h, "rule-label", "GitHub label", labelSelect(h, draft, labels)),
-          confidenceField(h, draft),
-        ],
-      ),
-      field(
-        h,
-        "rule-prompt",
-        "Rule prompt",
-        h.textarea([
-          h.Id("rule-prompt"),
-          h.Value(draft.instructions),
-          h.OnInput((instructions) => UpdatedRulePrompt({ instructions })),
-          h.Class(
-            "min-h-40 w-full resize-none rounded-lg border border-input bg-background px-3 py-3 text-sm leading-6 shadow-xs outline-hidden focus:border-ring focus:ring-2 focus:ring-ring/20",
-          ),
-        ]),
-        "mt-4",
-      ),
-      h.p(
-        [
-          h.Class(
-            "mt-1 text-right font-mono text-[10px] text-muted-foreground",
-          ),
-        ],
-        [`${draft.instructions.length} / 4,000 characters`],
-      ),
-      advancedFields(h, draft),
-      h.div(
-        [
-          h.Class(
-            "mt-6 flex flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:justify-end",
-          ),
-        ],
-        [
-          h.button(
-            [
-              h.Type("button"),
-              h.OnClick(ClosedRuleEditor()),
-              h.Class(secondaryButton),
-            ],
-            ["Cancel"],
-          ),
-          h.button(
-            [
-              h.Type("button"),
-              ...(saving || conflicted || !validDraft(draft)
-                ? [h.Disabled(true)]
-                : []),
-              h.OnClick(SavedRule()),
-              h.Class(primaryButton),
-            ],
-            [
-              saving
-                ? "Saving..."
-                : conflicted
-                  ? "Resolve conflict to save"
-                  : isNew
-                    ? "Create rule"
-                    : "Save changes",
-            ],
-          ),
-        ],
-      ),
-    ],
-  )
-}
-
-const validDraft = (draft: RuleDraft): boolean =>
-  draft.name.trim().length > 0 &&
-  draft.name.length <= 100 &&
-  draft.label.length > 0 &&
-  draft.instructions.trim().length > 0 &&
-  draft.instructions.length <= 4_000 &&
-  draft.exclusiveGroup.length <= 100
-
-const conflictSummary = (conflict: MutationConflict): string => {
-  if (conflict._tag === "RuleVersionConflict") {
-    return `Expected rule version ${conflict.expectedVersion}; current server version is ${conflict.currentRule.version}.`
-  }
-  return `Expected repository revision ${conflict.expectedRevision}; current server revision is ${conflict.actualRevision}.`
-}
-
-const editorConflict = (
-  h: HtmlBuilder<Message>,
-  message: string,
-  conflict: MutationConflict,
-  currentRule: Rule | null,
-  canRetry: boolean,
+const modalHeader = (
+  h: HtmlBuilder<M.Message>,
+  dialog: Dialog.Model,
+  eyebrow: string,
+  title: string,
+  close: M.Message,
+  disabled = false,
 ): Html =>
   h.div(
-    [
-      h.Role("alert"),
-      h.Class(
-        "mt-4 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm",
-      ),
-    ],
-    [
-      h.p([h.Class("text-destructive")], [message]),
-      h.p([h.Class("mt-2 text-foreground")], [conflictSummary(conflict)]),
-      ...(currentRule === null
-        ? []
-        : [
-            h.p(
-              [h.Class("mt-1 text-xs text-muted-foreground")],
-              [
-                `Current server rule: ${currentRule.name} uses ${currentRule.label}.`,
-              ],
-            ),
-          ]),
-      h.div(
-        [h.Class("mt-3 flex flex-wrap gap-2")],
-        [
-          h.button(
-            [
-              h.Type("button"),
-              ...(currentRule === null ? [h.Disabled(true)] : []),
-              h.OnClick(ReloadedRuleEditor()),
-              h.Class(secondaryButton),
-            ],
-            ["Reload current server values"],
-          ),
-          h.button(
-            [
-              h.Type("button"),
-              ...(canRetry ? [] : [h.Disabled(true)]),
-              h.OnClick(RetriedRuleSave()),
-              h.Class(primaryButton),
-            ],
-            ["Keep draft and retry latest"],
-          ),
-        ],
-      ),
-    ],
-  )
-
-const rowMutationError = (
-  h: HtmlBuilder<Message>,
-  message: string,
-  retryable: boolean,
-): Html =>
-  h.div(
-    [
-      h.Role("alert"),
-      h.Class(
-        "mt-4 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive",
-      ),
-    ],
-    [
-      h.p([], [message]),
-      h.div(
-        [h.Class("mt-3 flex flex-wrap gap-2")],
-        [
-          ...(retryable
-            ? [
-                h.button(
-                  [
-                    h.Type("button"),
-                    h.OnClick(RetriedToggleRule()),
-                    h.Class(secondaryButton),
-                  ],
-                  ["Retry with current version"],
-                ),
-              ]
-            : []),
-          h.button(
-            [
-              h.Type("button"),
-              h.OnClick(DismissedRowMutationError()),
-              h.Class(secondaryButton),
-            ],
-            ["Dismiss"],
-          ),
-        ],
-      ),
-    ],
-  )
-
-const field = (
-  h: HtmlBuilder<Message>,
-  id: string,
-  label: string,
-  control: Html,
-  className = "",
-): Html => h.div([h.Class(className)], [modalLabel(h, id, label), control])
-
-const labelSelect = (
-  h: HtmlBuilder<Message>,
-  draft: RuleDraft,
-  labels: ReadonlyArray<Label>,
-): Html =>
-  h.select(
-    [
-      h.Id("rule-label"),
-      h.Value(draft.label),
-      h.OnInput((label) => UpdatedRuleLabel({ label })),
-      h.Class(inputClass),
-    ],
-    labels.map((label) => h.option([h.Value(label.name)], [label.name])),
-  )
-
-const confidenceField = (h: HtmlBuilder<Message>, draft: RuleDraft): Html => {
-  const percentage = Math.round(draft.confidenceThreshold * 100)
-  return h.div(
-    [h.Class("sm:col-span-2")],
+    [h.Class("flex items-start justify-between gap-4")],
     [
       h.div(
-        [h.Class("mb-2 flex items-center justify-between gap-3")],
+        [],
         [
-          modalLabel(h, "rule-confidence", "Confidence threshold"),
-          h.output(
+          h.p(
             [
-              h.For("rule-confidence"),
               h.Class(
-                "font-mono text-sm font-semibold tabular-nums text-primary",
+                "font-mono text-[10px] font-semibold uppercase tracking-widest text-primary",
               ),
             ],
-            [`${percentage}%`],
+            [eyebrow],
+          ),
+          h.h3(
+            [
+              h.Id(Dialog.titleId(dialog)),
+              h.Class("mt-2 text-xl font-semibold"),
+            ],
+            [title],
           ),
         ],
       ),
-      h.input([
-        h.Id("rule-confidence"),
-        h.Type("range"),
-        h.Min("0"),
-        h.Max("100"),
-        h.Step("1"),
-        h.Value(String(percentage)),
-        h.OnInput((value) =>
-          UpdatedRuleConfidence({ confidenceThreshold: Number(value) / 100 }),
-        ),
-        h.Class("h-10 w-full cursor-pointer accent-primary"),
-      ]),
-    ],
-  )
-}
-
-const advancedFields = (h: HtmlBuilder<Message>, draft: RuleDraft): Html =>
-  h.section(
-    [
-      h.AriaLabelledBy("advanced-settings-title"),
-      h.Class("mt-6 border-t pt-5"),
-    ],
-    [
-      h.h4(
-        [h.Id("advanced-settings-title"), h.Class("font-semibold")],
-        ["Advanced behavior"],
-      ),
-      h.div(
-        [h.Class("mt-4 grid gap-5 sm:grid-cols-2")],
+      h.button(
         [
-          field(
-            h,
-            "rule-kind",
-            "Rule type",
-            h.select(
-              [
-                h.Id("rule-kind"),
-                h.Value(draft.kind),
-                h.OnInput((value) =>
-                  UpdatedRuleKind({ kind: ruleKindFrom(value) }),
-                ),
-                h.Class(inputClass),
-              ],
-              [
-                h.option([h.Value("ai")], ["AI prompt"]),
-                h.option([h.Value("ready-for-review")], ["Ready for review"]),
-              ],
-            ),
-          ),
-          field(
-            h,
-            "rule-mode",
-            "Label behavior",
-            h.select(
-              [
-                h.Id("rule-mode"),
-                h.Value(draft.mode),
-                ...(draft.kind === "ready-for-review"
-                  ? [h.Disabled(true)]
-                  : []),
-                h.OnInput((value) =>
-                  UpdatedRuleMode({ mode: ruleModeFrom(value) }),
-                ),
-                h.Class(inputClass),
-              ],
-              [
-                h.option([h.Value("add-only")], ["Add only"]),
-                h.option([h.Value("reconcile")], ["Reconcile"]),
-              ],
-            ),
-          ),
-          field(
-            h,
-            "rule-exclusive-group",
-            "Exclusive group",
-            h.input([
-              h.Id("rule-exclusive-group"),
-              h.Type("text"),
-              h.Value(draft.exclusiveGroup),
-              h.Placeholder("Optional group name"),
-              h.OnInput((exclusiveGroup) =>
-                UpdatedRuleExclusiveGroup({ exclusiveGroup }),
-              ),
-              h.Class(inputClass),
-            ]),
+          h.Type("button"),
+          h.AriaLabel("Close dialog"),
+          ...(disabled ? [h.Disabled(true)] : []),
+          h.OnClick(close),
+          h.Class(
+            "grid size-9 place-items-center rounded-lg text-muted-foreground hover:bg-muted",
           ),
         ],
+        ["x"],
       ),
     ],
   )
-
-const modalLabel = (h: HtmlBuilder<Message>, id: string, label: string): Html =>
-  h.label(
-    [
-      h.For(id),
-      h.Class(
-        "mb-2 block font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground",
-      ),
-    ],
-    [label],
-  )
-
-const deleteModal = (h: HtmlBuilder<Message>, model: Model): Html => {
-  if (model.deletion._tag === "DeleteClosed") return h.div([], [])
-  const rule = model.deletion.rule
-  const deleting = model.deletion._tag === "DeleteDeleting"
-  return modalShell(
+const conflictAlert = (h: HtmlBuilder<M.Message>, message: string): Html =>
+  alert(
     h,
-    model.deleteDialog,
-    (message) => GotDeleteDialogMessage({ message }),
-    [
-      h.p(
-        [
-          h.Class(
-            "font-mono text-[10px] font-semibold uppercase tracking-widest text-destructive",
-          ),
-        ],
-        ["Delete rule"],
-      ),
-      h.h3(
-        [
-          h.Id(Dialog.titleId(model.deleteDialog)),
-          h.Class("mt-2 text-xl font-semibold"),
-        ],
-        [`Delete ${rule.name}?`],
-      ),
-      ...(model.deletion._tag === "DeleteFailed"
-        ? [errorBanner(h, model.deletion.message)]
-        : model.deletion._tag === "DeleteConflict"
-          ? [
-              errorBanner(
-                h,
-                `${model.deletion.message} ${conflictSummary(model.deletion.conflict)}`,
-              ),
-            ]
-          : []),
-      h.p(
-        [h.Class("mt-3 text-sm leading-6 text-muted-foreground")],
-        [
-          rule.enabled
-            ? "This rule is currently enabled. Disable it from the table before deleting it."
-            : "The rule will be removed from this repository. Its prior changes remain available in the audit history.",
-        ],
-      ),
-      h.div(
-        [
-          h.Class(
-            "mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end",
-          ),
-        ],
-        [
-          h.button(
-            [
-              h.Type("button"),
-              h.OnClick(DismissedDeleteRule()),
-              h.Class(secondaryButton),
-            ],
-            ["Cancel"],
-          ),
-          ...(model.deletion._tag === "DeleteConflict" &&
-          model.deletion.conflict.currentRule !== null &&
-          !model.deletion.conflict.currentRule.enabled
-            ? [
-                h.button(
-                  [
-                    h.Type("button"),
-                    h.OnClick(RetriedDeleteRule()),
-                    h.Class(secondaryButton),
-                  ],
-                  ["Retry with current version"],
-                ),
-              ]
-            : []),
-          h.button(
-            [
-              h.Type("button"),
-              ...(rule.enabled ||
-              deleting ||
-              model.deletion._tag === "DeleteConflict"
-                ? [h.Disabled(true)]
-                : []),
-              h.OnClick(ConfirmedDeleteRule()),
-              h.Class(
-                "inline-flex min-h-10 items-center justify-center rounded-lg bg-destructive px-4 py-2 text-sm font-semibold text-white outline-hidden hover:bg-destructive/90 focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50",
-              ),
-            ],
-            [
-              deleting
-                ? "Deleting..."
-                : rule.enabled
-                  ? "Disable before deleting"
-                  : "Delete rule",
-            ],
-          ),
-        ],
-      ),
-    ],
+    `${message} Reload server values or keep this local draft and retry against the current version.`,
   )
-}
-
-const testModal = (h: HtmlBuilder<Message>, model: Model): Html => {
-  if (model.test._tag === "TestClosed") return h.div([], [])
-  return modalShell(
-    h,
-    model.testDialog,
-    (message) => GotTestDialogMessage({ message }),
-    [testContent(h, model)],
-  )
-}
-
-const testContent = (h: HtmlBuilder<Message>, model: Model): Html => {
-  if (model.test._tag === "TestClosed") return h.div([], [])
-  if (model.test._tag === "TestLoadingCandidates") {
-    return h.section(
-      [h.AriaLabelledBy(Dialog.titleId(model.testDialog))],
-      [
-        h.h3(
-          [h.Id(Dialog.titleId(model.testDialog)), h.Class("font-semibold")],
-          [`Test ${model.test.rule.name}`],
-        ),
-        h.p(
-          [h.Class("mt-3 text-sm text-muted-foreground")],
-          ["Loading recent open pull requests..."],
-        ),
-      ],
-    )
-  }
-  if (model.test._tag === "TestResult")
-    return testResult(
-      h,
-      Dialog.titleId(model.testDialog),
-      model.test.rule,
-      model.test.result,
-    )
-  const running = model.test._tag === "TestRunning"
-  return h.section(
-    [h.AriaLabelledBy(Dialog.titleId(model.testDialog))],
-    [
-      h.p(
-        [
-          h.Class(
-            "font-mono text-[10px] font-semibold uppercase tracking-widest text-primary",
-          ),
-        ],
-        ["No-write preview"],
-      ),
-      h.h3(
-        [h.Id(Dialog.titleId(model.testDialog)), h.Class("mt-1 font-semibold")],
-        [`Test ${model.test.rule.name}`],
-      ),
-      h.p(
-        [h.Class("mt-2 text-xs leading-5 text-muted-foreground")],
-        [
-          "Run only this rule against an existing pull request. No GitHub labels will be changed.",
-        ],
-      ),
-      ...(model.test._tag === "TestFailed"
-        ? [errorBanner(h, model.test.message)]
-        : []),
-      ...(model.test.candidates.length === 0
-        ? [
-            h.p(
-              [h.Class("mt-4 text-sm text-muted-foreground")],
-              ["No recent open pull requests are available."],
-            ),
-          ]
-        : [
-            h.div(
-              [h.Class("mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]")],
-              [
-                field(
-                  h,
-                  "test-pr",
-                  "Pull request",
-                  h.select(
-                    [
-                      h.Id("test-pr"),
-                      h.Value(String(model.test.selectedPullRequest ?? "")),
-                      h.OnInput((value) =>
-                        SelectedRuleTestCandidate({
-                          pullRequestNumber: Number(value),
-                        }),
-                      ),
-                      h.Class(inputClass),
-                    ],
-                    model.test.candidates.map((candidate) =>
-                      h.option(
-                        [h.Value(String(candidate.number))],
-                        [`#${candidate.number} ${candidate.title}`],
-                      ),
-                    ),
-                  ),
-                ),
-                h.button(
-                  [
-                    h.Type("button"),
-                    ...(running ? [h.Disabled(true)] : []),
-                    h.OnClick(RanRuleTest()),
-                    h.Class(`self-end ${primaryButton}`),
-                  ],
-                  [running ? "Running..." : "Run test"],
-                ),
-              ],
-            ),
-          ]),
-    ],
-  )
-}
-
-const testResult = (
-  h: HtmlBuilder<Message>,
-  titleId: string,
-  rule: Rule,
-  result: typeof LabelingRuleManagement.TestLabelingRuleResponse.Type,
-): Html =>
-  h.section(
-    [h.AriaLabelledBy(titleId)],
-    [
-      h.p(
-        [
-          h.Class(
-            `font-mono text-[10px] font-semibold uppercase tracking-widest ${result.selected ? "text-success" : "text-muted-foreground"}`,
-          ),
-        ],
-        [
-          `${result.selected ? "Would apply" : "Would not apply"} / ${Math.round(result.confidence * 100)}% confidence`,
-        ],
-      ),
-      h.h3(
-        [h.Id(titleId), h.Class("mt-1 font-semibold")],
-        ["Rule test result"],
-      ),
-      h.div(
-        [h.Class("mt-4 grid gap-4 rounded-xl border p-4 sm:grid-cols-2")],
-        [
-          resultItem(
-            h,
-            "Proposed additions",
-            result.proposedLabelChanges.add.join(", ") || "None",
-          ),
-          resultItem(
-            h,
-            "Proposed removals",
-            result.proposedLabelChanges.remove.join(", ") || "None",
-          ),
-          resultItem(
-            h,
-            "Threshold",
-            `${Math.round(result.confidenceThreshold * 100)}%`,
-          ),
-          resultItem(h, "GitHub write", "None (preview only)"),
-          h.div(
-            [h.Class("sm:col-span-2")],
-            [
-              h.p(
-                [
-                  h.Class(
-                    "font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground",
-                  ),
-                ],
-                ["Classifier rationale"],
-              ),
-              h.p([h.Class("mt-2 text-sm leading-6")], [result.rationale]),
-            ],
-          ),
-        ],
-      ),
-      h.div(
-        [
-          h.Class(
-            "mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end",
-          ),
-        ],
-        [
-          h.button(
-            [
-              h.Type("button"),
-              h.OnClick(DismissedRuleTest()),
-              h.Class(secondaryButton),
-            ],
-            ["Done"],
-          ),
-          h.button(
-            [
-              h.Type("button"),
-              h.OnClick(ResetRuleTest()),
-              h.Class(primaryButton),
-            ],
-            ["Test another PR"],
-          ),
-        ],
-      ),
-      h.p(
-        [h.Class("sr-only")],
-        [
-          `Tested ${rule.name} against pull request ${result.pullRequestNumber}.`,
-        ],
-      ),
-    ],
-  )
-
-const resultItem = (
-  h: HtmlBuilder<Message>,
-  label: string,
-  value: string,
-): Html =>
-  h.div(
-    [],
-    [
-      h.p(
-        [
-          h.Class(
-            "font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground",
-          ),
-        ],
-        [label],
-      ),
-      h.p([h.Class("mt-2 text-sm font-medium")], [value]),
-    ],
-  )
-
-const errorBanner = (h: HtmlBuilder<Message>, message: string): Html =>
+const alert = (h: HtmlBuilder<M.Message>, message: string): Html =>
   h.div(
     [
       h.Role("alert"),
@@ -1310,18 +1464,117 @@ const errorBanner = (h: HtmlBuilder<Message>, message: string): Html =>
     ],
     [message],
   )
-
-const labelBadge = (h: HtmlBuilder<Message>, label: string): Html =>
+const errorPanel = (
+  h: HtmlBuilder<M.Message>,
+  message: string,
+  action: string,
+  onClick: M.Message,
+): Html =>
+  h.div(
+    [
+      h.Role("alert"),
+      h.Class(
+        "mt-6 rounded-xl border border-destructive/30 bg-destructive/5 p-4",
+      ),
+    ],
+    [
+      h.p([h.Class("text-sm")], [message]),
+      h.button(
+        [
+          h.Type("button"),
+          h.OnClick(onClick),
+          h.Class(`mt-3 ${secondaryButton}`),
+        ],
+        [action],
+      ),
+    ],
+  )
+const statusPanel = (
+  h: HtmlBuilder<M.Message>,
+  title: string,
+  description: string,
+): Html =>
+  h.div(
+    [h.Class("mt-6 rounded-xl border bg-card p-6 text-center")],
+    [
+      h.h3([h.Class("font-semibold")], [title]),
+      h.p([h.Class("mt-2 text-sm text-muted-foreground")], [description]),
+    ],
+  )
+const tableHeader = (
+  h: HtmlBuilder<M.Message>,
+  title: string,
+  description: string,
+  count: string,
+): Html =>
+  h.div(
+    [h.Class("flex items-center justify-between border-b px-4 py-4")],
+    [
+      h.div(
+        [],
+        [
+          h.h3([h.Class("font-semibold")], [title]),
+          h.p([h.Class("mt-1 text-sm text-muted-foreground")], [description]),
+        ],
+      ),
+      h.span(
+        [
+          h.Class(
+            "rounded-md border bg-muted px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground",
+          ),
+        ],
+        [count],
+      ),
+    ],
+  )
+const heading = (
+  h: HtmlBuilder<M.Message>,
+  label: string,
+  className = "",
+): Html => h.th([h.Class(`px-4 py-3 font-medium ${className}`)], [label])
+const field = (
+  h: HtmlBuilder<M.Message>,
+  id: string,
+  label: string,
+  control: Html,
+  className = "",
+): Html =>
+  h.div(
+    [h.Class(className)],
+    [
+      h.label(
+        [
+          h.For(id),
+          h.Class(
+            "mb-2 block font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground",
+          ),
+        ],
+        [label],
+      ),
+      control,
+    ],
+  )
+const statusBadge = (h: HtmlBuilder<M.Message>, label: string): Html =>
   h.span(
     [
       h.Class(
-        "inline-flex items-center gap-1.5 rounded-full border bg-background px-2 py-0.5 font-mono text-[11px] text-foreground",
+        "rounded-full border bg-muted px-2 py-1 font-mono text-[10px] font-semibold uppercase",
       ),
     ],
-    [h.span([h.Class("size-1.5 rounded-full bg-primary")], []), label],
+    [label],
   )
-
-const ruleModeFrom = (value: string): RuleMode =>
-  value === "reconcile" ? "reconcile" : "add-only"
-const ruleKindFrom = (value: string): RuleKind =>
-  value === "ready-for-review" ? "ready-for-review" : "ai"
+const labelBadge = (h: HtmlBuilder<M.Message>, label: string): Html =>
+  h.span(
+    [
+      h.Class(
+        "inline-flex rounded-full border border-primary/25 bg-primary/10 px-2 py-1 text-xs font-medium text-primary",
+      ),
+    ],
+    [label],
+  )
+const publishedPolicies = (model: Model): ReadonlyArray<Policy> =>
+  model.repository._tag === "LoadedRepository"
+    ? model.repository.data.policies.filter(
+        (policy) => policy.publishedVersionId !== null,
+      )
+    : []

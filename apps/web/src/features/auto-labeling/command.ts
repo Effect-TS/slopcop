@@ -2,117 +2,223 @@ import { ApiClient } from "../../api-client"
 import * as Effect from "effect/Effect"
 import * as Schema from "effect/Schema"
 import * as FoldkitCommand from "foldkit/command"
+import * as PolicyProgram from "@slopcop/domain/Policy/PolicyProgram"
+import { PolicyDraft } from "./condition"
+import * as M from "./message"
 import {
-  CompletedDeleteRule,
-  CompletedRuleTest,
-  CompletedSaveRule,
-  CompletedToggleRule,
-  FailedRuleTest,
-  FailedToDeleteRule,
-  FailedToLoadRepositoryData,
-  FailedToLoadRuleTestCandidates,
-  FailedToSaveRule,
-  FailedToToggleRule,
-  LoadedRepositoryData,
-  LoadedRuleTestCandidates,
-  type Message,
-} from "./message"
-import {
-  MutationConflict,
+  PolicyId,
+  PolicyIdentity,
   Repository,
   RuleDraft,
   RuleId,
-  type MutationConflict as MutationConflictType,
+  RuleIdentity,
 } from "./model"
 
-export type Command = FoldkitCommand.Command<Message, never, ApiClient>
-
-const failureMessage = (error: { readonly _tag: string }): string => {
+export type Command = FoldkitCommand.Command<M.Message, never, ApiClient>
+const failureMessage = (error: {
+  readonly _tag: string
+  readonly message?: string
+}): string => {
   switch (error._tag) {
     case "RepositoryNotConfigured":
-      return "This repository is not configured for SlopCop. Enable it in repository settings and retry."
-    case "GitHubLabelNotFound":
-      return "The selected GitHub label no longer exists. Choose an available label and retry."
-    case "GitHubLabelValidationUnavailable":
-      return "GitHub labels could not be validated. Your changes are preserved; retry when GitHub is available."
-    case "DuplicateLabelingRule":
-      return "A rule already uses this GitHub label. Choose another label and retry."
+      return "This repository is not configured for SlopCop."
+    case "PolicyConflict":
+      return "The policy draft changed on the server. Your local draft is preserved."
     case "LabelingRuleConflict":
     case "LabelingRulesRevisionConflict":
-      return "This rule changed on the server. Your draft is preserved; review the current server rule before retrying."
-    case "InvalidLabelingRule":
-      return "The rule is invalid. Check every field and retry."
-    case "LabelingRuleNotFound":
-      return "This rule no longer exists. Close the dialog and reload the repository."
-    case "PullRequestNotFound":
-      return "That pull request is no longer available. Choose another pull request and retry."
+      return "The label rule changed on the server. Your local draft is preserved."
+    case "InvalidPolicyProgram":
+      return error.message ?? "The policy program is invalid."
+    case "UnsupportedTarget":
+      return "Only pull request policies are currently supported."
+    case "PolicyNotFound":
+      return "This policy no longer exists. Refresh the repository."
+    case "PolicyTestUnavailable":
+      return "Policy testing is unavailable. No labels were changed."
     case "RuleTestCandidatesUnavailable":
-      return "Recent pull requests are unavailable. Retry later; no labels were changed."
-    case "LabelingRuleTestUnavailable":
-      return "The rule test is temporarily unavailable. Retry later; no labels were changed."
+      return "Recent pull requests are unavailable."
+    case "GitHubLabelNotFound":
+      return "The selected GitHub label no longer exists."
     default:
-      return "The request failed. Check your connection and retry; no unsaved input was discarded."
+      return (
+        error.message ?? "The request failed. Your local input is preserved."
+      )
   }
 }
-
-const mutationConflict = (
-  error:
-    | {
-        readonly _tag: "LabelingRuleConflict"
-        readonly currentRule: Extract<
-          MutationConflictType,
-          { _tag: "RuleVersionConflict" }
-        >["currentRule"]
-      }
-    | {
-        readonly _tag: "LabelingRulesRevisionConflict"
-        readonly currentRule: Extract<
-          MutationConflictType,
-          { _tag: "RepositoryRevisionConflict" }
-        >["currentRule"]
-        readonly expectedRevision: number
-        readonly actualRevision: number
-      },
-  expectedVersion: number,
-): MutationConflictType => {
-  if (error._tag === "LabelingRuleConflict") {
-    return MutationConflict.cases.RuleVersionConflict.make({
-      expectedVersion,
-      currentRule: error.currentRule,
-    })
-  }
-  return MutationConflict.cases.RepositoryRevisionConflict.make({
-    expectedRevision: error.expectedRevision,
-    actualRevision: error.actualRevision,
-    currentRule: error.currentRule,
-  })
-}
+const isRuleRevisionConflict = (error: { readonly _tag: string }): boolean =>
+  error._tag === "LabelingRulesRevisionConflict"
 
 export const LoadRepositoryData = FoldkitCommand.define("LoadRepositoryData", {
   args: { requestId: Schema.Int, repository: Repository },
-  messages: [LoadedRepositoryData, FailedToLoadRepositoryData],
+  messages: [M.LoadedRepositoryData, M.FailedToLoadRepositoryData],
   execute: ({ repository, requestId }) =>
     Effect.gen(function* () {
       const client = yield* ApiClient
-      const [rules, labels] = yield* Effect.all([
+      const [policies, rules, audit, labels] = yield* Effect.all([
+        client.labelingPolicies.listPolicies({ params: repository }),
         client.labelingRules.listRules({
           params: repository,
           query: { includeDisabled: true },
         }),
+        client.labelingRules.listRuleAudit({
+          params: repository,
+          query: { limit: 20 },
+        }),
         client.labelingRules.listGitHubLabels({ params: repository }),
       ])
-      return LoadedRepositoryData({
+      return M.LoadedRepositoryData({
         requestId,
         repository,
-        revision: rules.revision,
+        policyRevision: policies.revision,
+        ruleRevision: rules.revision,
+        policies: policies.policies,
         rules: rules.rules,
         activity: rules.activity,
+        audit: audit.entries,
         labels: labels.labels,
       })
     }).pipe(
       Effect.catch((error) =>
         Effect.succeed(
-          FailedToLoadRepositoryData({
+          M.FailedToLoadRepositoryData({
+            requestId,
+            repository,
+            message: failureMessage(error),
+          }),
+        ),
+      ),
+    ),
+})
+
+export const LoadPolicyDetail = FoldkitCommand.define("LoadPolicyDetail", {
+  args: { requestId: Schema.Int, repository: Repository, policyId: PolicyId },
+  messages: [M.LoadedPolicyDetail, M.FailedToLoadPolicyDetail],
+  execute: ({ requestId, repository, policyId }) =>
+    Effect.gen(function* () {
+      const client = yield* ApiClient
+      const detail = yield* client.labelingPolicies.getPolicy({
+        params: { ...repository, policyId },
+      })
+      return M.LoadedPolicyDetail({ requestId, repository, detail })
+    }).pipe(
+      Effect.catch((error) =>
+        Effect.succeed(
+          M.FailedToLoadPolicyDetail({
+            requestId,
+            repository,
+            policyId,
+            message: failureMessage(error),
+          }),
+        ),
+      ),
+    ),
+})
+
+export const SavePolicy = FoldkitCommand.define("SavePolicy", {
+  args: {
+    requestId: Schema.Int,
+    repository: Repository,
+    identity: PolicyIdentity,
+    draft: PolicyDraft,
+    program: PolicyProgram.PolicyProgram,
+  },
+  messages: [M.CompletedSavePolicy, M.FailedToSavePolicy],
+  execute: ({ requestId, repository, identity, draft, program }) =>
+    Effect.gen(function* () {
+      const client = yield* ApiClient
+      const policy =
+        identity._tag === "NewPolicy"
+          ? yield* client.labelingPolicies.createPolicy({
+              params: repository,
+              payload: {
+                name: draft.name,
+                target: draft.target,
+                program,
+                metadata:
+                  draft.description.trim() === ""
+                    ? {}
+                    : { description: draft.description },
+              },
+            })
+          : yield* client.labelingPolicies.patchPolicyDraft({
+              params: { ...repository, policyId: identity.id },
+              payload: {
+                name: draft.name,
+                program,
+                metadata:
+                  draft.description.trim() === ""
+                    ? {}
+                    : { description: draft.description },
+                version: identity.draftVersion,
+              },
+            })
+      return M.CompletedSavePolicy({ requestId, repository, policy })
+    }).pipe(
+      Effect.catch((error) =>
+        Effect.succeed(
+          M.FailedToSavePolicy({
+            requestId,
+            repository,
+            message: failureMessage(error),
+            currentPolicy:
+              error._tag === "PolicyConflict" ? error.currentPolicy : null,
+            currentDraftVersion:
+              error._tag === "PolicyConflict"
+                ? error.currentDraftVersion
+                : null,
+          }),
+        ),
+      ),
+    ),
+})
+
+export const ValidatePolicy = FoldkitCommand.define("ValidatePolicy", {
+  args: { requestId: Schema.Int, repository: Repository, policyId: PolicyId },
+  messages: [M.CompletedValidatePolicy, M.FailedToValidatePolicy],
+  execute: ({ requestId, repository, policyId }) =>
+    Effect.gen(function* () {
+      const client = yield* ApiClient
+      const result = yield* client.labelingPolicies.validatePolicy({
+        params: { ...repository, policyId },
+      })
+      return M.CompletedValidatePolicy({
+        requestId,
+        repository,
+        policyId,
+        result,
+      })
+    }).pipe(
+      Effect.catch((error) =>
+        Effect.succeed(
+          M.FailedToValidatePolicy({
+            requestId,
+            repository,
+            policyId,
+            message: failureMessage(error),
+          }),
+        ),
+      ),
+    ),
+})
+
+export const PublishPolicy = FoldkitCommand.define("PublishPolicy", {
+  args: { requestId: Schema.Int, repository: Repository, policyId: PolicyId },
+  messages: [M.CompletedPublishPolicy, M.FailedToPublishPolicy],
+  execute: ({ requestId, repository, policyId }) =>
+    Effect.gen(function* () {
+      const client = yield* ApiClient
+      const detail = yield* client.labelingPolicies.getPolicy({
+        params: { ...repository, policyId },
+      })
+      const result = yield* client.labelingPolicies.publishPolicy({
+        params: { ...repository, policyId },
+        payload: { version: detail.draft.version },
+      })
+      return M.CompletedPublishPolicy({ requestId, repository, result })
+    }).pipe(
+      Effect.catch((error) =>
+        Effect.succeed(
+          M.FailedToPublishPolicy({
             requestId,
             repository,
             message: failureMessage(error),
@@ -124,50 +230,48 @@ export const LoadRepositoryData = FoldkitCommand.define("LoadRepositoryData", {
 
 export const SaveRule = FoldkitCommand.define("SaveRule", {
   args: {
-    repository: Repository,
-    ruleId: Schema.NullOr(RuleId),
-    version: Schema.NullOr(Schema.Int),
-    draft: RuleDraft,
     requestId: Schema.Int,
+    repository: Repository,
+    identity: RuleIdentity,
+    draft: RuleDraft,
   },
-  messages: [CompletedSaveRule, FailedToSaveRule],
-  execute: ({ draft, repository, requestId, ruleId, version }) =>
+  messages: [M.CompletedSaveRule, M.FailedToSaveRule],
+  execute: ({ requestId, repository, identity, draft }) =>
     Effect.gen(function* () {
       const client = yield* ApiClient
       const payload = {
-        name: draft.name,
+        policyId: draft.policyId,
         label: draft.label,
-        kind: draft.kind,
-        instructions: draft.instructions,
-        confidenceThreshold: draft.confidenceThreshold,
-        mode: draft.mode,
-        exclusiveGroup:
-          draft.exclusiveGroup.trim() === "" ? null : draft.exclusiveGroup,
+        onNoMatch: draft.onNoMatch,
+        conflictGroup:
+          draft.conflictGroup.trim() === "" ? null : draft.conflictGroup,
+        priority: draft.priority,
         enabled: draft.enabled,
       }
       const rule =
-        ruleId === null || version === null
+        identity._tag === "NewRule"
           ? yield* client.labelingRules.createRule({
               params: repository,
-              payload,
+              payload: { ...payload, onMatch: "ensure-present" },
             })
           : yield* client.labelingRules.patchRule({
-              params: { ...repository, ruleId },
-              payload: { ...payload, version },
+              params: { ...repository, ruleId: identity.id },
+              payload: { ...payload, version: identity.version },
             })
-      return CompletedSaveRule({ requestId, repository, rule })
+      return M.CompletedSaveRule({ requestId, repository, rule })
     }).pipe(
       Effect.catch((error) =>
         Effect.succeed(
-          FailedToSaveRule({
+          M.FailedToSaveRule({
             requestId,
             repository,
             message: failureMessage(error),
-            conflict:
+            currentRule:
               error._tag === "LabelingRuleConflict" ||
               error._tag === "LabelingRulesRevisionConflict"
-                ? mutationConflict(error, version ?? 0)
+                ? error.currentRule
                 : null,
+            revisionConflict: isRuleRevisionConflict(error),
           }),
         ),
       ),
@@ -176,34 +280,35 @@ export const SaveRule = FoldkitCommand.define("SaveRule", {
 
 export const ToggleRule = FoldkitCommand.define("ToggleRule", {
   args: {
+    requestId: Schema.Int,
     repository: Repository,
     ruleId: RuleId,
     version: Schema.Int,
     enabled: Schema.Boolean,
-    requestId: Schema.Int,
   },
-  messages: [CompletedToggleRule, FailedToToggleRule],
-  execute: ({ enabled, repository, requestId, ruleId, version }) =>
+  messages: [M.CompletedToggleRule, M.FailedToToggleRule],
+  execute: ({ requestId, repository, ruleId, version, enabled }) =>
     Effect.gen(function* () {
       const client = yield* ApiClient
       const rule = yield* client.labelingRules.patchRule({
         params: { ...repository, ruleId },
-        payload: { enabled, version },
+        payload: { version, enabled },
       })
-      return CompletedToggleRule({ requestId, repository, rule })
+      return M.CompletedToggleRule({ requestId, repository, rule })
     }).pipe(
       Effect.catch((error) =>
         Effect.succeed(
-          FailedToToggleRule({
+          M.FailedToToggleRule({
             requestId,
             repository,
             ruleId,
             message: failureMessage(error),
-            conflict:
+            currentRule:
               error._tag === "LabelingRuleConflict" ||
               error._tag === "LabelingRulesRevisionConflict"
-                ? mutationConflict(error, version)
+                ? error.currentRule
                 : null,
+            revisionConflict: isRuleRevisionConflict(error),
           }),
         ),
       ),
@@ -212,61 +317,67 @@ export const ToggleRule = FoldkitCommand.define("ToggleRule", {
 
 export const DeleteRule = FoldkitCommand.define("DeleteRule", {
   args: {
-    repository: Repository,
     requestId: Schema.Int,
+    repository: Repository,
     ruleId: RuleId,
     version: Schema.Int,
   },
-  messages: [CompletedDeleteRule, FailedToDeleteRule],
-  execute: ({ repository, requestId, ruleId, version }) =>
+  messages: [M.CompletedDeleteRule, M.FailedToDeleteRule],
+  execute: ({ requestId, repository, ruleId, version }) =>
     Effect.gen(function* () {
       const client = yield* ApiClient
       yield* client.labelingRules.deleteRule({
         params: { ...repository, ruleId },
         query: { version },
       })
-      return CompletedDeleteRule({ requestId, repository, ruleId })
+      return M.CompletedDeleteRule({ requestId, repository, ruleId })
     }).pipe(
       Effect.catch((error) =>
         Effect.succeed(
-          FailedToDeleteRule({
+          M.FailedToDeleteRule({
             requestId,
             repository,
             message: failureMessage(error),
-            conflict:
+            currentRule:
               error._tag === "LabelingRuleConflict" ||
               error._tag === "LabelingRulesRevisionConflict"
-                ? mutationConflict(error, version)
+                ? error.currentRule
                 : null,
+            revisionConflict: isRuleRevisionConflict(error),
           }),
         ),
       ),
     ),
 })
 
-export const LoadRuleTestCandidates = FoldkitCommand.define(
-  "LoadRuleTestCandidates",
+export const LoadPolicyTestCandidates = FoldkitCommand.define(
+  "LoadPolicyTestCandidates",
   {
-    args: { repository: Repository, ruleId: RuleId },
-    messages: [LoadedRuleTestCandidates, FailedToLoadRuleTestCandidates],
-    execute: ({ repository, ruleId }) =>
+    args: { requestId: Schema.Int, repository: Repository, policyId: PolicyId },
+    messages: [
+      M.LoadedPolicyTestCandidates,
+      M.FailedToLoadPolicyTestCandidates,
+    ],
+    execute: ({ requestId, repository, policyId }) =>
       Effect.gen(function* () {
         const client = yield* ApiClient
-        const response = yield* client.labelingRules.listRuleTestCandidates({
+        const result = yield* client.labelingRules.listRuleTestCandidates({
           params: repository,
           query: { limit: 50 },
         })
-        return LoadedRuleTestCandidates({
+        return M.LoadedPolicyTestCandidates({
+          requestId,
           repository,
-          ruleId,
-          candidates: response.candidates,
+          policyId,
+          candidates: result.candidates,
         })
       }).pipe(
         Effect.catch((error) =>
           Effect.succeed(
-            FailedToLoadRuleTestCandidates({
+            M.FailedToLoadPolicyTestCandidates({
+              requestId,
               repository,
-              ruleId,
+              policyId,
               message: failureMessage(error),
             }),
           ),
@@ -275,26 +386,26 @@ export const LoadRuleTestCandidates = FoldkitCommand.define(
   },
 )
 
-export const TestRule = FoldkitCommand.define("TestRule", {
+export const TestPolicy = FoldkitCommand.define("TestPolicy", {
   args: {
     requestId: Schema.Int,
     repository: Repository,
-    ruleId: RuleId,
+    policyId: PolicyId,
     pullRequestNumber: Schema.Int,
   },
-  messages: [CompletedRuleTest, FailedRuleTest],
-  execute: ({ pullRequestNumber, repository, requestId, ruleId }) =>
+  messages: [M.CompletedPolicyTest, M.FailedPolicyTest],
+  execute: ({ requestId, repository, policyId, pullRequestNumber }) =>
     Effect.gen(function* () {
       const client = yield* ApiClient
-      const result = yield* client.labelingRules.testRule({
-        params: { ...repository, ruleId },
+      const result = yield* client.labelingPolicies.testPolicy({
+        params: { ...repository, policyId },
         payload: { pullRequestNumber },
       })
-      return CompletedRuleTest({ requestId, repository, result })
+      return M.CompletedPolicyTest({ requestId, repository, result })
     }).pipe(
       Effect.catch((error) =>
         Effect.succeed(
-          FailedRuleTest({
+          M.FailedPolicyTest({
             requestId,
             repository,
             message: failureMessage(error),

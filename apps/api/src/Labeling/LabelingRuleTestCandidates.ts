@@ -1,16 +1,15 @@
 import * as GitHubRepository from "@slopcop/domain/GitHub/GitHubRepository"
-import * as LabelingRuleManagement from "@slopcop/domain/Labeling/LabelingRuleManagement"
+import * as Management from "@slopcop/domain/Labeling/LabelingRuleManagement"
+import { RepositoryNotConfigured } from "@slopcop/github/Errors"
 import {
   GitHubClient,
   type GitHubClientError,
 } from "@slopcop/github/GitHubClient"
-import { RepositoryNotConfigured } from "@slopcop/github/Errors"
 import { GitHubRepositoriesRepo } from "@slopcop/github/repositories/GitHubRepositoriesRepo"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
-
 export class LabelingRuleTestCandidates extends Context.Service<
   LabelingRuleTestCandidates,
   {
@@ -18,7 +17,7 @@ export class LabelingRuleTestCandidates extends Context.Service<
       slug: GitHubRepository.GitHubRepositorySlug,
       limit: number,
     ) => Effect.Effect<
-      ReadonlyArray<LabelingRuleManagement.RuleTestCandidate>,
+      ReadonlyArray<Management.RuleTestCandidate>,
       RepositoryNotConfigured | GitHubClientError
     >
   }
@@ -26,21 +25,20 @@ export class LabelingRuleTestCandidates extends Context.Service<
   make: Effect.gen(function* () {
     const repositories = yield* GitHubRepositoriesRepo
     const github = yield* GitHubClient
-
     return {
       list: Effect.fn("LabelingRuleTestCandidates.list")(
         function* (slug, limit) {
-          const result = yield* repositories
+          const found = yield* repositories
             .findBySlug(slug)
             .pipe(
               Effect.catchTag("GitHubRepositoriesRepoError", (error) =>
                 Effect.logError(
-                  "Rule test candidate repository lookup failed",
+                  "Rule candidate repository lookup failed",
                   error,
                 ).pipe(Effect.andThen(Effect.die(error))),
               ),
             )
-          const repository = yield* Option.match(result, {
+          const repository = yield* Option.match(found, {
             onNone: () =>
               Effect.fail(
                 new RepositoryNotConfigured({

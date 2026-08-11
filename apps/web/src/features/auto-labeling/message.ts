@@ -1,16 +1,20 @@
-import * as GitHubLabel from "@slopcop/domain/GitHub/GitHubLabel"
-import * as LabelingRuleManagement from "@slopcop/domain/Labeling/LabelingRuleManagement"
 import * as Dialog from "@foldkit/ui/dialog"
 import * as Menu from "@foldkit/ui/menu"
+import * as GitHubLabel from "@slopcop/domain/GitHub/GitHubLabel"
+import * as PolicyManagement from "@slopcop/domain/Labeling/LabelingPolicyManagement"
+import * as RuleManagement from "@slopcop/domain/Labeling/LabelingRuleManagement"
+import * as PolicyProgram from "@slopcop/domain/Policy/PolicyProgram"
 import * as Schema from "effect/Schema"
 import { m } from "foldkit/message"
+import * as PolicyCodeEditor from "../../components/policy-editor"
+import { ItemKind, NodeKind, Operator, Quantifier } from "./condition"
 import {
-  MutationConflict,
+  PolicyId,
+  PolicyVersionId,
   Repository,
   RuleDraft,
   RuleId,
-  RuleKind,
-  RuleMode,
+  Tab,
 } from "./model"
 
 export const SelectedRepositoryChanged = m("SelectedRepositoryChanged", {
@@ -20,9 +24,12 @@ export const RetriedRepositoryLoad = m("RetriedRepositoryLoad")
 export const LoadedRepositoryData = m("LoadedRepositoryData", {
   requestId: Schema.Int,
   repository: Repository,
-  revision: Schema.Int,
-  rules: Schema.Array(LabelingRuleManagement.PublicLabelingRule),
-  activity: LabelingRuleManagement.LabelingRuleActivitySummary,
+  policyRevision: Schema.Int,
+  ruleRevision: Schema.Int,
+  policies: Schema.Array(PolicyManagement.PublicPolicy),
+  rules: Schema.Array(RuleManagement.PublicLabelingRule),
+  activity: RuleManagement.LabelingRuleActivitySummary,
+  audit: Schema.Array(RuleManagement.PublicLabelingRuleAuditEntry),
   labels: Schema.Array(GitHubLabel.GitHubLabel),
 })
 export const FailedToLoadRepositoryData = m("FailedToLoadRepositoryData", {
@@ -30,54 +37,208 @@ export const FailedToLoadRepositoryData = m("FailedToLoadRepositoryData", {
   repository: Repository,
   message: Schema.String,
 })
+export const SelectedTab = m("SelectedTab", { tab: Tab })
+export const IgnoredInput = m("IgnoredInput")
+
+export const OpenedNewPolicy = m("OpenedNewPolicy")
+export const OpenedPolicyEditor = m("OpenedPolicyEditor", {
+  policyId: PolicyId,
+})
+export const LoadedPolicyDetail = m("LoadedPolicyDetail", {
+  requestId: Schema.Int,
+  repository: Repository,
+  detail: PolicyManagement.PublicPolicyDetail,
+})
+export const FailedToLoadPolicyDetail = m("FailedToLoadPolicyDetail", {
+  requestId: Schema.Int,
+  repository: Repository,
+  policyId: PolicyId,
+  message: Schema.String,
+})
+export const ClosedPolicyEditor = m("ClosedPolicyEditor")
+export const UpdatedPolicyName = m("UpdatedPolicyName", { name: Schema.String })
+export const UpdatedPolicyDescription = m("UpdatedPolicyDescription", {
+  description: Schema.String,
+})
+export const GotPolicyCodeEditorMessage = m("GotPolicyCodeEditorMessage", {
+  message: PolicyCodeEditor.Message,
+})
+export const ToggledAppliesWhen = m("ToggledAppliesWhen", {
+  enabled: Schema.Boolean,
+})
+export const ChangedConditionKind = m("ChangedConditionKind", {
+  clientId: Schema.String,
+  kind: NodeKind,
+})
+export const AddedConditionChild = m("AddedConditionChild", {
+  clientId: Schema.String,
+})
+export const RemovedConditionNode = m("RemovedConditionNode", {
+  clientId: Schema.String,
+})
+export const UpdatedFact = m("UpdatedFact", {
+  clientId: Schema.String,
+  fact: PolicyProgram.PullRequestScalarFact,
+})
+export const UpdatedOperator = m("UpdatedOperator", {
+  clientId: Schema.String,
+  operator: Operator,
+})
+export const UpdatedOperand = m("UpdatedOperand", {
+  clientId: Schema.String,
+  value: Schema.String,
+})
+export const UpdatedCollectionFact = m("UpdatedCollectionFact", {
+  clientId: Schema.String,
+  fact: PolicyProgram.PullRequestCollectionFact,
+})
+export const UpdatedQuantifier = m("UpdatedQuantifier", {
+  clientId: Schema.String,
+  quantifier: Quantifier,
+})
+export const ChangedItemKind = m("ChangedItemKind", {
+  clientId: Schema.String,
+  kind: ItemKind,
+})
+export const AddedItemChild = m("AddedItemChild", { clientId: Schema.String })
+export const RemovedItemNode = m("RemovedItemNode", {
+  clientId: Schema.String,
+})
+export const UpdatedItemField = m("UpdatedItemField", {
+  clientId: Schema.String,
+  field: Schema.String,
+})
+export const UpdatedItemOperator = m("UpdatedItemOperator", {
+  clientId: Schema.String,
+  operator: Operator,
+})
+export const UpdatedItemOperand = m("UpdatedItemOperand", {
+  clientId: Schema.String,
+  value: Schema.String,
+})
+export const UpdatedAiPrompt = m("UpdatedAiPrompt", {
+  clientId: Schema.String,
+  prompt: Schema.String,
+})
+export const ToggledAiEvidence = m("ToggledAiEvidence", {
+  clientId: Schema.String,
+  fact: PolicyProgram.PullRequestFact,
+})
+export const UpdatedAiConfidence = m("UpdatedAiConfidence", {
+  clientId: Schema.String,
+  minimumConfidence: Schema.Number,
+})
+export const UpdatedPolicyReference = m("UpdatedPolicyReference", {
+  clientId: Schema.String,
+  policyVersionId: PolicyVersionId,
+})
+export const SavedPolicy = m("SavedPolicy")
+export const RetriedPolicySave = m("RetriedPolicySave")
+export const ReloadedPolicyEditor = m("ReloadedPolicyEditor")
+export const CompletedSavePolicy = m("CompletedSavePolicy", {
+  requestId: Schema.Int,
+  repository: Repository,
+  policy: PolicyManagement.PublicPolicy,
+})
+export const FailedToSavePolicy = m("FailedToSavePolicy", {
+  requestId: Schema.Int,
+  repository: Repository,
+  message: Schema.String,
+  currentPolicy: Schema.NullOr(PolicyManagement.PublicPolicy),
+  currentDraftVersion: Schema.NullOr(Schema.Int),
+})
+export const ValidatedPolicy = m("ValidatedPolicy")
+export const CompletedValidatePolicy = m("CompletedValidatePolicy", {
+  requestId: Schema.Int,
+  repository: Repository,
+  policyId: PolicyId,
+  result: PolicyManagement.ValidatePolicyResponse,
+})
+export const FailedToValidatePolicy = m("FailedToValidatePolicy", {
+  requestId: Schema.Int,
+  repository: Repository,
+  policyId: PolicyId,
+  message: Schema.String,
+})
+export const GotPolicyMenuMessage = m("GotPolicyMenuMessage", {
+  policyId: PolicyId,
+  message: Menu.Message,
+})
+export const GotPolicyEditorDialogMessage = m("GotPolicyEditorDialogMessage", {
+  message: Dialog.Message,
+})
+
+export const OpenedPublishPolicy = m("OpenedPublishPolicy", {
+  policyId: PolicyId,
+})
+export const DismissedPublishPolicy = m("DismissedPublishPolicy")
+export const ConfirmedPublishPolicy = m("ConfirmedPublishPolicy")
+export const CompletedPublishPolicy = m("CompletedPublishPolicy", {
+  requestId: Schema.Int,
+  repository: Repository,
+  result: PolicyManagement.PublishPolicyResponse,
+})
+export const FailedToPublishPolicy = m("FailedToPublishPolicy", {
+  requestId: Schema.Int,
+  repository: Repository,
+  message: Schema.String,
+})
+export const GotPublishDialogMessage = m("GotPublishDialogMessage", {
+  message: Dialog.Message,
+})
 
 export const OpenedNewRule = m("OpenedNewRule")
 export const OpenedRuleEditor = m("OpenedRuleEditor", { ruleId: RuleId })
 export const ClosedRuleEditor = m("ClosedRuleEditor")
+export const UpdatedRulePolicy = m("UpdatedRulePolicy", { policyId: PolicyId })
+export const UpdatedRuleLabel = m("UpdatedRuleLabel", { label: Schema.String })
+export const UpdatedRuleNoMatch = m("UpdatedRuleNoMatch", {
+  onNoMatch: Schema.Literals(["ensure-absent", "preserve"]),
+})
+export const UpdatedRuleConflictGroup = m("UpdatedRuleConflictGroup", {
+  conflictGroup: Schema.String,
+})
+export const UpdatedRulePriority = m("UpdatedRulePriority", {
+  priority: Schema.Int,
+})
 export const SavedRule = m("SavedRule")
 export const RetriedRuleSave = m("RetriedRuleSave")
 export const ReloadedRuleEditor = m("ReloadedRuleEditor")
 export const CompletedSaveRule = m("CompletedSaveRule", {
   requestId: Schema.Int,
   repository: Repository,
-  rule: LabelingRuleManagement.PublicLabelingRule,
+  rule: RuleManagement.PublicLabelingRule,
 })
 export const FailedToSaveRule = m("FailedToSaveRule", {
   requestId: Schema.Int,
   repository: Repository,
   message: Schema.String,
-  conflict: Schema.NullOr(MutationConflict),
+  currentRule: Schema.NullOr(RuleManagement.PublicLabelingRule),
+  revisionConflict: Schema.Boolean,
 })
-
 export const GotRuleMenuMessage = m("GotRuleMenuMessage", {
   ruleId: RuleId,
   message: Menu.Message,
 })
-export const GotEditorDialogMessage = m("GotEditorDialogMessage", {
-  message: Dialog.Message,
-})
-export const GotDeleteDialogMessage = m("GotDeleteDialogMessage", {
-  message: Dialog.Message,
-})
-export const GotTestDialogMessage = m("GotTestDialogMessage", {
+export const GotRuleEditorDialogMessage = m("GotRuleEditorDialogMessage", {
   message: Dialog.Message,
 })
 export const ToggledRule = m("ToggledRule", { ruleId: RuleId })
 export const CompletedToggleRule = m("CompletedToggleRule", {
   requestId: Schema.Int,
   repository: Repository,
-  rule: LabelingRuleManagement.PublicLabelingRule,
+  rule: RuleManagement.PublicLabelingRule,
 })
 export const FailedToToggleRule = m("FailedToToggleRule", {
   requestId: Schema.Int,
   repository: Repository,
   ruleId: RuleId,
   message: Schema.String,
-  conflict: Schema.NullOr(MutationConflict),
+  currentRule: Schema.NullOr(RuleManagement.PublicLabelingRule),
+  revisionConflict: Schema.Boolean,
 })
 export const RetriedToggleRule = m("RetriedToggleRule")
 export const DismissedRowMutationError = m("DismissedRowMutationError")
-
 export const OpenedDeleteRule = m("OpenedDeleteRule", { ruleId: RuleId })
 export const DismissedDeleteRule = m("DismissedDeleteRule")
 export const ConfirmedDeleteRule = m("ConfirmedDeleteRule")
@@ -90,49 +251,47 @@ export const FailedToDeleteRule = m("FailedToDeleteRule", {
   requestId: Schema.Int,
   repository: Repository,
   message: Schema.String,
-  conflict: Schema.NullOr(MutationConflict),
+  currentRule: Schema.NullOr(RuleManagement.PublicLabelingRule),
+  revisionConflict: Schema.Boolean,
 })
-export const RetriedDeleteRule = m("RetriedDeleteRule")
+export const GotRuleDeleteDialogMessage = m("GotRuleDeleteDialogMessage", {
+  message: Dialog.Message,
+})
 
-export const OpenedRuleTest = m("OpenedRuleTest", { ruleId: RuleId })
-export const LoadedRuleTestCandidates = m("LoadedRuleTestCandidates", {
-  repository: Repository,
-  ruleId: RuleId,
-  candidates: Schema.Array(LabelingRuleManagement.RuleTestCandidate),
-})
-export const FailedToLoadRuleTestCandidates = m(
-  "FailedToLoadRuleTestCandidates",
-  { repository: Repository, ruleId: RuleId, message: Schema.String },
-)
-export const SelectedRuleTestCandidate = m("SelectedRuleTestCandidate", {
-  pullRequestNumber: Schema.Int,
-})
-export const RanRuleTest = m("RanRuleTest")
-export const CompletedRuleTest = m("CompletedRuleTest", {
+export const OpenedPolicyTest = m("OpenedPolicyTest", { policyId: PolicyId })
+export const LoadedPolicyTestCandidates = m("LoadedPolicyTestCandidates", {
   requestId: Schema.Int,
   repository: Repository,
-  result: LabelingRuleManagement.TestLabelingRuleResponse,
+  policyId: PolicyId,
+  candidates: Schema.Array(RuleManagement.RuleTestCandidate),
 })
-export const FailedRuleTest = m("FailedRuleTest", {
+export const FailedToLoadPolicyTestCandidates = m(
+  "FailedToLoadPolicyTestCandidates",
+  {
+    requestId: Schema.Int,
+    repository: Repository,
+    policyId: PolicyId,
+    message: Schema.String,
+  },
+)
+export const SelectedPolicyTestCandidate = m("SelectedPolicyTestCandidate", {
+  pullRequestNumber: Schema.Int,
+})
+export const RanPolicyTest = m("RanPolicyTest")
+export const CompletedPolicyTest = m("CompletedPolicyTest", {
+  requestId: Schema.Int,
+  repository: Repository,
+  result: PolicyManagement.TestPolicyResponse,
+})
+export const FailedPolicyTest = m("FailedPolicyTest", {
   requestId: Schema.Int,
   repository: Repository,
   message: Schema.String,
 })
-export const ResetRuleTest = m("ResetRuleTest")
-export const DismissedRuleTest = m("DismissedRuleTest")
-
-export const UpdatedRuleName = m("UpdatedRuleName", { name: Schema.String })
-export const UpdatedRuleLabel = m("UpdatedRuleLabel", { label: Schema.String })
-export const UpdatedRuleConfidence = m("UpdatedRuleConfidence", {
-  confidenceThreshold: Schema.Number,
-})
-export const UpdatedRuleMode = m("UpdatedRuleMode", { mode: RuleMode })
-export const UpdatedRuleKind = m("UpdatedRuleKind", { kind: RuleKind })
-export const UpdatedRuleExclusiveGroup = m("UpdatedRuleExclusiveGroup", {
-  exclusiveGroup: Schema.String,
-})
-export const UpdatedRulePrompt = m("UpdatedRulePrompt", {
-  instructions: Schema.String,
+export const ResetPolicyTest = m("ResetPolicyTest")
+export const DismissedPolicyTest = m("DismissedPolicyTest")
+export const GotTestDialogMessage = m("GotTestDialogMessage", {
+  message: Dialog.Message,
 })
 
 export const Message = Schema.Union([
@@ -140,18 +299,66 @@ export const Message = Schema.Union([
   RetriedRepositoryLoad,
   LoadedRepositoryData,
   FailedToLoadRepositoryData,
+  SelectedTab,
+  IgnoredInput,
+  OpenedNewPolicy,
+  OpenedPolicyEditor,
+  LoadedPolicyDetail,
+  FailedToLoadPolicyDetail,
+  ClosedPolicyEditor,
+  UpdatedPolicyName,
+  UpdatedPolicyDescription,
+  GotPolicyCodeEditorMessage,
+  ToggledAppliesWhen,
+  ChangedConditionKind,
+  AddedConditionChild,
+  RemovedConditionNode,
+  UpdatedFact,
+  UpdatedOperator,
+  UpdatedOperand,
+  UpdatedCollectionFact,
+  UpdatedQuantifier,
+  ChangedItemKind,
+  AddedItemChild,
+  RemovedItemNode,
+  UpdatedItemField,
+  UpdatedItemOperator,
+  UpdatedItemOperand,
+  UpdatedAiPrompt,
+  ToggledAiEvidence,
+  UpdatedAiConfidence,
+  UpdatedPolicyReference,
+  SavedPolicy,
+  RetriedPolicySave,
+  ReloadedPolicyEditor,
+  CompletedSavePolicy,
+  FailedToSavePolicy,
+  ValidatedPolicy,
+  CompletedValidatePolicy,
+  FailedToValidatePolicy,
+  GotPolicyMenuMessage,
+  GotPolicyEditorDialogMessage,
+  OpenedPublishPolicy,
+  DismissedPublishPolicy,
+  ConfirmedPublishPolicy,
+  CompletedPublishPolicy,
+  FailedToPublishPolicy,
+  GotPublishDialogMessage,
   OpenedNewRule,
   OpenedRuleEditor,
   ClosedRuleEditor,
+  UpdatedRulePolicy,
+  UpdatedRuleLabel,
+  UpdatedRuleNoMatch,
+  UpdatedRuleConflictGroup,
+  UpdatedRulePriority,
   SavedRule,
   RetriedRuleSave,
   ReloadedRuleEditor,
   CompletedSaveRule,
   FailedToSaveRule,
   GotRuleMenuMessage,
-  GotEditorDialogMessage,
-  GotDeleteDialogMessage,
-  GotTestDialogMessage,
+  GotRuleEditorDialogMessage,
   ToggledRule,
   CompletedToggleRule,
   FailedToToggleRule,
@@ -162,24 +369,17 @@ export const Message = Schema.Union([
   ConfirmedDeleteRule,
   CompletedDeleteRule,
   FailedToDeleteRule,
-  RetriedDeleteRule,
-  OpenedRuleTest,
-  LoadedRuleTestCandidates,
-  FailedToLoadRuleTestCandidates,
-  SelectedRuleTestCandidate,
-  RanRuleTest,
-  CompletedRuleTest,
-  FailedRuleTest,
-  ResetRuleTest,
-  DismissedRuleTest,
-  UpdatedRuleName,
-  UpdatedRuleLabel,
-  UpdatedRuleConfidence,
-  UpdatedRuleMode,
-  UpdatedRuleKind,
-  UpdatedRuleExclusiveGroup,
-  UpdatedRulePrompt,
+  GotRuleDeleteDialogMessage,
+  OpenedPolicyTest,
+  LoadedPolicyTestCandidates,
+  FailedToLoadPolicyTestCandidates,
+  SelectedPolicyTestCandidate,
+  RanPolicyTest,
+  CompletedPolicyTest,
+  FailedPolicyTest,
+  ResetPolicyTest,
+  DismissedPolicyTest,
+  GotTestDialogMessage,
 ])
 export type Message = typeof Message.Type
-
 export type { RuleDraft }

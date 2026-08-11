@@ -1,7 +1,8 @@
 import * as GitHubRepository from "@slopcop/domain/GitHub/GitHubRepository"
-import * as LabelingRule from "@slopcop/domain/Labeling/LabelingRule"
-import * as LabelingRuleAuditEntry from "@slopcop/domain/Labeling/LabelingRuleAuditEntry"
-import * as LabelingRuleManagement from "@slopcop/domain/Labeling/LabelingRuleManagement"
+import * as Policy from "@slopcop/domain/Labeling/LabelingPolicy"
+import * as Rule from "@slopcop/domain/Labeling/LabelingRule"
+import * as Audit from "@slopcop/domain/Labeling/LabelingRuleAuditEntry"
+import * as Program from "@slopcop/domain/Policy/PolicyProgram"
 import {
   LabelingRuleConflict,
   StaleLabelingRulesRevision,
@@ -12,165 +13,168 @@ import * as Effect from "effect/Effect"
 import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
 import {
+  formatAuditCursor,
   mapRuleError,
+  parseAuditCursor,
   toPublicAuditEntry,
   toPublicRule,
 } from "../../../src/Labeling/httpapi/Handlers.ts"
-
-const timestamp = "2026-07-28T11:06:31.000Z"
-const now = DateTime.fromDateUnsafe(new Date(timestamp))
-
-const rule = new LabelingRule.LabelingRule({
-  id: Schema.decodeUnknownSync(LabelingRule.LabelingRuleId)("rule-1"),
-  repositoryId: Schema.decodeUnknownSync(GitHubRepository.GitHubRepositoryId)(
-    "repository-1",
-  ),
-  name: "Bug fixes",
+const now = DateTime.fromDateUnsafe(new Date("2026-08-10T00:00:00Z"))
+const repositoryId = Schema.decodeUnknownSync(
+  GitHubRepository.GitHubRepositoryId,
+)("repo")
+const policyId = Schema.decodeUnknownSync(Policy.LabelingPolicyId)("policy")
+const rule = new Rule.LabelingRule({
+  id: Schema.decodeUnknownSync(Rule.LabelingRuleId)("rule"),
+  repositoryId,
+  policyId,
   label: "bug",
-  kind: "ai",
-  instructions: "The pull request fixes a defect.",
-  confidenceThreshold: 0.75,
-  mode: "add-only",
-  exclusiveGroup: null,
+  onMatch: "ensure-present",
+  onNoMatch: "preserve",
+  conflictGroup: "change-kind",
+  priority: 1,
   enabled: true,
   validationStatus: "valid",
   validatedAt: now,
-  version: 1,
+  version: 2,
   createdAt: now,
   updatedAt: now,
   deletedAt: Option.none(),
 })
-
-const deletedAuditEntry = new LabelingRuleAuditEntry.LabelingRuleAuditEntry({
-  id: Schema.decodeUnknownSync(LabelingRuleAuditEntry.LabelingRuleAuditEntryId)(
-    "audit-1",
+const policy = new Policy.LabelingPolicy({
+  id: policyId,
+  repositoryId,
+  name: "Bug policy",
+  target: "pull_request",
+  publishedVersionId: Schema.decodeUnknownSync(Program.PolicyVersionId)(
+    "version",
   ),
-  repositoryId: rule.repositoryId,
-  ruleId: null,
-  actor: "admin:cloudflare-access:max@example.com",
-  operation: "delete",
-  before: {
-    id: rule.id,
-    repositoryId: rule.repositoryId,
-    name: rule.name,
-    label: rule.label,
-    kind: rule.kind,
-    instructions: rule.instructions,
-    confidenceThreshold: rule.confidenceThreshold,
-    mode: rule.mode,
-    exclusiveGroup: rule.exclusiveGroup,
-    enabled: false,
-    validationStatus: rule.validationStatus,
-    validatedAt: rule.validatedAt,
-    version: 2,
-  },
-  after: null,
+  version: 2,
   createdAt: now,
+  updatedAt: now,
+  deletedAt: Option.none(),
 })
-
-describe("labeling rule HTTP serialization", () => {
-  it.effect("encodes database timestamps as public ISO strings", () =>
+describe("generic labeling HTTP projections", () => {
+  it.effect("projects policy-bound rules without repository internals", () =>
     Effect.gen(function* () {
-      const publicRule = yield* toPublicRule(rule)
-      const encoded = yield* Schema.encodeEffect(
-        LabelingRuleManagement.PublicLabelingRule,
-      )(publicRule)
-
-      expect(encoded).toMatchObject({
-        validatedAt: timestamp,
-        createdAt: timestamp,
-        updatedAt: timestamp,
+      const value = yield* toPublicRule(rule, policy)
+      expect(value).toMatchObject({
+        id: "rule",
+        policyId: "policy",
+        conflictGroup: "change-kind",
+        policy: { name: "Bug policy", published: true },
       })
-      expect(encoded).not.toHaveProperty("repositoryId")
-      expect(encoded).not.toHaveProperty("deletedAt")
+      expect(value).not.toHaveProperty("repositoryId")
     }),
   )
 
-  it.effect(
-    "preserves deleted-rule identity without exposing repository IDs",
-    () =>
-      Effect.gen(function* () {
-        const publicEntry = yield* toPublicAuditEntry(deletedAuditEntry)
-        const encoded = yield* Schema.encodeEffect(
-          LabelingRuleManagement.PublicLabelingRuleAuditEntry,
-        )(publicEntry)
-
-        expect(encoded).toMatchObject({
-          ruleId: "rule-1",
-          operation: "delete",
-          createdAt: timestamp,
-          before: { id: "rule-1", label: "bug" },
-          after: null,
-        })
-        expect(encoded.before).not.toHaveProperty("repositoryId")
-      }),
+  it.effect("projects generic audit snapshots", () =>
+    Effect.gen(function* () {
+      const entry = new Audit.LabelingRuleAuditEntry({
+        id: Schema.decodeUnknownSync(Audit.LabelingRuleAuditEntryId)("audit"),
+        repositoryId,
+        ruleId: rule.id,
+        actor: "admin:test",
+        operation: "update",
+        before: null,
+        after: {
+          id: rule.id,
+          repositoryId,
+          policyId,
+          label: "bug",
+          onMatch: "ensure-present",
+          onNoMatch: "preserve",
+          conflictGroup: "change-kind",
+          priority: 1,
+          enabled: true,
+          validationStatus: "valid",
+          validatedAt: now,
+          version: 2,
+        },
+        createdAt: now,
+      })
+      expect(yield* toPublicAuditEntry(entry)).toMatchObject({
+        ruleId: "rule",
+        after: { policyId: "policy", priority: 1 },
+      })
+    }),
   )
 
-  it.effect("preserves the current rule in stale version errors", () =>
+  it.effect("preserves readable legacy audit snapshots", () =>
     Effect.gen(function* () {
-      const error = yield* Effect.flip(
+      const entry = new Audit.LabelingRuleAuditEntry({
+        id: Schema.decodeUnknownSync(Audit.LabelingRuleAuditEntryId)("legacy"),
+        repositoryId,
+        ruleId: null,
+        actor: "admin:test",
+        operation: "delete",
+        before: {
+          id: rule.id,
+          repositoryId,
+          name: "Bug",
+          label: "bug",
+          kind: "ai",
+          instructions: "Legacy",
+          confidenceThreshold: 0.8,
+          mode: "add-only",
+          exclusiveGroup: "change-kind",
+          enabled: false,
+          validationStatus: "valid",
+          validatedAt: now,
+          version: 1,
+        },
+        after: null,
+        createdAt: now,
+      })
+      expect(yield* toPublicAuditEntry(entry)).toMatchObject({
+        before: { kind: "ai", instructions: "Legacy" },
+      })
+    }),
+  )
+
+  it.effect("round-trips audit cursors", () =>
+    Effect.gen(function* () {
+      const encoded = yield* formatAuditCursor({ createdAt: 42, id: "audit" })
+      expect(encoded).toBe("42:audit")
+      expect(yield* parseAuditCursor(encoded ?? undefined)).toEqual({
+        createdAt: 42,
+        id: "audit",
+      })
+    }),
+  )
+
+  it.effect("retains current state in version and revision conflicts", () =>
+    Effect.gen(function* () {
+      const encode = (current: Rule.LabelingRule) =>
+        toPublicRule(current, policy)
+      const conflict = yield* Effect.flip(
         mapRuleError(
           new LabelingRuleConflict({
-            repository: "Effect-TS/effect",
+            repository: "o/r",
             ruleId: rule.id,
             currentRule: rule,
           }),
+          encode,
         ),
       )
-
-      expect(error).toMatchObject({
+      expect(conflict).toMatchObject({
         _tag: "LabelingRuleConflict",
-        ruleId: "rule-1",
-        currentRule: { id: "rule-1", version: 1 },
+        currentRule: { version: 2 },
       })
-      if (error._tag !== "LabelingRuleConflict")
-        return yield* Effect.die("Expected a rule version conflict")
-      expect(error.currentRule).not.toHaveProperty("repositoryId")
-    }),
-  )
-
-  it.effect("preserves the current rule in stale revision errors", () =>
-    Effect.gen(function* () {
-      const error = yield* Effect.flip(
+      const revision = yield* Effect.flip(
         mapRuleError(
           new StaleLabelingRulesRevision({
-            repository: "Effect-TS/effect",
-            expectedRevision: 3,
-            actualRevision: 4,
+            repository: "o/r",
+            expectedRevision: 1,
+            actualRevision: 2,
             currentRule: rule,
           }),
+          encode,
         ),
       )
-
-      expect(error).toMatchObject({
+      expect(revision).toMatchObject({
         _tag: "LabelingRulesRevisionConflict",
-        repository: "Effect-TS/effect",
-        expectedRevision: 3,
-        actualRevision: 4,
-        currentRule: { id: "rule-1", version: 1 },
-      })
-      if (error._tag !== "LabelingRulesRevisionConflict")
-        return yield* Effect.die("Expected a rules revision conflict")
-      expect(error.currentRule).not.toHaveProperty("repositoryId")
-    }),
-  )
-
-  it.effect("uses a null current rule for create revision conflicts", () =>
-    Effect.gen(function* () {
-      const error = yield* Effect.flip(
-        mapRuleError(
-          new StaleLabelingRulesRevision({
-            repository: "Effect-TS/effect",
-            expectedRevision: 3,
-            actualRevision: 4,
-            currentRule: null,
-          }),
-        ),
-      )
-
-      expect(error).toMatchObject({
-        _tag: "LabelingRulesRevisionConflict",
-        currentRule: null,
+        currentRule: { id: "rule" },
       })
     }),
   )

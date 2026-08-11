@@ -77,6 +77,14 @@ export const PullRequestConvertedToDraft = Schema.Struct({
 })
 export type PullRequestConvertedToDraft =
   typeof PullRequestConvertedToDraft.Type
+export const PullRequestLabeled = Schema.Struct({
+  ...BasePullRequestPayload.fields,
+  action: Schema.Literal("labeled"),
+})
+export const PullRequestUnlabeled = Schema.Struct({
+  ...BasePullRequestPayload.fields,
+  action: Schema.Literal("unlabeled"),
+})
 
 export const PullRequestWebhookPayload = Schema.Union([
   PullRequestOpened,
@@ -85,6 +93,8 @@ export const PullRequestWebhookPayload = Schema.Union([
   PullRequestEdited,
   PullRequestReadyForReview,
   PullRequestConvertedToDraft,
+  PullRequestLabeled,
+  PullRequestUnlabeled,
 ])
   .annotate({ message: "Unsupported or malformed pull request webhook action" })
   .pipe(Schema.toTaggedUnion("action"))

@@ -1,6 +1,5 @@
 import * as Cloudflare from "alchemy/Cloudflare"
 import * as Effect from "effect/Effect"
-import * as Config from "effect/Config"
 import * as Layer from "effect/Layer"
 import * as Path from "effect/Path"
 import * as Etag from "effect/unstable/http/Etag"
@@ -14,10 +13,30 @@ import { GitHubSetup } from "@slopcop/github/GitHubSetup"
 import { D1Database, makeDatabaseLayer } from "@slopcop/infra/Sql"
 import * as CloudflareResourceNames from "@slopcop/infra/CloudflareResourceNames"
 import { Repositories } from "./GitHub/Repositories.ts"
+import { Policies } from "@slopcop/labeling/Policies"
+import { GitHubClient } from "@slopcop/github/GitHubClient"
+import { GitHubRepositoriesRepo } from "@slopcop/github/repositories/GitHubRepositoriesRepo"
+import { LabelingPolicyTester } from "./Labeling/LabelingPolicyTester.ts"
+import { PolicyFacts } from "@slopcop/labeling/PolicyFacts"
+import { PoliciesRepo } from "@slopcop/labeling/repositories/PoliciesRepo"
+import { OptionalPolicyAiLayer } from "@slopcop/labeling/Ai"
 import { LabelingRuleTester } from "./Labeling/LabelingRuleTester.ts"
 import { LabelingRuleTestCandidates } from "./Labeling/LabelingRuleTestCandidates.ts"
-import { OpenAiLanguageModel } from "@effect/ai-openai"
-import { OpenAiLayer } from "@slopcop/labeling/Ai"
+
+const PolicyTesterLayer = LabelingPolicyTester.layerNoDeps.pipe(
+  Layer.provide(PolicyFacts.layer),
+  Layer.provide(OptionalPolicyAiLayer),
+  Layer.provide(Policies.layer),
+  Layer.provide(PoliciesRepo.layer),
+  Layer.provide(GitHubClient.layer),
+  Layer.provide(GitHubRepositoriesRepo.layer),
+)
+const RuleTesterLayer = LabelingRuleTester.layerNoDeps.pipe(
+  Layer.provide(PolicyTesterLayer),
+  Layer.provide(LabelingRules.layer),
+  Layer.provide(GitHubClient.layer),
+  Layer.provide(GitHubRepositoriesRepo.layer),
+)
 
 export const makeWorker = (options: {
   readonly resourceNames: CloudflareResourceNames.ResourceNames
@@ -40,21 +59,16 @@ export const makeWorker = (options: {
         fileWebResponse: () =>
           Effect.die("HttpPlatform.fileWebResponse not supported"),
       })
-      const labelingModel = yield* Config.string("LABELING_AI_MODEL").pipe(
-        Config.withDefault("gpt-5.6-luna"),
-      )
-
       const HttpLayer = Layer.mergeAll(ApiHandlersLayer, ApiDocsLayer).pipe(
         Layer.provide(FetchHttpClient.layer),
-        Layer.provide(LabelingRules.layer),
-        Layer.provide(LabelingRuleTester.layer),
+        Layer.provide(PolicyTesterLayer),
+        Layer.provide(RuleTesterLayer),
         Layer.provide(LabelingRuleTestCandidates.layer),
-        Layer.provide(
-          OpenAiLanguageModel.model(labelingModel, {
-            reasoning: { effort: "low" },
-          }),
-        ),
-        Layer.provide(OpenAiLayer),
+        Layer.provide(LabelingRules.layer),
+        Layer.provide(Policies.layer),
+        Layer.provide(PoliciesRepo.layer),
+        Layer.provide(GitHubClient.layer),
+        Layer.provide(GitHubRepositoriesRepo.layer),
         Layer.provide(Repositories.layer),
         Layer.provide(GitHubSetup.layer),
         Layer.provide([Etag.layer, HttpPlatformStubLayer, Path.layer]),

@@ -7,8 +7,7 @@ import { D1Database, makeDatabaseLayer } from "@slopcop/infra/Sql"
 import * as CloudflareResourceNames from "@slopcop/infra/CloudflareResourceNames"
 import { GitHubEventProcessors } from "./GitHub/GitHubEventProcessors.ts"
 import { makeGitHubEventsConsumerLayer } from "./GitHub/GitHubEvents.ts"
-import { PullRequestLabelingProcessorLayer } from "./Labeling/PullRequestLabelingProcessor.ts"
-import { ReadyForReviewProcessorLayer } from "./Labeling/ReadyForReviewProcessor.ts"
+import { LabelingCoordinatorProcessorLayer } from "./Labeling/LabelingCoordinatorProcessor.ts"
 import { GitHubSetupProcessorLayer } from "./GitHub/GitHubSetupProcessor.ts"
 
 export const makeGitHubEventsWorker = (options: {
@@ -30,8 +29,7 @@ export const makeGitHubEventsWorker = (options: {
         queue: options.queue,
         deadLetterQueueName: options.deadLetterQueueName,
       }).pipe(
-        Layer.provide(PullRequestLabelingProcessorLayer),
-        Layer.provide(ReadyForReviewProcessorLayer),
+        Layer.provide(LabelingCoordinatorProcessorLayer),
         Layer.provide(GitHubSetupProcessorLayer),
         Layer.provide(GitHubEventProcessors.layer),
         Layer.provide(makeDatabaseLayer(options.database)),

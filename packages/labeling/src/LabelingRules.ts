@@ -1,111 +1,101 @@
 import * as GitHubLabel from "@slopcop/domain/GitHub/GitHubLabel"
 import * as GitHubRepository from "@slopcop/domain/GitHub/GitHubRepository"
-import * as LabelingRule from "@slopcop/domain/Labeling/LabelingRule"
-import * as LabelingRuleAuditEntry from "@slopcop/domain/Labeling/LabelingRuleAuditEntry"
-import * as LabelingRuleManagement from "@slopcop/domain/Labeling/LabelingRuleManagement"
-import * as Context from "effect/Context"
+import * as Rule from "@slopcop/domain/Labeling/LabelingRule"
+import * as Audit from "@slopcop/domain/Labeling/LabelingRuleAuditEntry"
+import * as Management from "@slopcop/domain/Labeling/LabelingRuleManagement"
+import { RepositoryNotConfigured } from "@slopcop/github/Errors"
+import { GitHubClient, GitHubClientError } from "@slopcop/github/GitHubClient"
+import { GitHubRepositoriesRepo } from "@slopcop/github/repositories/GitHubRepositoriesRepo"
 import * as Config from "effect/Config"
+import * as Context from "effect/Context"
 import * as DateTime from "effect/DateTime"
 import * as Duration from "effect/Duration"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
 import * as Stream from "effect/Stream"
-import { GitHubClient, GitHubClientError } from "@slopcop/github/GitHubClient"
-import { RepositoryNotConfigured } from "@slopcop/github/Errors"
-import type { GitHubRepositoriesRepoError } from "@slopcop/github/repositories/GitHubRepositoriesRepo"
-import { GitHubRepositoriesRepo } from "@slopcop/github/repositories/GitHubRepositoriesRepo"
-
-type RepositoryName = GitHubRepository.GitHubRepositorySlug
 import {
   GitHubLabelValidationError,
+  InvalidLabelingRule,
   LabelingRuleConflict,
   LabelingRuleNotFound,
   StaleLabelingRulesRevision,
 } from "./LabelingRuleErrors.ts"
 import {
-  type ConfigurationActor,
-  type LabelingRuleCommandError,
   makeLabelingRuleCommands,
+  type LabelingRuleCommandResult,
 } from "./LabelingRuleCommands.ts"
 import {
-  LabelingRulesRepo,
-  type LabelingRulesRepoError,
-  type ListRulesOptions,
-} from "./repositories/LabelingRulesRepo.ts"
-import {
   LabelingRuleAuditLogRepo,
-  type LabelingRuleAuditLogRepoError,
   type LabelingRuleAuditActivityRow,
 } from "./repositories/LabelingRuleAuditLogRepo.ts"
 import {
-  LabelingRuleStatsRepo,
-  type LabelingRuleStatsRepoError,
-} from "./repositories/LabelingRuleStatsRepo.ts"
+  LabelingRulesRepo,
+  type ListRulesOptions,
+} from "./repositories/LabelingRulesRepo.ts"
+import { LabelingRuleStatsRepo } from "./repositories/LabelingRuleStatsRepo.ts"
+import { PoliciesRepo } from "./repositories/PoliciesRepo.ts"
 
 export interface AdminIdentity {
   readonly actor: string
 }
-
 export interface LabelingRuleSet {
   readonly repositoryId: GitHubRepository.GitHubRepository["id"]
   readonly repository: string
   readonly revision: number
-  readonly rules: ReadonlyArray<LabelingRule.LabelingRule>
+  readonly rules: ReadonlyArray<Rule.LabelingRule>
 }
-
 export interface ManagedLabelingRuleSet extends LabelingRuleSet {
   readonly activity: {
     readonly windowDays: 30
     readonly totalFires: number
     readonly rules: ReadonlyArray<{
-      readonly ruleId: LabelingRule.LabelingRule["id"]
+      readonly ruleId: Rule.LabelingRule["id"]
       readonly fires: number
     }>
   }
 }
-
-export type CreateLabelingRule =
-  LabelingRuleManagement.CreateLabelingRuleRequest
-
-export type UpdateLabelingRule = LabelingRuleManagement.PatchLabelingRuleRequest
-
-export interface RuleValidationBatchResult {
-  readonly processed: number
-  readonly valid: number
-  readonly missing: number
-  readonly failed: number
-}
-
 export interface LabelingRuleAuditPage {
-  readonly entries: ReadonlyArray<LabelingRuleAuditEntry.LabelingRuleAuditEntry>
+  readonly entries: ReadonlyArray<Audit.LabelingRuleAuditEntry>
   readonly nextCursor: {
     readonly createdAt: number
-    readonly id: LabelingRuleAuditEntry.LabelingRuleAuditEntry["id"]
+    readonly id: Audit.LabelingRuleAuditEntry["id"]
   } | null
 }
-
 export interface LabelingRuleActivityPage {
   readonly entries: ReadonlyArray<LabelingRuleAuditActivityRow>
   readonly nextCursor: LabelingRuleAuditPage["nextCursor"]
 }
-
-type LabelingRulesReadError =
-  | RepositoryNotConfigured
-  | GitHubRepositoriesRepoError
-  | LabelingRulesRepoError
-  | LabelingRuleStatsRepoError
-  | LabelingRuleAuditLogRepoError
-  | LabelingRuleNotFound
-
+export interface ListRuleAuditOptions {
+  readonly ruleId: Rule.LabelingRule["id"] | null
+  readonly operation: Audit.LabelingRuleAuditEntry["operation"] | null
+  readonly cursor: LabelingRuleAuditPage["nextCursor"]
+  readonly limit: number
+}
+export interface ListRuleActivityOptions {
+  readonly repository: string | null
+  readonly operation: Audit.LabelingRuleAuditEntry["operation"] | null
+  readonly cursor: LabelingRuleAuditPage["nextCursor"]
+  readonly limit: number
+}
 export type LabelingRulesError =
-  | LabelingRulesReadError
+  | RepositoryNotConfigured
   | GitHubLabelValidationError
-  | LabelingRuleCommandError
+  | LabelingRuleNotFound
+  | LabelingRuleConflict
   | StaleLabelingRulesRevision
+  | import("./LabelingRuleErrors.ts").DuplicateLabelingRule
+  | import("./LabelingRuleErrors.ts").InvalidLabelingRule
+  | import("@slopcop/github/repositories/GitHubRepositoriesRepo").GitHubRepositoriesRepoError
+  | import("./repositories/LabelingRulesRepo.ts").LabelingRulesRepoError
+  | import("./repositories/LabelingRuleAuditLogRepo.ts").LabelingRuleAuditLogRepoError
+  | import("./repositories/LabelingRuleStatsRepo.ts").LabelingRuleStatsRepoError
+  | import("./repositories/PoliciesRepo.ts").PoliciesRepoError
+  | import("effect/unstable/sql/SqlError").SqlError
 
-const asActor = (identity: AdminIdentity): ConfigurationActor => ({
-  _tag: "Administrator",
+type Slug = GitHubRepository.GitHubRepositorySlug
+const actor = (identity: AdminIdentity) => ({
+  _tag: "Administrator" as const,
   actor: identity.actor,
 })
 
@@ -113,78 +103,63 @@ export class LabelingRules extends Context.Service<
   LabelingRules,
   {
     readonly list: (
-      repository: RepositoryName,
+      slug: Slug,
       options: ListRulesOptions,
-    ) => Effect.Effect<ManagedLabelingRuleSet, LabelingRulesReadError>
+    ) => Effect.Effect<ManagedLabelingRuleSet, LabelingRulesError>
     readonly get: (
-      repository: RepositoryName,
-      ruleId: LabelingRule.LabelingRule["id"],
-    ) => Effect.Effect<LabelingRule.LabelingRule, LabelingRulesReadError>
+      slug: Slug,
+      id: Rule.LabelingRule["id"],
+    ) => Effect.Effect<Rule.LabelingRule, LabelingRulesError>
     readonly listAudit: (
-      repository: RepositoryName,
-      options: {
-        readonly ruleId: LabelingRule.LabelingRule["id"] | null
-        readonly operation:
-          | LabelingRuleAuditEntry.LabelingRuleAuditEntry["operation"]
-          | null
-        readonly cursor: {
-          readonly createdAt: number
-          readonly id: LabelingRuleAuditEntry.LabelingRuleAuditEntry["id"]
-        } | null
-        readonly limit: number
-      },
-    ) => Effect.Effect<LabelingRuleAuditPage, LabelingRulesReadError>
-    readonly listActivity: (options: {
-      readonly repository: string | null
-      readonly operation:
-        | LabelingRuleAuditEntry.LabelingRuleAuditEntry["operation"]
-        | null
-      readonly cursor: LabelingRuleAuditPage["nextCursor"]
-      readonly limit: number
-    }) => Effect.Effect<LabelingRuleActivityPage, LabelingRulesReadError>
+      slug: Slug,
+      options: ListRuleAuditOptions,
+    ) => Effect.Effect<LabelingRuleAuditPage, LabelingRulesError>
+    readonly listActivity: (
+      options: ListRuleActivityOptions,
+    ) => Effect.Effect<LabelingRuleActivityPage, LabelingRulesError>
     readonly create: (
-      repository: RepositoryName,
-      input: CreateLabelingRule,
-      actor: AdminIdentity,
-    ) => Effect.Effect<LabelingRule.LabelingRule, LabelingRulesError>
+      slug: Slug,
+      input: Management.CreateLabelingRuleRequest,
+      identity: AdminIdentity,
+    ) => Effect.Effect<Rule.LabelingRule, LabelingRulesError>
     readonly update: (
-      repository: RepositoryName,
-      ruleId: LabelingRule.LabelingRule["id"],
-      input: UpdateLabelingRule,
-      actor: AdminIdentity,
-    ) => Effect.Effect<LabelingRule.LabelingRule, LabelingRulesError>
+      slug: Slug,
+      id: Rule.LabelingRule["id"],
+      input: Management.PatchLabelingRuleRequest,
+      identity: AdminIdentity,
+    ) => Effect.Effect<Rule.LabelingRule, LabelingRulesError>
     readonly revalidate: (
-      repository: RepositoryName,
-      ruleId: LabelingRule.LabelingRule["id"],
-      actor: AdminIdentity,
-    ) => Effect.Effect<LabelingRule.LabelingRule, LabelingRulesError>
+      slug: Slug,
+      id: Rule.LabelingRule["id"],
+      identity: AdminIdentity,
+    ) => Effect.Effect<Rule.LabelingRule, LabelingRulesError>
     readonly disable: (
-      repository: RepositoryName,
-      ruleId: LabelingRule.LabelingRule["id"],
+      slug: Slug,
+      id: Rule.LabelingRule["id"],
       version: number,
-      actor: AdminIdentity,
-    ) => Effect.Effect<LabelingRule.LabelingRule, LabelingRulesError>
+      identity: AdminIdentity,
+    ) => Effect.Effect<Rule.LabelingRule, LabelingRulesError>
     readonly remove: (
-      repository: RepositoryName,
-      ruleId: LabelingRule.LabelingRule["id"],
+      slug: Slug,
+      id: Rule.LabelingRule["id"],
       version: number,
-      actor: AdminIdentity,
+      identity: AdminIdentity,
     ) => Effect.Effect<void, LabelingRulesError>
     readonly getActiveSnapshot: (
       repositoryId: GitHubRepository.GitHubRepository["id"],
     ) => Effect.Effect<LabelingRuleSet, LabelingRulesError>
     readonly assertRevision: (
       repositoryId: GitHubRepository.GitHubRepository["id"],
-      expectedRevision: number,
+      expected: number,
     ) => Effect.Effect<void, LabelingRulesError>
     readonly listAvailableLabels: (
-      repository: RepositoryName,
+      slug: Slug,
     ) => Effect.Effect<
       ReadonlyArray<GitHubLabel.GitHubLabel>,
       LabelingRulesError
     >
     readonly validateCandidateLabel: (
-      repository: RepositoryName,
+      slug: Slug,
       label: GitHubLabel.GitHubLabelName,
     ) => Effect.Effect<
       GitHubLabel.GitHubLabelValidationResult,
@@ -192,272 +167,244 @@ export class LabelingRules extends Context.Service<
     >
     readonly markMissing: (
       repositoryId: GitHubRepository.GitHubRepository["id"],
-      ruleId: LabelingRule.LabelingRule["id"],
-      expectedVersion: number,
+      id: Rule.LabelingRule["id"],
+      version: number,
     ) => Effect.Effect<void, LabelingRulesError>
     readonly revalidateStaleBatch: (options: {
       readonly validatedBefore: DateTime.Utc
       readonly limit: number
-    }) => Effect.Effect<RuleValidationBatchResult, LabelingRulesError>
+    }) => Effect.Effect<
+      {
+        readonly processed: number
+        readonly valid: number
+        readonly missing: number
+        readonly failed: number
+      },
+      LabelingRulesError
+    >
   }
 >()("@slopcop/labeling/LabelingRules", {
   make: Effect.gen(function* () {
-    const repositoryRows = yield* GitHubRepositoriesRepo
+    const repositories = yield* GitHubRepositoriesRepo
     const rules = yield* LabelingRulesRepo
+    const policies = yield* PoliciesRepo
     const stats = yield* LabelingRuleStatsRepo
-    const auditLog = yield* LabelingRuleAuditLogRepo
+    const audit = yield* LabelingRuleAuditLogRepo
     const github = yield* GitHubClient
-    const executeCommand = yield* makeLabelingRuleCommands
+    const execute = yield* makeLabelingRuleCommands
     const validationTtl = yield* Config.duration(
       "LABELING_RULE_VALIDATION_TTL",
     ).pipe(Config.withDefault(Duration.hours(24)))
-
-    const getConfiguredRepository = Effect.fn(
-      "LabelingRules.getConfiguredRepository",
-    )(function* (slug: GitHubRepository.GitHubRepositorySlug) {
-      const result = yield* repositoryRows.findBySlug(slug)
-      if (Option.isNone(result)) {
+    const repository = Effect.fn("LabelingRules.repository")(function* (
+      slug: Slug,
+    ) {
+      const found = yield* repositories.findBySlug(slug)
+      if (Option.isNone(found))
         return yield* new RepositoryNotConfigured({
           repository: `${slug.owner}/${slug.repo}`,
         })
-      }
-      return result.value
+      return found.value
     })
-
-    const mapGitHubLabelError =
-      (repository: GitHubRepository.GitHubRepository) =>
-      (error: GitHubClientError) =>
+    const requireRule = Effect.fn("LabelingRules.requireRule")(function* (
+      repo: GitHubRepository.GitHubRepository,
+      id: Rule.LabelingRule["id"],
+    ) {
+      const found = yield* rules.findById(repo.id, id)
+      if (Option.isNone(found))
+        return yield* new LabelingRuleNotFound({
+          repository: repo.slug,
+          ruleId: id,
+        })
+      return found.value
+    })
+    const requirePolicy = Effect.fn("LabelingRules.requirePolicy")(function* (
+      repo: GitHubRepository.GitHubRepository,
+      policyId: Rule.LabelingRule["policyId"],
+      enabled: boolean,
+    ) {
+      const found = yield* policies.find(repo.id, policyId)
+      if (Option.isNone(found))
+        return yield* new InvalidLabelingRule({
+          message: `Policy '${policyId}' does not exist in ${repo.slug}.`,
+        })
+      if (enabled && found.value.publishedVersionId === null)
+        return yield* new InvalidLabelingRule({
+          message: "An enabled binding requires a published policy.",
+        })
+    })
+    const mapGitHubError =
+      (repo: GitHubRepository.GitHubRepository) => (error: GitHubClientError) =>
         new GitHubLabelValidationError({
           reason: "Unavailable",
-          repository: repository.slug,
+          repository: repo.slug,
           retryable: error.retryable,
-          message: `GitHub label data for ${repository.slug} is unavailable. ${error.message}`,
+          message: `GitHub label data for ${repo.slug} is unavailable. ${error.message}`,
         })
-
-    const listLabels = Effect.fn("LabelingRules.listLabels")(
-      function* (repository: GitHubRepository.GitHubRepository) {
-        return yield* github
-          .listRepositoryLabels(repository)
-          .pipe(Stream.runCollect)
-      },
-      (effect, repository) =>
-        Effect.mapError(effect, mapGitHubLabelError(repository)),
-    )
-
+    const labels = Effect.fn("LabelingRules.labels")(function* (
+      repo: GitHubRepository.GitHubRepository,
+    ) {
+      return yield* github
+        .listRepositoryLabels(repo)
+        .pipe(Stream.runCollect, Effect.mapError(mapGitHubError(repo)))
+    })
     const validateLabel = Effect.fn("LabelingRules.validateLabel")(function* (
-      repository: GitHubRepository.GitHubRepository,
+      repo: GitHubRepository.GitHubRepository,
       label: GitHubLabel.GitHubLabelName,
     ) {
-      const result = yield* github
-        .getRepositoryLabel(repository, label)
-        .pipe(Effect.mapError(mapGitHubLabelError(repository)))
-      if (Option.isSome(result)) {
-        return { exists: true, label: result.value } as const
-      }
-
-      // GitHub also uses 404 for inaccessible repositories. A successful
-      // label listing confirms access before absence is considered final.
-      const labels = yield* listLabels(repository)
-      const canonical = labels.find(
-        (candidate) => candidate.name.toLowerCase() === label.toLowerCase(),
+      const direct = yield* github
+        .getRepositoryLabel(repo, label)
+        .pipe(Effect.mapError(mapGitHubError(repo)))
+      if (Option.isSome(direct))
+        return { exists: true, label: direct.value } as const
+      const canonical = (yield* labels(repo)).find(
+        (item) => item.name.toLowerCase() === label.toLowerCase(),
       )
       return canonical === undefined
         ? ({ exists: false } as const)
         : ({ exists: true, label: canonical } as const)
     })
-
     const requireLabel = Effect.fn("LabelingRules.requireLabel")(function* (
-      repository: GitHubRepository.GitHubRepository,
+      repo: GitHubRepository.GitHubRepository,
       label: GitHubLabel.GitHubLabelName,
     ) {
-      const result = yield* validateLabel(repository, label)
-      if (result.exists) return result.label
+      const checked = yield* validateLabel(repo, label)
+      if (checked.exists) return checked.label
       return yield* new GitHubLabelValidationError({
         reason: "MissingLabel",
-        repository: repository.slug,
+        repository: repo.slug,
         label,
         retryable: false,
-        message: `The label '${label}' does not exist in ${repository.slug}. Select an existing GitHub label or create it in GitHub before retrying.`,
+        message: `The label '${label}' does not exist in ${repo.slug}.`,
       })
     })
-
-    const requireRule = Effect.fn("LabelingRules.requireRule")(function* (
-      repository: GitHubRepository.GitHubRepository,
-      ruleId: LabelingRule.LabelingRule["id"],
+    const stored = Effect.fn("LabelingRules.stored")(function* (
+      result: LabelingRuleCommandResult,
     ) {
-      const found = yield* rules.findById(repository.id, ruleId)
-      if (Option.isNone(found)) {
-        return yield* new LabelingRuleNotFound({
-          repository: repository.slug,
-          ruleId,
-        })
-      }
-      return found.value
-    })
-
-    const storedResult = Effect.fn("LabelingRules.storedResult")(function* (
-      effect: ReturnType<typeof executeCommand>,
-    ) {
-      const result = yield* effect
-      if (result._tag === "Deleted") return yield* Effect.die("Expected rule")
+      if (result._tag === "Deleted")
+        return yield* Effect.die("Expected stored rule")
       return result.rule
     })
-
     const list = Effect.fn("LabelingRules.list")(function* (
-      name: RepositoryName,
+      slug: Slug,
       options: ListRulesOptions,
     ) {
-      const repository = yield* getConfiguredRepository(name)
-      const configuredRules = yield* rules.listByRepository(
-        repository.id,
-        options,
-      )
+      const repo = yield* repository(slug)
+      const configured = yield* rules.listByRepository(repo.id, options)
       const now = yield* DateTime.now
-      const activityRules = yield* stats.listRecentFires(
-        repository.id,
-        DateTime.toEpochMillis(now) - 30 * 24 * 60 * 60 * 1_000,
+      const fires = yield* stats.listRecentFires(
+        repo.id,
+        DateTime.toEpochMillis(now) - 30 * 86_400_000,
       )
       return {
-        repositoryId: repository.id,
-        repository: repository.slug,
-        revision: repository.rulesRevision,
-        rules: configuredRules,
+        repositoryId: repo.id,
+        repository: repo.slug,
+        revision: repo.rulesRevision,
+        rules: configured,
         activity: {
           windowDays: 30 as const,
-          totalFires: activityRules.reduce(
-            (total, activity) => total + activity.fires,
-            0,
-          ),
-          rules: activityRules,
+          totalFires: fires.reduce((sum, row) => sum + row.fires, 0),
+          rules: fires,
         },
       }
     })
-
     const get = Effect.fn("LabelingRules.get")(function* (
-      name: RepositoryName,
-      ruleId: LabelingRule.LabelingRule["id"],
+      slug: Slug,
+      id: Rule.LabelingRule["id"],
     ) {
-      const repository = yield* getConfiguredRepository(name)
-      return yield* requireRule(repository, ruleId)
+      return yield* requireRule(yield* repository(slug), id)
     })
-
-    const listAudit = Effect.fn("LabelingRules.listAudit")(function* (
-      name: RepositoryName,
-      options: {
-        readonly ruleId: LabelingRule.LabelingRule["id"] | null
-        readonly operation:
-          | LabelingRuleAuditEntry.LabelingRuleAuditEntry["operation"]
-          | null
-        readonly cursor: {
-          readonly createdAt: number
-          readonly id: LabelingRuleAuditEntry.LabelingRuleAuditEntry["id"]
-        } | null
-        readonly limit: number
+    const page = <
+      A extends {
+        readonly id: Audit.LabelingRuleAuditEntry["id"]
+        readonly createdAt: DateTime.Utc
       },
-    ) {
-      const repository = yield* getConfiguredRepository(name)
-      const rows = yield* auditLog.listByRepository(repository.id, {
-        ...options,
-        limit: options.limit + 1,
-      })
-      const hasMore = rows.length > options.limit
-      const entries = hasMore ? rows.slice(0, options.limit) : rows
-      const lastEntry = entries.at(-1)
+    >(
+      rows: ReadonlyArray<A>,
+      limit: number,
+    ) => {
+      const hasMore = rows.length > limit
+      const entries = hasMore ? rows.slice(0, limit) : rows
+      const last = entries.at(-1)
       return {
         entries,
         nextCursor:
-          hasMore && lastEntry !== undefined
-            ? {
-                createdAt: DateTime.toEpochMillis(lastEntry.createdAt),
-                id: lastEntry.id,
-              }
+          hasMore && last !== undefined
+            ? { createdAt: DateTime.toEpochMillis(last.createdAt), id: last.id }
             : null,
       }
-    })
-
-    const listActivity = Effect.fn("LabelingRules.listActivity")(
-      function* (options: {
-        readonly repository: string | null
-        readonly operation:
-          | LabelingRuleAuditEntry.LabelingRuleAuditEntry["operation"]
-          | null
-        readonly cursor: LabelingRuleAuditPage["nextCursor"]
-        readonly limit: number
-      }) {
-        const rows = yield* auditLog.listActivity({
+    }
+    const listAudit = Effect.fn("LabelingRules.listAudit")(function* (
+      slug: Slug,
+      options: ListRuleAuditOptions,
+    ) {
+      const repo = yield* repository(slug)
+      return page(
+        yield* audit.listByRepository(repo.id, {
           ...options,
           limit: options.limit + 1,
-        })
-        const hasMore = rows.length > options.limit
-        const entries = hasMore ? rows.slice(0, options.limit) : rows
-        const lastEntry = entries.at(-1)
-        return {
-          entries,
-          nextCursor:
-            hasMore && lastEntry !== undefined
-              ? {
-                  createdAt: DateTime.toEpochMillis(lastEntry.createdAt),
-                  id: lastEntry.id,
-                }
-              : null,
-        }
-      },
-    )
-
-    const create = Effect.fn("LabelingRules.create")(function* (
-      name: RepositoryName,
-      input: CreateLabelingRule,
-      actor: AdminIdentity,
-    ) {
-      const repository = yield* getConfiguredRepository(name)
-      const label = yield* requireLabel(repository, input.label)
-      const now = yield* DateTime.now
-      const latest = yield* getConfiguredRepository(name)
-      return yield* storedResult(
-        executeCommand(
-          {
-            _tag: "Create",
-            repositoryId: repository.id,
-            repository: repository.slug,
-            expectedRevision: latest.rulesRevision,
-            input: LabelingRule.LabelingRule.insert.make({
-              repositoryId: repository.id,
-              name: input.name,
-              label: label.name,
-              kind: input.kind ?? "ai",
-              instructions: input.instructions,
-              confidenceThreshold: input.confidenceThreshold,
-              mode: input.mode,
-              exclusiveGroup: input.exclusiveGroup,
-              enabled: input.enabled,
-              validationStatus: "valid",
-              validatedAt: now,
-              version: 1,
-            }),
-          },
-          asActor(actor),
-        ),
+        }),
+        options.limit,
       )
     })
-
-    const update = Effect.fn("LabelingRules.update")(function* (
-      name: RepositoryName,
-      ruleId: LabelingRule.LabelingRule["id"],
-      input: UpdateLabelingRule,
-      actor: AdminIdentity,
+    const listActivity = Effect.fn("LabelingRules.listActivity")(function* (
+      options: ListRuleActivityOptions,
     ) {
-      const repository = yield* getConfiguredRepository(name)
-      const current = yield* requireRule(repository, ruleId)
-      if (current.version !== input.version) {
+      return page(
+        yield* audit.listActivity({ ...options, limit: options.limit + 1 }),
+        options.limit,
+      )
+    })
+    const create = Effect.fn("LabelingRules.create")(function* (
+      slug: Slug,
+      input: Management.CreateLabelingRuleRequest,
+      identity: AdminIdentity,
+    ) {
+      const repo = yield* repository(slug)
+      yield* requirePolicy(repo, input.policyId, input.enabled)
+      const canonical = yield* requireLabel(repo, input.label)
+      const now = yield* DateTime.now
+      return yield* execute(
+        {
+          _tag: "Create",
+          repositoryId: repo.id,
+          repository: repo.slug,
+          expectedRevision: repo.rulesRevision,
+          input: Rule.LabelingRule.insert.make({
+            repositoryId: repo.id,
+            policyId: input.policyId,
+            label: canonical.name,
+            onMatch: input.onMatch,
+            onNoMatch: input.onNoMatch,
+            conflictGroup: input.conflictGroup ?? null,
+            priority: input.priority ?? 0,
+            enabled: input.enabled,
+            validationStatus: "valid",
+            validatedAt: now,
+            version: 1,
+          }),
+        },
+        actor(identity),
+      ).pipe(Effect.flatMap(stored))
+    })
+    const update = Effect.fn("LabelingRules.update")(function* (
+      slug: Slug,
+      id: Rule.LabelingRule["id"],
+      input: Management.PatchLabelingRuleRequest,
+      identity: AdminIdentity,
+    ) {
+      const repo = yield* repository(slug)
+      const current = yield* requireRule(repo, id)
+      if (current.version !== input.version)
         return yield* new LabelingRuleConflict({
-          repository: repository.slug,
-          ruleId,
+          repository: repo.slug,
+          ruleId: id,
           currentRule: current,
         })
-      }
+      const enabled = input.enabled ?? current.enabled
+      yield* requirePolicy(repo, input.policyId ?? current.policyId, enabled)
       const now = yield* DateTime.now
       const requiresValidation =
-        (input.label !== undefined && input.label !== current.label) ||
+        input.label !== undefined ||
         (input.enabled === true && !current.enabled) ||
         current.validationStatus !== "valid" ||
         current.validatedAt === null ||
@@ -465,196 +412,152 @@ export class LabelingRules extends Context.Service<
           DateTime.toEpochMillis(current.validatedAt) >=
           Duration.toMillis(validationTtl)
       const canonical = requiresValidation
-        ? yield* requireLabel(repository, input.label ?? current.label)
+        ? yield* requireLabel(repo, input.label ?? current.label)
         : undefined
-      const latest = yield* getConfiguredRepository(name)
       const { version: _version, ...changes } = input
-      return yield* storedResult(
-        executeCommand(
-          {
-            _tag: "Update",
-            repositoryId: repository.id,
-            repository: repository.slug,
-            ruleId,
-            expectedVersion: input.version,
-            expectedRevision: latest.rulesRevision,
-            input: {
-              ...changes,
-              ...(canonical === undefined
-                ? {}
-                : {
-                    label: canonical.name,
-                    validationStatus: "valid",
-                    validatedAt: now,
-                  }),
-            },
-          },
-          asActor(actor),
-        ),
-      )
-    })
-
-    const revalidate = Effect.fn("LabelingRules.revalidate")(function* (
-      name: RepositoryName,
-      ruleId: LabelingRule.LabelingRule["id"],
-      actor: AdminIdentity,
-    ) {
-      const repository = yield* getConfiguredRepository(name)
-      const current = yield* requireRule(repository, ruleId)
-      const validation = yield* validateLabel(repository, current.label)
-      const now = yield* DateTime.now
-      const latest = yield* getConfiguredRepository(name)
-      return yield* storedResult(
-        executeCommand(
-          {
-            _tag: "Validate",
-            repositoryId: repository.id,
-            repository: repository.slug,
-            ruleId,
-            expectedVersion: current.version,
-            expectedRevision: latest.rulesRevision,
-            input: validation.exists
-              ? {
-                  label: validation.label.name,
-                  validationStatus: "valid",
-                  validatedAt: now,
-                }
+      return yield* execute(
+        {
+          _tag: "Update",
+          repositoryId: repo.id,
+          repository: repo.slug,
+          ruleId: id,
+          expectedVersion: input.version,
+          expectedRevision: repo.rulesRevision,
+          input: {
+            ...changes,
+            ...(canonical === undefined
+              ? {}
               : {
-                  enabled: false,
-                  validationStatus: "missing",
+                  label: canonical.name,
+                  validationStatus: "valid" as const,
                   validatedAt: now,
-                },
+                }),
           },
-          asActor(actor),
-        ),
-      )
+        },
+        actor(identity),
+      ).pipe(Effect.flatMap(stored))
     })
-
+    const revalidate = Effect.fn("LabelingRules.revalidate")(function* (
+      slug: Slug,
+      id: Rule.LabelingRule["id"],
+      identity: AdminIdentity,
+    ) {
+      const repo = yield* repository(slug)
+      const current = yield* requireRule(repo, id)
+      const checked = yield* validateLabel(repo, current.label)
+      const now = yield* DateTime.now
+      return yield* execute(
+        {
+          _tag: checked.exists ? "Validate" : "MarkMissing",
+          repositoryId: repo.id,
+          repository: repo.slug,
+          ruleId: id,
+          expectedVersion: current.version,
+          expectedRevision: repo.rulesRevision,
+          input: checked.exists
+            ? {
+                label: checked.label.name,
+                validationStatus: "valid",
+                validatedAt: now,
+              }
+            : { enabled: false, validationStatus: "missing", validatedAt: now },
+        },
+        actor(identity),
+      ).pipe(Effect.flatMap(stored))
+    })
     const disable = Effect.fn("LabelingRules.disable")(function* (
-      name: RepositoryName,
-      ruleId: LabelingRule.LabelingRule["id"],
+      slug: Slug,
+      id: Rule.LabelingRule["id"],
       version: number,
-      actor: AdminIdentity,
+      identity: AdminIdentity,
     ) {
-      const repository = yield* getConfiguredRepository(name)
-      const latest = yield* getConfiguredRepository(name)
-      return yield* storedResult(
-        executeCommand(
-          {
-            _tag: "Disable",
-            repositoryId: repository.id,
-            repository: repository.slug,
-            ruleId,
-            expectedVersion: version,
-            expectedRevision: latest.rulesRevision,
-            input: { enabled: false },
-          },
-          asActor(actor),
-        ),
-      )
+      const repo = yield* repository(slug)
+      return yield* execute(
+        {
+          _tag: "Disable",
+          repositoryId: repo.id,
+          repository: repo.slug,
+          ruleId: id,
+          expectedVersion: version,
+          expectedRevision: repo.rulesRevision,
+          input: { enabled: false },
+        },
+        actor(identity),
+      ).pipe(Effect.flatMap(stored))
     })
-
     const remove = Effect.fn("LabelingRules.remove")(function* (
-      name: RepositoryName,
-      ruleId: LabelingRule.LabelingRule["id"],
+      slug: Slug,
+      id: Rule.LabelingRule["id"],
       version: number,
-      actor: AdminIdentity,
+      identity: AdminIdentity,
     ) {
-      const repository = yield* getConfiguredRepository(name)
-      const latest = yield* getConfiguredRepository(name)
-      const result = yield* executeCommand(
+      const repo = yield* repository(slug)
+      const result = yield* execute(
         {
           _tag: "Delete",
-          repositoryId: repository.id,
-          repository: repository.slug,
-          ruleId,
+          repositoryId: repo.id,
+          repository: repo.slug,
+          ruleId: id,
           expectedVersion: version,
-          expectedRevision: latest.rulesRevision,
+          expectedRevision: repo.rulesRevision,
         },
-        asActor(actor),
+        actor(identity),
       )
-      if (result._tag === "Stored") return yield* Effect.die("Expected delete")
+      if (result._tag !== "Deleted")
+        return yield* Effect.die("Expected deleted rule")
     })
-
     const getActiveSnapshot = Effect.fn("LabelingRules.getActiveSnapshot")(
       function* (repositoryId: GitHubRepository.GitHubRepository["id"]) {
-        const repository = yield* repositoryRows.findById(repositoryId)
-        if (Option.isNone(repository) || !repository.value.enabled) {
+        const found = yield* repositories.findById(repositoryId)
+        if (Option.isNone(found) || !found.value.enabled)
           return yield* new RepositoryNotConfigured({
             repository: repositoryId,
           })
-        }
-        const configuredRules = yield* rules.listByRepository(repositoryId, {
-          includeDisabled: false,
-        })
         return {
           repositoryId,
-          repository: repository.value.slug,
-          revision: repository.value.rulesRevision,
-          rules: configuredRules.filter(
-            (rule) => rule.validationStatus === "valid",
-          ),
+          repository: found.value.slug,
+          revision: found.value.rulesRevision,
+          rules: (yield* rules.listByRepository(repositoryId, {
+            includeDisabled: false,
+          })).filter((rule) => rule.validationStatus === "valid"),
         }
       },
     )
-
     const assertRevision = Effect.fn("LabelingRules.assertRevision")(function* (
       repositoryId: GitHubRepository.GitHubRepository["id"],
-      expectedRevision: number,
+      expected: number,
     ) {
-      const actualRevision =
-        yield* repositoryRows.getRulesRevision(repositoryId)
-      if (actualRevision !== expectedRevision) {
-        const maybeRepository = yield* repositoryRows.findById(repositoryId)
-        if (Option.isNone(maybeRepository)) {
-          return yield* Effect.die(
-            "The repository disappeared while checking its labeling rules revision.",
-          )
-        }
+      const actual = yield* repositories.getRulesRevision(repositoryId)
+      if (actual !== expected) {
+        const found = yield* repositories.findById(repositoryId)
         return yield* new StaleLabelingRulesRevision({
-          repository: maybeRepository.value.slug,
-          expectedRevision,
-          actualRevision,
+          repository: Option.isSome(found) ? found.value.slug : repositoryId,
+          expectedRevision: expected,
+          actualRevision: actual,
           currentRule: null,
         })
       }
     })
-
-    const listAvailableLabels = Effect.fn("LabelingRules.listAvailableLabels")(
-      function* (name: RepositoryName) {
-        const repository = yield* getConfiguredRepository(name)
-        return yield* listLabels(repository)
-      },
-    )
-
-    const validateCandidateLabel = Effect.fn(
-      "LabelingRules.validateCandidateLabel",
-    )(function* (name: RepositoryName, label: GitHubLabel.GitHubLabelName) {
-      const repository = yield* getConfiguredRepository(name)
-      return yield* validateLabel(repository, label)
-    })
-
     const markMissing = Effect.fn("LabelingRules.markMissing")(function* (
       repositoryId: GitHubRepository.GitHubRepository["id"],
-      ruleId: LabelingRule.LabelingRule["id"],
-      expectedVersion: number,
+      id: Rule.LabelingRule["id"],
+      version: number,
     ) {
-      const repository = yield* repositoryRows.findById(repositoryId)
-      if (Option.isNone(repository)) {
+      const found = yield* repositories.findById(repositoryId)
+      if (Option.isNone(found))
         return yield* new LabelingRuleNotFound({
           repository: repositoryId,
-          ruleId,
+          ruleId: id,
         })
-      }
       const now = yield* DateTime.now
-      yield* executeCommand(
+      yield* execute(
         {
           _tag: "MarkMissing",
           repositoryId,
-          repository: repository.value.slug,
-          ruleId,
-          expectedVersion,
-          expectedRevision: repository.value.rulesRevision,
+          repository: found.value.slug,
+          ruleId: id,
+          expectedVersion: version,
+          expectedRevision: found.value.rulesRevision,
           input: {
             enabled: false,
             validationStatus: "missing",
@@ -664,43 +567,6 @@ export class LabelingRules extends Context.Service<
         { _tag: "System", actor: "runtime-missing-label" },
       )
     })
-
-    const revalidateOne = Effect.fn("LabelingRules.revalidateOne")(function* (
-      rule: LabelingRule.LabelingRule,
-    ) {
-      const repository = yield* repositoryRows.findById(rule.repositoryId)
-      if (Option.isNone(repository) || !repository.value.enabled)
-        return "failed"
-
-      const validation = yield* validateLabel(repository.value, rule.label)
-      const latest = yield* repositoryRows.findById(rule.repositoryId)
-      if (Option.isNone(latest)) return "failed"
-      const now = yield* DateTime.now
-      yield* executeCommand(
-        {
-          _tag: validation.exists ? "Validate" : "MarkMissing",
-          repositoryId: rule.repositoryId,
-          repository: repository.value.slug,
-          ruleId: rule.id,
-          expectedVersion: rule.version,
-          expectedRevision: latest.value.rulesRevision,
-          input: validation.exists
-            ? {
-                label: validation.label.name,
-                validationStatus: "valid",
-                validatedAt: now,
-              }
-            : {
-                enabled: false,
-                validationStatus: "missing",
-                validatedAt: now,
-              },
-        },
-        { _tag: "System", actor: "scheduled-validation" },
-      )
-      return validation.exists ? "valid" : "missing"
-    })
-
     const revalidateStaleBatch = Effect.fn(
       "LabelingRules.revalidateStaleBatch",
     )(function* (options: {
@@ -714,24 +580,45 @@ export class LabelingRules extends Context.Service<
       const outcomes = yield* Effect.forEach(
         stale,
         (rule) =>
-          revalidateOne(rule).pipe(
-            Effect.catch((cause) =>
-              Effect.logWarning("Failed to revalidate stale labeling rule", {
+          Effect.gen(function* () {
+            const repo = yield* repositories.findById(rule.repositoryId)
+            if (Option.isNone(repo) || !repo.value.enabled)
+              return "failed" as const
+            const checked = yield* validateLabel(repo.value, rule.label)
+            const now = yield* DateTime.now
+            yield* execute(
+              {
+                _tag: checked.exists ? "Validate" : "MarkMissing",
+                repositoryId: rule.repositoryId,
+                repository: repo.value.slug,
                 ruleId: rule.id,
-                cause,
-              }).pipe(Effect.as("failed")),
-            ),
-          ),
+                expectedVersion: rule.version,
+                expectedRevision: repo.value.rulesRevision,
+                input: checked.exists
+                  ? {
+                      label: checked.label.name,
+                      validationStatus: "valid",
+                      validatedAt: now,
+                    }
+                  : {
+                      enabled: false,
+                      validationStatus: "missing",
+                      validatedAt: now,
+                    },
+              },
+              { _tag: "System", actor: "scheduled-validation" },
+            )
+            return checked.exists ? ("valid" as const) : ("missing" as const)
+          }).pipe(Effect.catch(() => Effect.succeed("failed" as const))),
         { concurrency: 1 },
       )
       return {
         processed: outcomes.length,
-        valid: outcomes.filter((outcome) => outcome === "valid").length,
-        missing: outcomes.filter((outcome) => outcome === "missing").length,
-        failed: outcomes.filter((outcome) => outcome === "failed").length,
+        valid: outcomes.filter((item) => item === "valid").length,
+        missing: outcomes.filter((item) => item === "missing").length,
+        failed: outcomes.filter((item) => item === "failed").length,
       }
     })
-
     return {
       list,
       get,
@@ -744,15 +631,21 @@ export class LabelingRules extends Context.Service<
       remove,
       getActiveSnapshot,
       assertRevision,
-      listAvailableLabels,
-      validateCandidateLabel,
+      listAvailableLabels: (slug: Slug) =>
+        repository(slug).pipe(Effect.flatMap(labels)),
+      validateCandidateLabel: (
+        slug: Slug,
+        label: GitHubLabel.GitHubLabelName,
+      ) =>
+        repository(slug).pipe(
+          Effect.flatMap((repo) => validateLabel(repo, label)),
+        ),
       markMissing,
       revalidateStaleBatch,
     }
   }),
 }) {
   static readonly layerNoDeps = Layer.effect(this, this.make)
-
   static readonly layer = this.layerNoDeps.pipe(
     Layer.provide([
       GitHubRepositoriesRepo.layer,
@@ -760,6 +653,7 @@ export class LabelingRules extends Context.Service<
       LabelingRulesRepo.layer,
       LabelingRuleAuditLogRepo.layer,
       LabelingRuleStatsRepo.layer,
+      PoliciesRepo.layer,
     ]),
   )
 }

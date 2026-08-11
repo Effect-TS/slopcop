@@ -18,11 +18,8 @@ describe("RootApi", () => {
     ).toEqual([{ access: [] }])
     expect(
       specification.paths[
-        "/api/v1/repositories/{owner}/{repo}/labeling-rules/audit"
-      ]?.get?.security,
-    ).toEqual([{ access: [] }])
-    expect(
-      specification.paths["/api/v1/activity/labeling-rules"]?.get?.security,
+        "/api/v1/repositories/{owner}/{repo}/policies/{policyId}/publish"
+      ]?.post?.security,
     ).toEqual([{ access: [] }])
   })
 
@@ -36,16 +33,16 @@ describe("RootApi", () => {
     ).toEqual([{ access: [] }])
   })
 
-  test("exposes the authenticated no-write rule test endpoint", () => {
+  test("exposes the authenticated no-write policy test endpoint", () => {
     expect(
       specification.paths[
-        "/api/v1/repositories/{owner}/{repo}/labeling-rules/{ruleId}/test"
+        "/api/v1/repositories/{owner}/{repo}/policies/{policyId}/test"
       ]?.post?.security,
     ).toEqual([{ access: [] }])
     expect(
       specification.paths[
-        "/api/v1/repositories/{owner}/{repo}/labeling-rules/test-candidates"
-      ]?.get?.security,
+        "/api/v1/repositories/{owner}/{repo}/policies/{policyId}/validate"
+      ]?.post?.security,
     ).toEqual([{ access: [] }])
   })
 
