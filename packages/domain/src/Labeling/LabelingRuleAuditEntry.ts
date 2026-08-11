@@ -2,6 +2,10 @@ import { Schema } from "effect"
 import { Model } from "effect/unstable/schema"
 import { GitHubRepositoryId } from "../GitHub/GitHubRepository.ts"
 import {
+  AiEvaluator,
+  AiLabelingRuleEvidence,
+  AiLabelingRuleMinimumConfidence,
+  AiLabelingRulePrompt,
   LabelingRuleConflictGroup,
   LabelingRuleId,
   LabelingRuleValidationStatus,
@@ -19,10 +23,9 @@ export const LabelingRuleAuditOperation = Schema.Literals([
   "disable",
   "delete",
 ])
-export const GenericLabelingRuleAuditValue = Schema.Struct({
+const sharedFields = {
   id: LabelingRuleId,
   repositoryId: GitHubRepositoryId,
-  policyId: LabelingPolicyId,
   label: Schema.String,
   onMatch: LabelOnMatch,
   onNoMatch: LabelOnNoMatch,
@@ -32,6 +35,25 @@ export const GenericLabelingRuleAuditValue = Schema.Struct({
   validationStatus: LabelingRuleValidationStatus,
   validatedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   version: Schema.Int,
+} as const
+export const PolicyLabelingRuleAuditValue = Schema.Struct({
+  _tag: Schema.Literal("PolicyLabelingRule"),
+  ...sharedFields,
+  policyId: LabelingPolicyId,
+})
+export const AiLabelingRuleAuditValue = Schema.Struct({
+  _tag: Schema.Literal("AiLabelingRule"),
+  ...sharedFields,
+  prompt: AiLabelingRulePrompt,
+  evidence: AiLabelingRuleEvidence,
+  minimumConfidence: AiLabelingRuleMinimumConfidence,
+  evaluator: AiEvaluator,
+  gatePolicyId: Schema.NullOr(LabelingPolicyId),
+})
+// Snapshots written by the first generic policy migration had no discriminant.
+export const LegacyPolicyLabelingRuleAuditValue = Schema.Struct({
+  ...sharedFields,
+  policyId: LabelingPolicyId,
 })
 export const LegacyLabelingRuleAuditValue = Schema.Struct({
   id: LabelingRuleId,
@@ -49,7 +71,9 @@ export const LegacyLabelingRuleAuditValue = Schema.Struct({
   version: Schema.Int,
 })
 export const StoredLabelingRuleAuditValue = Schema.Union([
-  GenericLabelingRuleAuditValue,
+  PolicyLabelingRuleAuditValue,
+  AiLabelingRuleAuditValue,
+  LegacyPolicyLabelingRuleAuditValue,
   LegacyLabelingRuleAuditValue,
 ])
 export type StoredLabelingRuleAuditValue =

@@ -176,13 +176,7 @@ export type ConditionSource =
       readonly quantifier: "Any" | "All" | "None"
       readonly item: ReviewItemPredicateSource
     }
-  | {
-      readonly aiPrompt: string
-      readonly evidence: ReadonlyArray<PolicyProgram.PullRequestFact>
-      readonly minimumConfidence: number
-      readonly evaluator: PolicyProgram.AiEvaluator
-    }
-  | { readonly policyVersionId: PolicyProgram.PolicyVersionId }
+  | { readonly policy: string }
 
 export const ConditionSource: Schema.Codec<ConditionSource, unknown> =
   Schema.suspend(() =>
@@ -208,21 +202,7 @@ export const ConditionSource: Schema.Codec<ConditionSource, unknown> =
         quantifier: Schema.Literals(["Any", "All", "None"]),
         item: ReviewItemPredicateSource,
       }),
-      Schema.Struct({
-        aiPrompt: Schema.String.check(
-          Schema.isMinLength(1),
-          Schema.isMaxLength(4_000),
-        ),
-        evidence: Schema.Array(PolicyProgram.PullRequestFact).check(
-          Schema.isMinLength(1),
-          Schema.isMaxLength(8),
-        ),
-        minimumConfidence: Schema.Finite.check(
-          Schema.isBetween({ minimum: 0, maximum: 1 }),
-        ),
-        evaluator: PolicyProgram.AiEvaluator,
-      }),
-      Schema.Struct({ policyVersionId: PolicyProgram.PolicyVersionId }),
+      Schema.Struct({ policy: Schema.String.check(Schema.isMinLength(1)) }),
     ]),
   )
 
@@ -278,22 +258,34 @@ const toReviewItemPredicate = (
   return { _tag: "Predicate", ...source }
 }
 
-const toCondition = (source: ConditionSource): PolicyProgram.Condition => {
+const toCondition = (
+  source: ConditionSource,
+  resolvePolicy: (name: string) => PolicyProgram.PolicyVersionId,
+): PolicyProgram.Condition => {
   if ("allOf" in source)
-    return { _tag: "All", conditions: source.allOf.map(toCondition) }
-  if ("anyOf" in source)
-    return { _tag: "Any", conditions: source.anyOf.map(toCondition) }
-  if ("not" in source)
-    return { _tag: "Not", condition: toCondition(source.not) }
-  if ("aiPrompt" in source)
     return {
-      _tag: "AiPrompt",
-      prompt: source.aiPrompt,
-      evidence: source.evidence,
-      minimumConfidence: source.minimumConfidence,
-      evaluator: source.evaluator,
+      _tag: "All",
+      conditions: source.allOf.map((condition) =>
+        toCondition(condition, resolvePolicy),
+      ),
     }
-  if ("policyVersionId" in source) return { _tag: "PolicyReference", ...source }
+  if ("anyOf" in source)
+    return {
+      _tag: "Any",
+      conditions: source.anyOf.map((condition) =>
+        toCondition(condition, resolvePolicy),
+      ),
+    }
+  if ("not" in source)
+    return {
+      _tag: "Not",
+      condition: toCondition(source.not, resolvePolicy),
+    }
+  if ("policy" in source)
+    return {
+      _tag: "PolicyReference",
+      policyVersionId: resolvePolicy(source.policy),
+    }
   if ("quantifier" in source) {
     switch (source.fact) {
       case "pull_request.changed_files":
@@ -321,11 +313,14 @@ const toCondition = (source: ConditionSource): PolicyProgram.Condition => {
 
 export const toPolicyProgram = (
   source: PolicyProgramSource,
+  resolvePolicy: (name: string) => PolicyProgram.PolicyVersionId,
 ): PolicyProgram.PolicyProgram => ({
   target: source.target,
   appliesWhen:
-    source.appliesWhen === null ? null : toCondition(source.appliesWhen),
-  matchesWhen: toCondition(source.matchesWhen),
+    source.appliesWhen === null
+      ? null
+      : toCondition(source.appliesWhen, resolvePolicy),
+  matchesWhen: toCondition(source.matchesWhen, resolvePolicy),
 })
 
 const fromChangedFileItemPredicate = (
@@ -402,23 +397,56 @@ const fromCondition = (condition: PolicyProgram.Condition): ConditionSource => {
           return { ...source, item: fromReviewItemPredicate(source.item) }
       }
     }
-    case "AiPrompt":
-      return {
-        aiPrompt: condition.prompt,
-        evidence: condition.evidence,
-        minimumConfidence: condition.minimumConfidence,
-        evaluator: condition.evaluator,
-      }
     case "PolicyReference":
-      return { policyVersionId: condition.policyVersionId }
+      return { policy: condition.policyVersionId }
   }
 }
 
 export const fromPolicyProgram = (
   program: PolicyProgram.PolicyProgram,
-): PolicyProgramSource => ({
-  target: program.target,
-  appliesWhen:
-    program.appliesWhen === null ? null : fromCondition(program.appliesWhen),
-  matchesWhen: fromCondition(program.matchesWhen),
-})
+  formatPolicy: (id: PolicyProgram.PolicyVersionId) => string,
+): PolicyProgramSource => {
+  const formatCondition = (
+    condition: PolicyProgram.Condition,
+  ): ConditionSource => {
+    if (condition._tag === "PolicyReference")
+      return { policy: formatPolicy(condition.policyVersionId) }
+    switch (condition._tag) {
+      case "All":
+        return { allOf: condition.conditions.map(formatCondition) }
+      case "Any":
+        return { anyOf: condition.conditions.map(formatCondition) }
+      case "Not":
+        return { not: formatCondition(condition.condition) }
+      default:
+        return fromCondition(condition)
+    }
+  }
+  return {
+    target: program.target,
+    appliesWhen:
+      program.appliesWhen === null
+        ? null
+        : formatCondition(program.appliesWhen),
+    matchesWhen: formatCondition(program.matchesWhen),
+  }
+}
+
+const conditionPolicyNames = (
+  condition: ConditionSource,
+): ReadonlyArray<string> => {
+  if ("policy" in condition) return [condition.policy]
+  if ("allOf" in condition) return condition.allOf.flatMap(conditionPolicyNames)
+  if ("anyOf" in condition) return condition.anyOf.flatMap(conditionPolicyNames)
+  if ("not" in condition) return conditionPolicyNames(condition.not)
+  return []
+}
+
+export const referencedPolicyNames = (
+  source: PolicyProgramSource,
+): ReadonlyArray<string> => [
+  ...(source.appliesWhen === null
+    ? []
+    : conditionPolicyNames(source.appliesWhen)),
+  ...conditionPolicyNames(source.matchesWhen),
+]

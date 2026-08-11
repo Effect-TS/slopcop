@@ -24,7 +24,8 @@ const repositoryId = Schema.decodeUnknownSync(
   GitHubRepository.GitHubRepositoryId,
 )("repo")
 const policyId = Schema.decodeUnknownSync(Policy.LabelingPolicyId)("policy")
-const rule = new Rule.LabelingRule({
+const rule = new Rule.PolicyLabelingRule({
+  _tag: "PolicyLabelingRule",
   id: Schema.decodeUnknownSync(Rule.LabelingRuleId)("rule"),
   repositoryId,
   policyId,
@@ -54,6 +55,28 @@ const policy = new Policy.LabelingPolicy({
   updatedAt: now,
   deletedAt: Option.none(),
 })
+const aiRule = new Rule.AiLabelingRule({
+  _tag: "AiLabelingRule",
+  id: Schema.decodeUnknownSync(Rule.LabelingRuleId)("ai-rule"),
+  repositoryId,
+  prompt: "Classify bugs.",
+  evidence: ["pull_request.title"],
+  minimumConfidence: 0.8,
+  evaluator: "boolean-policy-v1",
+  gatePolicyId: null,
+  label: "bug",
+  onMatch: "ensure-present",
+  onNoMatch: "preserve",
+  conflictGroup: null,
+  priority: 0,
+  enabled: true,
+  validationStatus: "valid",
+  validatedAt: now,
+  version: 1,
+  createdAt: now,
+  updatedAt: now,
+  deletedAt: Option.none(),
+})
 describe("generic labeling HTTP projections", () => {
   it.effect("projects policy-bound rules without repository internals", () =>
     Effect.gen(function* () {
@@ -68,6 +91,17 @@ describe("generic labeling HTTP projections", () => {
     }),
   )
 
+  it.effect("projects AI rules without a synthetic policy", () =>
+    Effect.gen(function* () {
+      expect(yield* toPublicRule(aiRule, null)).toMatchObject({
+        _tag: "AiLabelingRule",
+        prompt: "Classify bugs.",
+        gatePolicyId: null,
+        gatePolicy: null,
+      })
+    }),
+  )
+
   it.effect("projects generic audit snapshots", () =>
     Effect.gen(function* () {
       const entry = new Audit.LabelingRuleAuditEntry({
@@ -78,6 +112,7 @@ describe("generic labeling HTTP projections", () => {
         operation: "update",
         before: null,
         after: {
+          _tag: "PolicyLabelingRule",
           id: rule.id,
           repositoryId,
           policyId,

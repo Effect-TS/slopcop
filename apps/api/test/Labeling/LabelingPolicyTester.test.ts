@@ -4,7 +4,7 @@ import * as Program from "@slopcop/domain/Policy/PolicyProgram"
 import { GitHubClient, GitHubClientError } from "@slopcop/github/GitHubClient"
 import { GitHubRepositoriesRepo } from "@slopcop/github/repositories/GitHubRepositoriesRepo"
 import { Policies } from "@slopcop/labeling/Policies"
-import { PolicyAi } from "@slopcop/labeling/PolicyAi"
+import { PolicyCompileError } from "@slopcop/labeling/PolicyCompiler"
 import { PolicyFacts } from "@slopcop/labeling/PolicyFacts"
 import { PoliciesRepo } from "@slopcop/labeling/repositories/PoliciesRepo"
 import { describe, expect, it } from "@effect/vitest"
@@ -67,7 +67,10 @@ const draft = new Policy.LabelingPolicyDraft({
 })
 const unavailable = Effect.die("Unexpected write or service call")
 const unavailableStream = Stream.die("Unexpected stream call")
-const layer = (notFound: boolean) =>
+const layer = (
+  notFound: boolean,
+  validationError: PolicyCompileError | null = null,
+) =>
   LabelingPolicyTester.layerNoDeps.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -77,16 +80,17 @@ const layer = (notFound: boolean) =>
           create: () => unavailable,
           updateDraft: () => unavailable,
           validate: () =>
-            Effect.succeed({
-              program: draftProgram,
-              facts: ["pull_request.draft"],
-              triggers: ["pull_request:unlabeled"],
-              references: [],
-              nodeCount: 1,
-              expandedNodeCount: 1,
-              requiresChangedFileContent: false,
-              aiNodeCount: 0,
-            }),
+            validationError === null
+              ? Effect.succeed({
+                  program: draftProgram,
+                  facts: ["pull_request.draft"],
+                  triggers: ["pull_request:unlabeled"],
+                  references: [],
+                  nodeCount: 1,
+                  expandedNodeCount: 1,
+                  requiresChangedFileContent: false,
+                })
+              : Effect.fail(validationError),
           publish: () => unavailable,
           listVersions: () => unavailable,
         }),
@@ -167,9 +171,6 @@ const layer = (notFound: boolean) =>
               latestReviews: null,
             }),
         }),
-        Layer.succeed(PolicyAi, {
-          evaluate: () => unavailable,
-        }),
       ),
     ),
   )
@@ -208,4 +209,18 @@ describe("LabelingPolicyTester", () => {
       })
     }).pipe(Effect.provide(layer(true))),
   )
+  it.effect("preserves invalid included-policy errors", () => {
+    const compileError = new PolicyCompileError({
+      reason: "MissingReference",
+      message: "Published policy version 'missing' does not exist.",
+      location: { root: "matchesWhen", path: [] },
+    })
+    return Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        (yield* LabelingPolicyTester).test(repository, policyId, 42),
+      )
+
+      expect(error).toBe(compileError)
+    }).pipe(Effect.provide(layer(false, compileError)))
+  })
 })

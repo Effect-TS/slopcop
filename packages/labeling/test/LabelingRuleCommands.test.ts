@@ -27,7 +27,8 @@ const makeRule = (
     onNoMatch: "ensure-absent" | "preserve"
   }> = {},
 ) =>
-  new Rule.LabelingRule({
+  new Rule.PolicyLabelingRule({
+    _tag: "PolicyLabelingRule",
     id: ruleId(`rule-${index}`),
     repositoryId,
     policyId,

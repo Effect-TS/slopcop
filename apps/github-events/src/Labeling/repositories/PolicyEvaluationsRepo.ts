@@ -45,8 +45,15 @@ export class PolicyEvaluationsRepo extends Context.Service<
       Result: Evaluation.PolicyEvaluation,
       execute: (input) => sql`
         INSERT INTO policy_evaluations ${sql.insert(input)}
-        ON CONFLICT (delivery_id,policy_version_id,subject_number,subject_generation)
-        DO UPDATE SET id=policy_evaluations.id RETURNING *`,
+        ON CONFLICT (delivery_id,rule_id,rule_version,subject_number,subject_generation)
+        DO UPDATE SET
+          outcome=excluded.outcome,
+          confidence=excluded.confidence,
+          rationale=excluded.rationale,
+          trace=excluded.trace,
+          gate_trace=excluded.gate_trace,
+          automation_revision=excluded.automation_revision
+        RETURNING *`,
     })
     const insertAction = SqlSchema.findOneOption({
       Request: Evaluation.PolicyActionExecution.insert,
@@ -54,7 +61,13 @@ export class PolicyEvaluationsRepo extends Context.Service<
       execute: (input) => sql`
         INSERT INTO policy_action_executions ${sql.insert(input)}
         ON CONFLICT (evaluation_id,rule_id)
-        DO UPDATE SET id=policy_action_executions.id RETURNING *`,
+        DO UPDATE SET
+          action=excluded.action,
+          label=excluded.label,
+          selected=excluded.selected,
+          status='planned',
+          applied=0
+        RETURNING *`,
     })
     const completeAction = SqlSchema.findOneOption({
       Request: Schema.Struct({
@@ -64,7 +77,7 @@ export class PolicyEvaluationsRepo extends Context.Service<
       Result: Evaluation.PolicyActionExecution,
       execute: ({ applied, id }) => sql`
         UPDATE policy_action_executions
-        SET status='completed',applied=CASE WHEN applied=1 OR ${applied}=1 THEN 1 ELSE 0 END
+        SET status='completed',applied=${applied}
         WHERE id=${id} RETURNING *`,
     })
     const requireOne = <A>(

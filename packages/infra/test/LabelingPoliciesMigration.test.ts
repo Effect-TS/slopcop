@@ -175,7 +175,7 @@ describe("00012 generic policy engine migration", () => {
     database.close()
   })
 
-  it("converts legacy AI and readiness rules to generic programs", () => {
+  it("converts legacy AI rules to first-class rules and readiness rules to policies", () => {
     const database = new DatabaseSync(":memory:")
     database.exec("PRAGMA foreign_keys=ON")
     apply(
@@ -215,21 +215,74 @@ describe("00012 generic policy engine migration", () => {
     expect(
       database
         .prepare(
-          "SELECT policy_id,on_no_match,conflict_group FROM labeling_rules WHERE id='019be000-0000-7000-8000-000000000005'",
+          "SELECT _tag,policy_id,prompt,json_array_length(evidence) AS evidence_count,minimum_confidence,evaluator,gate_policy_id,on_no_match,conflict_group FROM labeling_rules WHERE id='019be000-0000-7000-8000-000000000005'",
         )
         .get(),
     ).toEqual({
-      policy_id: "policy:019be000-0000-7000-8000-000000000005",
+      _tag: "AiLabelingRule",
+      policy_id: null,
+      prompt:
+        "Apply when the primary purpose is to correct behavior that is incorrect, unintended, silently ignored, regressed, or improperly validated. This includes adding validation or an error path that makes existing behavior conform to its intended contract. Prefer bug over enhancement when corrective work also adds implementation logic.",
+      evidence_count: 4,
+      minimum_confidence: 0.75,
+      evaluator: "boolean-policy-v1",
+      gate_policy_id: "policy:ai-gate:019be000-0000-7000-8000-000000000001",
       on_no_match: "preserve",
       conflict_group: "change-kind",
     })
     expect(
       database
         .prepare(
-          "SELECT json_extract(program,'$.matchesWhen._tag') AS tag FROM labeling_policy_versions WHERE id='policy-version:019be000-0000-7000-8000-000000000005'",
+          "SELECT count(*) AS count FROM labeling_policies WHERE id='policy:019be000-0000-7000-8000-000000000005'",
         )
         .get(),
-    ).toEqual({ tag: "AiPrompt" })
+    ).toEqual({ count: 0 })
+    expect(
+      database
+        .prepare(
+          `SELECT policy.name,policy.published_version_id,
+            version.publication_status,
+            json_type(version.program,'$.appliesWhen') AS applies_when,
+            json_extract(version.program,'$.matchesWhen._tag') AS matches_tag,
+            json_array_length(version.registry_manifest) AS registry_facts,
+            (SELECT count(*) FROM labeling_policy_drafts AS draft
+              WHERE draft.policy_id=policy.id) AS drafts,
+            (SELECT count(*) FROM labeling_policy_triggers AS trigger
+              WHERE trigger.policy_version_id=version.id) AS triggers
+          FROM labeling_policies AS policy
+          INNER JOIN labeling_policy_versions AS version
+            ON version.id=policy.published_version_id
+          WHERE policy.id='policy:ai-gate:019be000-0000-7000-8000-000000000001'`,
+        )
+        .get(),
+    ).toEqual({
+      name: "Not generated release",
+      published_version_id:
+        "policy-version:ai-gate:019be000-0000-7000-8000-000000000001",
+      publication_status: "published",
+      applies_when: "null",
+      matches_tag: "Not",
+      registry_facts: 3,
+      drafts: 1,
+      triggers: 8,
+    })
+    expect(
+      database
+        .prepare(
+          `SELECT count(*) AS gates
+          FROM labeling_policies
+          WHERE repository_id='019be000-0000-7000-8000-000000000001'
+            AND name='Not generated release'`,
+        )
+        .get(),
+    ).toEqual({ gates: 1 })
+    expect(
+      database
+        .prepare(
+          "SELECT count(*) AS count FROM labeling_policy_versions,json_tree(program) WHERE json_tree.value='AiPrompt'",
+        )
+        .get(),
+    ).toEqual({ count: 0 })
     expect(
       database
         .prepare(
@@ -260,20 +313,6 @@ describe("00012 generic policy engine migration", () => {
       excludes_readme: 1,
       excludes_own_checks: 1,
     })
-    expect(
-      database
-        .prepare(
-          "SELECT json_extract(program,'$.matchesWhen.evaluator') AS evaluator FROM labeling_policy_versions WHERE id='policy-version:019be000-0000-7000-8000-000000000005'",
-        )
-        .get(),
-    ).toEqual({ evaluator: "boolean-policy-v1" })
-    expect(
-      database
-        .prepare(
-          "SELECT json_extract(program,'$.appliesWhen._tag') AS tag FROM labeling_policy_versions WHERE id='policy-version:019be000-0000-7000-8000-000000000005'",
-        )
-        .get(),
-    ).toEqual({ tag: "Not" })
     expect(
       database
         .prepare(
@@ -316,14 +355,28 @@ describe("00012 generic policy engine migration", () => {
     expect(() =>
       database.exec(`
         INSERT INTO labeling_rules (
-          id,repository_id,policy_id,label,on_match,on_no_match,conflict_group,
+          id,repository_id,_tag,policy_id,label,on_match,on_no_match,conflict_group,
           priority,enabled,validation_status,validated_at,version
         ) VALUES (
-          'foreign-rule','repo-2','policy:019be000-0000-7000-8000-000000000005',
+          'foreign-rule','repo-2','PolicyLabelingRule','policy:ready:019be000-0000-7000-8000-000000000001',
           'foreign','ensure-present','preserve',NULL,0,1,'valid',100,1
         );
       `),
     ).toThrow("FOREIGN KEY constraint failed")
+    expect(() =>
+      database.exec(`
+        INSERT INTO labeling_rules (
+          id,repository_id,_tag,policy_id,prompt,evidence,minimum_confidence,
+          evaluator,gate_policy_id,label,on_match,on_no_match,conflict_group,
+          priority,enabled,validation_status,validated_at,version
+        ) VALUES (
+          'mixed-rule','019be000-0000-7000-8000-000000000001',
+          'PolicyLabelingRule','policy:ready:019be000-0000-7000-8000-000000000001',
+          'Unexpected prompt','["pull_request.title"]',0.8,'boolean-policy-v1',NULL,
+          'mixed','ensure-present','preserve',NULL,0,1,'valid',100,1
+        );
+      `),
+    ).toThrow("CHECK constraint failed")
     expect(() =>
       database.exec(`
         INSERT INTO labeling_rule_audit_log (
@@ -348,15 +401,26 @@ describe("00012 generic policy engine migration", () => {
     database.exec(`
       INSERT INTO github_events (id,name,status,attempts)
       VALUES ('evaluation-delivery','pull_request','completed',1);
-      INSERT INTO policy_evaluations (
-        id,delivery_id,repository_id,policy_id,policy_version_id,target,
-        subject_number,head_sha,automation_revision,outcome,confidence,rationale,trace
-      ) VALUES (
-        'evaluation-1','evaluation-delivery','019be000-0000-7000-8000-000000000001',
-        'policy:019be000-0000-7000-8000-000000000005',
-        'policy-version:019be000-0000-7000-8000-000000000005',
-        'pull_request',42,NULL,1,'Match',1,'test','[]'
-      );
+       INSERT INTO policy_evaluations (
+         id,delivery_id,repository_id,_tag,rule_id,rule_version,evaluator,
+         target,subject_number,head_sha,automation_revision,outcome,confidence,
+         rationale,gate_trace
+       ) VALUES (
+         'evaluation-1','evaluation-delivery','019be000-0000-7000-8000-000000000001',
+         'AiRuleEvaluation','019be000-0000-7000-8000-000000000005',1,
+         'boolean-policy-v1','pull_request',42,NULL,1,'Error',0,'failed','null'
+       );
+       INSERT INTO policy_evaluations (
+         id,delivery_id,repository_id,_tag,rule_id,rule_version,evaluator,
+         target,subject_number,head_sha,automation_revision,outcome,confidence,
+         rationale,gate_trace
+       ) VALUES (
+         'evaluation-retry','evaluation-delivery','019be000-0000-7000-8000-000000000001',
+         'AiRuleEvaluation','019be000-0000-7000-8000-000000000005',1,
+         'boolean-policy-v1','pull_request',42,NULL,1,'Match',1,'retry succeeded','null'
+       ) ON CONFLICT (delivery_id,rule_id,rule_version,subject_number,subject_generation)
+       DO UPDATE SET outcome=excluded.outcome,confidence=excluded.confidence,
+         rationale=excluded.rationale,gate_trace=excluded.gate_trace;
       INSERT INTO policy_action_executions (
         id,evaluation_id,repository_id,rule_id,action,label,selected,status,applied
       ) VALUES (
@@ -367,20 +431,37 @@ describe("00012 generic policy engine migration", () => {
     expect(
       database
         .prepare(
-          "SELECT selected,status,applied FROM policy_action_executions WHERE id='action-1'",
+          "SELECT id,outcome,confidence,rationale FROM policy_evaluations WHERE id='evaluation-1'",
         )
         .get(),
-    ).toEqual({ selected: 1, status: "planned", applied: 0 })
+    ).toEqual({
+      id: "evaluation-1",
+      outcome: "Match",
+      confidence: 1,
+      rationale: "retry succeeded",
+    })
+    expect(
+      database
+        .prepare(
+          "SELECT evaluation_id,selected,status,applied FROM policy_action_executions WHERE id='action-1'",
+        )
+        .get(),
+    ).toEqual({
+      evaluation_id: "evaluation-1",
+      selected: 1,
+      status: "planned",
+      applied: 0,
+    })
     expect(() =>
       database.exec(`
-        INSERT INTO policy_evaluations (
-          id,delivery_id,repository_id,policy_id,policy_version_id,target,
-          subject_number,head_sha,automation_revision,outcome,confidence,rationale,trace
-        ) VALUES (
-          'evaluation-2','evaluation-delivery','019be000-0000-7000-8000-000000000001',
-          'policy:019be000-0000-7000-8000-000000000005',
-          'policy-version:019be000-0000-7000-8000-000000000005',
-          'pull_request',42,NULL,1,'Match',1,'test','[]'
+         INSERT INTO policy_evaluations (
+           id,delivery_id,repository_id,_tag,rule_id,rule_version,evaluator,
+           target,subject_number,head_sha,automation_revision,outcome,confidence,
+           rationale,gate_trace
+         ) VALUES (
+           'evaluation-2','evaluation-delivery','019be000-0000-7000-8000-000000000001',
+           'AiRuleEvaluation','019be000-0000-7000-8000-000000000005',1,
+           'boolean-policy-v1','pull_request',42,NULL,1,'Match',1,'test','null'
         );
       `),
     ).toThrow("UNIQUE constraint failed")

@@ -139,6 +139,26 @@ const containingProperty = (node: SyntaxNode): SyntaxNode | null =>
 const containingObject = (node: SyntaxNode): SyntaxNode | null =>
   nearest(node, "Object")
 
+const propertyInObject = (
+  node: SyntaxNode,
+  object: SyntaxNode,
+): SyntaxNode | null => {
+  const property = containingProperty(node)
+  const parent = property?.parent
+  return parent?.name === "Object" &&
+    parent.from === object.from &&
+    parent.to === object.to
+    ? property
+    : null
+}
+
+const hasNamedProperty = (state: EditorState, object: SyntaxNode): boolean => {
+  for (let child = object.firstChild; child !== null; child = child.nextSibling)
+    if (child.name === "Property" && propertyName(state, child) !== null)
+      return true
+  return false
+}
+
 const ancestorPropertyName = (
   state: EditorState,
   node: SyntaxNode,
@@ -243,16 +263,10 @@ const nodeSnippets = (item: boolean): Completion[] =>
           label: "Not condition",
           type: "snippet",
         }),
-        snippetCompletion(
-          '"aiPrompt": "${1}",\n"evidence": ["pull_request.title", "pull_request.body"],\n"minimumConfidence": ${2:0.8},\n"evaluator": "boolean-policy-v1"',
-          {
-            label: "AI prompt node",
-            type: "snippet",
-          },
-        ),
-        snippetCompletion('"policyVersionId": "${1}"', {
-          label: "Policy reference node",
+        snippetCompletion('"policy": "${1}"', {
+          label: "Include published policy",
           type: "snippet",
+          detail: "Pin another policy's published version",
         }),
       ]
 
@@ -278,7 +292,6 @@ const propertyCompletions = (
         property("anyOf", "At least one item predicate must match"),
         property("not", "Negated item predicate"),
         property("field", "Collection item field"),
-        ...nodeSnippets(true),
       ]
     return [
       property("field", "Collection item field"),
@@ -286,15 +299,8 @@ const propertyCompletions = (
       property("value", "Comparison value; omit for value-less operators"),
     ]
   }
-  if (hasProperty(state, object, "aiPrompt"))
-    return [
-      property("aiPrompt", "AI classification instruction"),
-      property("evidence", "Facts supplied as bounded evidence"),
-      property("minimumConfidence", "Required confidence from 0 to 1"),
-      property("evaluator", "AI evaluator version"),
-    ]
-  if (hasProperty(state, object, "policyVersionId"))
-    return [property("policyVersionId", "Pinned published policy version")]
+  if (hasProperty(state, object, "policy"))
+    return [property("policy", "Included published policy")]
   if (hasProperty(state, object, "fact"))
     return collectionFacts.some(
       (fact) => fact === propertyValue(state, object, "fact"),
@@ -314,9 +320,7 @@ const propertyCompletions = (
     property("anyOf", "At least one condition must match"),
     property("not", "Negated condition"),
     property("fact", "Pull request fact or collection"),
-    property("aiPrompt", "AI classification instruction"),
-    property("policyVersionId", "Pinned published policy version"),
-    ...nodeSnippets(false),
+    property("policy", "Included published policy"),
   ]
 }
 
@@ -370,15 +374,11 @@ const valueCompletions = (
           }),
         ]
       return []
-    case "evidence":
-      return quoted([...allFacts])
-    case "evaluator":
-      return quoted(["boolean-policy-v1"])
-    case "policyVersionId":
+    case "policy":
       return references.map((reference) => ({
         label: reference.name,
         displayLabel: reference.name,
-        apply: replaceJsonString(reference.policyVersionId),
+        apply: replaceJsonString(reference.name),
         detail: reference.policyVersionId,
         type: "reference",
       }))
@@ -393,24 +393,30 @@ export const policyCompletionSource =
     const node = syntaxTree(context.state).resolveInner(context.pos, -1)
     const object = containingObject(node)
     if (object === null) return null
-    const currentProperty = containingProperty(node)
+    const currentProperty = propertyInObject(node, object)
     const propertyKey =
       currentProperty === null
         ? null
         : propertyName(context.state, currentProperty)
     const propertyNameNode = currentProperty?.getChild("PropertyName") ?? null
     const editingPropertyName =
-      currentProperty === null ||
-      propertyNameNode === null ||
-      context.pos <= propertyNameNode.to
+      currentProperty !== null &&
+      (propertyNameNode === null || context.pos <= propertyNameNode.to)
     const match = context.matchBefore(/"?[-\w.]*"?$/)
-    if (match === null) return null
-    if (match.from === match.to && !context.explicit) return null
-    const matchedText = context.state.sliceDoc(match.from, context.pos)
+    if (match === null && !context.explicit) return null
+    const matchFrom = match?.from ?? context.pos
+    if (matchFrom === context.pos && !context.explicit) return null
+    const matchedText = context.state.sliceDoc(matchFrom, context.pos)
+    const nodePosition =
+      currentProperty === null &&
+      !matchedText.startsWith('"') &&
+      !hasNamedProperty(context.state, object) &&
+      ancestorPropertyName(context.state, object) !== null
     return {
-      from: matchedText.startsWith('"') ? match.from + 1 : match.from,
-      options:
-        editingPropertyName || propertyKey === null
+      from: matchedText.startsWith('"') ? matchFrom + 1 : matchFrom,
+      options: nodePosition
+        ? nodeSnippets(isItemObject(context.state, object))
+        : editingPropertyName || propertyKey === null
           ? propertyCompletions(context.state, object)
           : valueCompletions(context.state, object, propertyKey, references),
     }

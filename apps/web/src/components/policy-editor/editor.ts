@@ -38,20 +38,21 @@ import { policyCompletionSource } from "./completion"
 import type { PolicyReference } from "./model"
 import { validateSource } from "./validation"
 
-const policyLinter = linter((view): ReadonlyArray<Diagnostic> => {
-  const validation = validateSource(view.state.doc.toString())
-  return validation._tag === "InvalidPolicy"
-    ? [
-        {
-          from: 0,
-          to: view.state.doc.length,
-          severity: "error",
-          source: "SlopCop policy",
-          message: validation.message,
-        },
-      ]
-    : []
-})
+const policyLinter = (references: ReadonlyArray<PolicyReference>) =>
+  linter((view): ReadonlyArray<Diagnostic> => {
+    const validation = validateSource(view.state.doc.toString(), references)
+    return validation._tag === "InvalidPolicy"
+      ? [
+          {
+            from: 0,
+            to: view.state.doc.length,
+            severity: "error",
+            source: "SlopCop policy",
+            message: validation.message,
+          },
+        ]
+      : []
+  })
 
 const editorTheme = EditorView.theme({
   "&": {
@@ -122,7 +123,7 @@ export const createPolicyEditor = (input: {
       highlightSelectionMatches(),
       json(),
       linter(jsonParseLinter()),
-      policyLinter,
+      policyLinter(input.references),
       lintGutter(),
       autocompletion({
         override: [policyCompletionSource(input.references)],

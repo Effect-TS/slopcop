@@ -8,6 +8,9 @@ export type RootRoute = typeof RootRoute.Type
 export const AutoLabelingRoute = Route.r("AutoLabeling")
 export type AutoLabelingRoute = typeof AutoLabelingRoute.Type
 
+export const PoliciesRoute = Route.r("Policies")
+export type PoliciesRoute = typeof PoliciesRoute.Type
+
 export const SettingsRoute = Route.r("Settings")
 export type SettingsRoute = typeof SettingsRoute.Type
 
@@ -17,6 +20,7 @@ export type NotFoundRoute = typeof NotFoundRoute.Type
 export const AppRoute = Schema.Union([
   RootRoute,
   AutoLabelingRoute,
+  PoliciesRoute,
   SettingsRoute,
   NotFoundRoute,
 ])
@@ -29,12 +33,22 @@ export const autoLabelingRouter = pipe(
   Route.mapTo(AutoLabelingRoute),
 )
 
+export const policiesRouter = pipe(
+  Route.literal("policies"),
+  Route.mapTo(PoliciesRoute),
+)
+
 export const settingsRouter = pipe(
   Route.literal("settings"),
   Route.mapTo(SettingsRoute),
 )
 
-const routeParser = Route.oneOf(autoLabelingRouter, settingsRouter, rootRouter)
+const routeParser = Route.oneOf(
+  autoLabelingRouter,
+  policiesRouter,
+  settingsRouter,
+  rootRouter,
+)
 
 export const urlToAppRoute = Route.parseUrlWithFallback(
   routeParser,

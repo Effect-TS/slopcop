@@ -15,6 +15,7 @@ const decodes = <S extends Schema.ConstraintDecoder<unknown>>(
   schema: S,
   input: unknown,
 ) => Option.isSome(Schema.decodeUnknownOption(schema)(input))
+const policyVersionId = Schema.decodeUnknownSync(PolicyProgram.PolicyVersionId)
 
 describe("domain schemas", () => {
   it("encodes GitHub App JWT claims as JSON", () => {
@@ -48,19 +49,9 @@ describe("domain schemas", () => {
     ).toBe(true)
   })
 
-  it("bounds labels, policy names, and AI confidence", () => {
+  it("bounds labels and policy names", () => {
     expect(decodes(GitHubLabel.GitHubLabelName, "bug")).toBe(true)
     expect(decodes(GitHubLabel.GitHubLabelName, "x".repeat(51))).toBe(false)
-    expect(
-      decodes(PolicyProgram.Condition, {
-        _tag: "AiPrompt",
-        prompt: "Classify",
-        evidence: [],
-        minimumConfidence: 1.01,
-        profile: "default",
-        evaluatorVersion: "1",
-      }),
-    ).toBe(false)
     expect(
       decodes(LabelingPolicy.LabelingPolicyName, "Documentation patrol"),
     ).toBe(true)
@@ -68,6 +59,26 @@ describe("domain schemas", () => {
     expect(decodes(LabelingPolicy.LabelingPolicyName, "x".repeat(101))).toBe(
       false,
     )
+  })
+
+  it("rejects AI policy nodes", () => {
+    expect(
+      decodes(PolicyProgram.Condition, {
+        _tag: "AiPrompt",
+        prompt: "Classify",
+        evidence: ["pull_request.title"],
+        minimumConfidence: 0.8,
+        evaluator: "boolean-policy-v1",
+      }),
+    ).toBe(false)
+    expect(
+      decodes(PolicyProgramSource.ConditionSource, {
+        aiPrompt: "Classify",
+        evidence: ["pull_request.title"],
+        minimumConfidence: 0.8,
+        evaluator: "boolean-policy-v1",
+      }),
+    ).toBe(false)
   })
 
   it("defaults an omitted applicability condition to null", () => {
@@ -136,17 +147,13 @@ describe("domain schemas", () => {
               ],
             },
           },
-          {
-            aiPrompt: "Classify the pull request.",
-            evidence: ["pull_request.title"],
-            minimumConfidence: 0.8,
-            evaluator: "boolean-policy-v1",
-          },
         ],
       },
     })
 
-    expect(PolicyProgramSource.toPolicyProgram(source)).toEqual({
+    expect(
+      PolicyProgramSource.toPolicyProgram(source, policyVersionId),
+    ).toEqual({
       target: "pull_request",
       appliesWhen: {
         _tag: "Not",
@@ -187,13 +194,6 @@ describe("domain schemas", () => {
               ],
             },
           },
-          {
-            _tag: "AiPrompt",
-            prompt: "Classify the pull request.",
-            evidence: ["pull_request.title"],
-            minimumConfidence: 0.8,
-            evaluator: "boolean-policy-v1",
-          },
         ],
       },
     })
@@ -209,14 +209,21 @@ describe("domain schemas", () => {
       },
     })
 
-    const source = PolicyProgramSource.fromPolicyProgram(program)
+    const source = PolicyProgramSource.fromPolicyProgram(
+      program,
+      () => "Shared policy",
+    )
 
     expect(source).toEqual({
       target: "pull_request",
       appliesWhen: null,
-      matchesWhen: { policyVersionId: "version-1" },
+      matchesWhen: { policy: "Shared policy" },
     })
-    expect(PolicyProgramSource.toPolicyProgram(source)).toEqual(program)
+    expect(
+      PolicyProgramSource.toPolicyProgram(source, () =>
+        policyVersionId("version-1"),
+      ),
+    ).toEqual(program)
   })
 
   it("round trips semantic groups for every collection item kind", () => {
@@ -264,7 +271,7 @@ describe("domain schemas", () => {
       },
     })
 
-    const source = PolicyProgramSource.fromPolicyProgram(program)
+    const source = PolicyProgramSource.fromPolicyProgram(program, String)
 
     expect(source.matchesWhen).toMatchObject({
       anyOf: [
@@ -272,7 +279,9 @@ describe("domain schemas", () => {
         { item: { not: { field: "reviewer" } } },
       ],
     })
-    expect(PolicyProgramSource.toPolicyProgram(source)).toEqual(program)
+    expect(
+      PolicyProgramSource.toPolicyProgram(source, policyVersionId),
+    ).toEqual(program)
   })
 
   it("builds stable, human-readable structural node locations", () => {
@@ -311,37 +320,42 @@ describe("domain schemas", () => {
     )
   })
 
-  it("decodes legacy ID traces only on persisted policy evaluations", () => {
-    const row = Schema.decodeUnknownSync(PolicyEvaluation.PolicyEvaluation)({
-      id: "evaluation-1",
-      deliveryId: "delivery-1",
-      repositoryId: "repository-1",
-      policyId: "policy-1",
-      policyVersionId: "version-1",
-      target: "pull_request",
-      subjectNumber: 1,
-      headSha: "abc",
-      automationRevision: 1,
-      outcome: "Match",
-      confidence: 1,
-      rationale: "Matched.",
-      trace: JSON.stringify([
-        { id: "legacy-node", outcome: "Match", rationale: "Matched." },
-      ]),
-      createdAt: Date.parse("2026-08-10T00:00:00Z"),
-    })
-
-    expect(row.trace).toEqual([
-      { id: "legacy-node", outcome: "Match", rationale: "Matched." },
-    ])
-    expect(
-      decodes(PolicyProgram.PolicyEvaluationResult, {
+  it("decodes rule-centric policy evaluations", () => {
+    const row = Schema.decodeUnknownSync(PolicyEvaluation.PolicyRuleEvaluation)(
+      {
+        id: "evaluation-1",
+        deliveryId: "delivery-1",
+        repositoryId: "repository-1",
+        _tag: "PolicyRuleEvaluation",
+        ruleId: "rule-1",
+        ruleVersion: 1,
+        policyId: "policy-1",
+        policyVersionId: "version-1",
+        target: "pull_request",
+        subjectNumber: 1,
+        headSha: "abc",
+        automationRevision: 1,
         outcome: "Match",
         confidence: 1,
         rationale: "Matched.",
-        trace: [{ id: "legacy-node", outcome: "Match", rationale: "Matched." }],
-      }),
-    ).toBe(false)
+        trace: JSON.stringify([
+          {
+            location: { root: "matchesWhen", path: [] },
+            outcome: "Match",
+            rationale: "Matched.",
+          },
+        ]),
+        createdAt: Date.parse("2026-08-10T00:00:00Z"),
+      },
+    )
+
+    expect(row.trace).toEqual([
+      {
+        location: { root: "matchesWhen", path: [] },
+        outcome: "Match",
+        rationale: "Matched.",
+      },
+    ])
   })
 
   it("encodes repository summaries without internal identities", () => {

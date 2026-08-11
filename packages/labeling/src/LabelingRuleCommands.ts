@@ -27,8 +27,7 @@ type ExistingMutation = {
   readonly expectedVersion: number
   readonly expectedRevision: number
 }
-export interface LabelingRuleChanges {
-  readonly policyId?: Rule.LabelingRule["policyId"]
+interface SharedLabelingRuleChanges {
   readonly label?: Rule.LabelingRule["label"]
   readonly onNoMatch?: Rule.LabelingRule["onNoMatch"]
   readonly conflictGroup?: Rule.LabelingRule["conflictGroup"]
@@ -37,13 +36,26 @@ export interface LabelingRuleChanges {
   readonly validationStatus?: Rule.LabelingRule["validationStatus"]
   readonly validatedAt?: Rule.LabelingRule["validatedAt"]
 }
+export type LabelingRuleChanges =
+  | (SharedLabelingRuleChanges & {
+      readonly _tag: "PolicyLabelingRule"
+      readonly policyId?: Rule.PolicyLabelingRule["policyId"]
+    })
+  | (SharedLabelingRuleChanges & {
+      readonly _tag: "AiLabelingRule"
+      readonly prompt?: Rule.AiLabelingRule["prompt"]
+      readonly evidence?: Rule.AiLabelingRule["evidence"]
+      readonly minimumConfidence?: Rule.AiLabelingRule["minimumConfidence"]
+      readonly evaluator?: Rule.AiLabelingRule["evaluator"]
+      readonly gatePolicyId?: Rule.AiLabelingRule["gatePolicyId"]
+    })
 export type LabelingRuleCommand =
   | {
       readonly _tag: "Create"
       readonly repositoryId: GitHubRepository.GitHubRepository["id"]
       readonly repository: string
       readonly expectedRevision: number
-      readonly input: typeof Rule.LabelingRule.insert.Type
+      readonly input: Rule.LabelingRuleInsert
     }
   | (ExistingMutation & {
       readonly _tag: "Update" | "Validate" | "Disable" | "MarkMissing"
@@ -58,20 +70,33 @@ const actorName = (actor: ConfigurationActor) =>
   actor._tag === "Administrator"
     ? `admin:${actor.actor}`
     : `system:${actor.actor}`
-const auditValue = (rule: Rule.LabelingRule): Audit.LabelingRuleAuditValue => ({
-  id: rule.id,
-  repositoryId: rule.repositoryId,
-  policyId: rule.policyId,
-  label: rule.label,
-  onMatch: rule.onMatch,
-  onNoMatch: rule.onNoMatch,
-  conflictGroup: rule.conflictGroup,
-  priority: rule.priority,
-  enabled: rule.enabled,
-  validationStatus: rule.validationStatus,
-  validatedAt: rule.validatedAt,
-  version: rule.version,
-})
+const auditValue = (rule: Rule.LabelingRule): Audit.LabelingRuleAuditValue => {
+  const shared = {
+    _tag: rule._tag,
+    id: rule.id,
+    repositoryId: rule.repositoryId,
+    label: rule.label,
+    onMatch: rule.onMatch,
+    onNoMatch: rule.onNoMatch,
+    conflictGroup: rule.conflictGroup,
+    priority: rule.priority,
+    enabled: rule.enabled,
+    validationStatus: rule.validationStatus,
+    validatedAt: rule.validatedAt,
+    version: rule.version,
+  }
+  return rule._tag === "PolicyLabelingRule"
+    ? { ...shared, _tag: rule._tag, policyId: rule.policyId }
+    : {
+        ...shared,
+        _tag: rule._tag,
+        prompt: rule.prompt,
+        evidence: rule.evidence,
+        minimumConfidence: rule.minimumConfidence,
+        evaluator: rule.evaluator,
+        gatePolicyId: rule.gatePolicyId,
+      }
+}
 const operation = (
   command: LabelingRuleCommand,
 ): Audit.LabelingRuleAuditEntry["operation"] => {
@@ -259,26 +284,56 @@ export const makeLabelingRuleCommands = Effect.gen(function* () {
       candidate,
       command.ruleId,
     )
+    const shared = {
+      id: before.id,
+      repositoryId: before.repositoryId,
+      label: candidate.label,
+      onMatch: before.onMatch,
+      onNoMatch: candidate.onNoMatch,
+      conflictGroup: candidate.conflictGroup,
+      priority: command.input.priority ?? before.priority,
+      enabled: candidate.enabled,
+      validationStatus: candidate.validationStatus,
+      validatedAt:
+        command.input.validatedAt === undefined
+          ? before.validatedAt
+          : command.input.validatedAt,
+      version: before.version,
+    }
+    let update: Rule.LabelingRuleUpdate
+    if (before._tag === "PolicyLabelingRule") {
+      if (command.input._tag !== "PolicyLabelingRule")
+        return yield* new InvalidLabelingRule({
+          message: "A labeling rule cannot be converted to another rule kind.",
+        })
+      update = Rule.PolicyLabelingRule.update.make({
+        ...shared,
+        _tag: before._tag,
+        policyId: command.input.policyId ?? before.policyId,
+      })
+    } else {
+      if (command.input._tag !== "AiLabelingRule")
+        return yield* new InvalidLabelingRule({
+          message: "A labeling rule cannot be converted to another rule kind.",
+        })
+      update = Rule.AiLabelingRule.update.make({
+        ...shared,
+        _tag: before._tag,
+        prompt: command.input.prompt ?? before.prompt,
+        evidence: command.input.evidence ?? before.evidence,
+        minimumConfidence:
+          command.input.minimumConfidence ?? before.minimumConfidence,
+        evaluator: command.input.evaluator ?? before.evaluator,
+        gatePolicyId:
+          command.input.gatePolicyId === undefined
+            ? before.gatePolicyId
+            : command.input.gatePolicyId,
+      })
+    }
     const stored = yield* rules.update(
       command.ruleId,
       command.expectedVersion,
-      Rule.LabelingRule.update.make({
-        id: before.id,
-        repositoryId: before.repositoryId,
-        policyId: command.input.policyId ?? before.policyId,
-        label: candidate.label,
-        onMatch: before.onMatch,
-        onNoMatch: candidate.onNoMatch,
-        conflictGroup: candidate.conflictGroup,
-        priority: command.input.priority ?? before.priority,
-        enabled: candidate.enabled,
-        validationStatus: candidate.validationStatus,
-        validatedAt:
-          command.input.validatedAt === undefined
-            ? before.validatedAt
-            : command.input.validatedAt,
-        version: before.version,
-      }),
+      update,
     )
     yield* repositories.incrementRulesRevision(
       command.repositoryId,

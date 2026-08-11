@@ -312,7 +312,13 @@ const navigationGroups: ReadonlyArray<AppSidebar.NavigationGroup> = [
       {
         value: "AutoLabeling",
         label: "Auto-Labeling",
-        description: "Citation policies",
+        description: "Label rules",
+        icon: Icon.tags(),
+      },
+      {
+        value: "Policies",
+        label: "Policies",
+        description: "Policy programs",
         icon: Icon.tags(),
       },
       {
@@ -331,6 +337,8 @@ const navigationHref = (value: AppSidebar.NavigationValue): string => {
       return Router.rootRouter()
     case "AutoLabeling":
       return Router.autoLabelingRouter()
+    case "Policies":
+      return Router.policiesRouter()
     case "Settings":
       return Router.settingsRouter()
   }
@@ -363,9 +371,18 @@ const routeView = (model: Model, h: HtmlBuilder<Message>) => {
   switch (model.route._tag) {
     case "AutoLabeling":
       return h.submodel({
-        slotId: "auto-labeling",
+        slotId: "labeling",
         model: model.autoLabeling,
         view: AutoLabeling.view,
+        viewInputs: { surface: "AutoLabeling" },
+        toParentMessage: (message) => GotAutoLabelingMessage({ message }),
+      })
+    case "Policies":
+      return h.submodel({
+        slotId: "labeling",
+        model: model.autoLabeling,
+        view: AutoLabeling.view,
+        viewInputs: { surface: "Policies" },
         toParentMessage: (message) => GotAutoLabelingMessage({ message }),
       })
     case "Settings":
@@ -395,9 +412,11 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
             pageTitle:
               model.route._tag === "AutoLabeling"
                 ? "Auto-Labeling"
-                : model.route._tag === "Settings"
-                  ? "Settings"
-                  : "Overview",
+                : model.route._tag === "Policies"
+                  ? "Policies"
+                  : model.route._tag === "Settings"
+                    ? "Settings"
+                    : "Overview",
             toNavigationHref: navigationHref,
             isNavigationItemCurrent: (value) => model.route._tag === value,
             toView: (_) => routeView(model, h),

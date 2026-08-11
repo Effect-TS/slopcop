@@ -29,11 +29,11 @@ const decodeRule = Schema.decodeEffect(
 )
 export const toPublicRule = (
   rule: Rule.LabelingRule,
-  policy: Policy.LabelingPolicy,
-) =>
-  decodeRule({
+  policy: Policy.LabelingPolicy | null,
+) => {
+  const shared = {
+    _tag: rule._tag,
     id: rule.id,
-    policyId: rule.policyId,
     label: rule.label,
     onMatch: rule.onMatch,
     onNoMatch: rule.onNoMatch,
@@ -45,12 +45,41 @@ export const toPublicRule = (
     version: rule.version,
     createdAt: rule.createdAt,
     updatedAt: rule.updatedAt,
-    policy: {
-      id: policy.id,
-      name: policy.name,
-      published: policy.publishedVersionId !== null,
-    },
+  }
+  if (rule._tag === "PolicyLabelingRule") {
+    if (policy === null)
+      return Effect.die(
+        `Rule '${rule.id}' references missing policy '${rule.policyId}'.`,
+      )
+    return decodeRule({
+      ...shared,
+      _tag: rule._tag,
+      policyId: rule.policyId,
+      policy: {
+        id: policy.id,
+        name: policy.name,
+        published: policy.publishedVersionId !== null,
+      },
+    }).pipe(Effect.orDie)
+  }
+  return decodeRule({
+    ...shared,
+    _tag: rule._tag,
+    prompt: rule.prompt,
+    evidence: rule.evidence,
+    minimumConfidence: rule.minimumConfidence,
+    evaluator: rule.evaluator,
+    gatePolicyId: rule.gatePolicyId,
+    gatePolicy:
+      policy === null
+        ? null
+        : {
+            id: policy.id,
+            name: policy.name,
+            published: policy.publishedVersionId !== null,
+          },
   }).pipe(Effect.orDie)
+}
 const decodeAudit = Schema.decodeEffect(
   Schema.toType(Management.PublicLabelingRuleAuditEntry),
 )
@@ -115,13 +144,16 @@ const policyFor = Effect.fn("Handlers.policyFor")(function* (
   slug: { readonly owner: string; readonly repo: string },
   rule: Rule.LabelingRule,
 ) {
+  const policyId =
+    rule._tag === "PolicyLabelingRule" ? rule.policyId : rule.gatePolicyId
+  if (policyId === null) return null
   const configured = yield* policies.list(slug).pipe(Effect.orDie)
   const policy = configured.policies.find(
-    (candidate) => candidate.id === rule.policyId,
+    (candidate) => candidate.id === policyId,
   )
   if (policy === undefined)
     return yield* Effect.die(
-      `Rule '${rule.id}' references missing policy '${rule.policyId}'.`,
+      `Rule '${rule.id}' references missing policy '${policyId}'.`,
     )
   return policy
 })

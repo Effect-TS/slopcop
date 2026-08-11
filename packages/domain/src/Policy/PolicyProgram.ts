@@ -195,9 +195,6 @@ export const ReviewItemPredicate: Schema.Codec<ReviewItemPredicate, unknown> =
     ]),
   )
 
-export const AiEvaluator = Schema.Literal("boolean-policy-v1")
-export type AiEvaluator = typeof AiEvaluator.Type
-
 const BooleanFactPredicate = Schema.Struct({
   _tag: Schema.Literal("FactPredicate"),
   fact: Schema.Literal("pull_request.draft"),
@@ -283,13 +280,6 @@ export type Condition =
       readonly item: ReviewItemPredicate
     }
   | {
-      readonly _tag: "AiPrompt"
-      readonly prompt: string
-      readonly evidence: ReadonlyArray<PullRequestFact>
-      readonly minimumConfidence: number
-      readonly evaluator: AiEvaluator
-    }
-  | {
       readonly _tag: "PolicyReference"
       readonly policyVersionId: PolicyVersionId
     }
@@ -324,21 +314,6 @@ export const Condition: Schema.Codec<Condition, unknown> = Schema.suspend(() =>
       fact: Schema.Literal("pull_request.latest_reviews"),
       quantifier: Schema.Literals(["Any", "All", "None"]),
       item: ReviewItemPredicate,
-    }),
-    Schema.Struct({
-      _tag: Schema.Literal("AiPrompt"),
-      prompt: Schema.String.check(
-        Schema.isMinLength(1),
-        Schema.isMaxLength(4_000),
-      ),
-      evidence: Schema.Array(PullRequestFact).check(
-        Schema.isMinLength(1),
-        Schema.isMaxLength(8),
-      ),
-      minimumConfidence: Schema.Finite.check(
-        Schema.isBetween({ minimum: 0, maximum: 1 }),
-      ),
-      evaluator: AiEvaluator,
     }),
     Schema.Struct({
       _tag: Schema.Literal("PolicyReference"),

@@ -14,7 +14,6 @@ import {
   Repository,
   RuleDraft,
   RuleId,
-  Tab,
 } from "./model"
 
 export const SelectedRepositoryChanged = m("SelectedRepositoryChanged", {
@@ -37,7 +36,6 @@ export const FailedToLoadRepositoryData = m("FailedToLoadRepositoryData", {
   repository: Repository,
   message: Schema.String,
 })
-export const SelectedTab = m("SelectedTab", { tab: Tab })
 export const IgnoredInput = m("IgnoredInput")
 
 export const OpenedNewPolicy = m("OpenedNewPolicy")
@@ -116,18 +114,6 @@ export const UpdatedItemOperand = m("UpdatedItemOperand", {
   clientId: Schema.String,
   value: Schema.String,
 })
-export const UpdatedAiPrompt = m("UpdatedAiPrompt", {
-  clientId: Schema.String,
-  prompt: Schema.String,
-})
-export const ToggledAiEvidence = m("ToggledAiEvidence", {
-  clientId: Schema.String,
-  fact: PolicyProgram.PullRequestFact,
-})
-export const UpdatedAiConfidence = m("UpdatedAiConfidence", {
-  clientId: Schema.String,
-  minimumConfidence: Schema.Number,
-})
 export const UpdatedPolicyReference = m("UpdatedPolicyReference", {
   clientId: Schema.String,
   policyVersionId: PolicyVersionId,
@@ -190,7 +176,22 @@ export const GotPublishDialogMessage = m("GotPublishDialogMessage", {
 export const OpenedNewRule = m("OpenedNewRule")
 export const OpenedRuleEditor = m("OpenedRuleEditor", { ruleId: RuleId })
 export const ClosedRuleEditor = m("ClosedRuleEditor")
+export const ChangedRuleType = m("ChangedRuleType", {
+  ruleType: Schema.Literals(["PolicyLabelingRule", "AiLabelingRule"]),
+})
 export const UpdatedRulePolicy = m("UpdatedRulePolicy", { policyId: PolicyId })
+export const UpdatedRulePrompt = m("UpdatedRulePrompt", {
+  prompt: Schema.String,
+})
+export const ToggledRuleEvidence = m("ToggledRuleEvidence", {
+  fact: PolicyProgram.PullRequestFact,
+})
+export const UpdatedRuleMinimumConfidence = m("UpdatedRuleMinimumConfidence", {
+  minimumConfidence: Schema.Number,
+})
+export const UpdatedRuleGatePolicy = m("UpdatedRuleGatePolicy", {
+  gatePolicyId: Schema.NullOr(PolicyId),
+})
 export const UpdatedRuleLabel = m("UpdatedRuleLabel", { label: Schema.String })
 export const UpdatedRuleNoMatch = m("UpdatedRuleNoMatch", {
   onNoMatch: Schema.Literals(["ensure-absent", "preserve"]),
@@ -299,7 +300,6 @@ export const Message = Schema.Union([
   RetriedRepositoryLoad,
   LoadedRepositoryData,
   FailedToLoadRepositoryData,
-  SelectedTab,
   IgnoredInput,
   OpenedNewPolicy,
   OpenedPolicyEditor,
@@ -324,9 +324,6 @@ export const Message = Schema.Union([
   UpdatedItemField,
   UpdatedItemOperator,
   UpdatedItemOperand,
-  UpdatedAiPrompt,
-  ToggledAiEvidence,
-  UpdatedAiConfidence,
   UpdatedPolicyReference,
   SavedPolicy,
   RetriedPolicySave,
@@ -347,7 +344,12 @@ export const Message = Schema.Union([
   OpenedNewRule,
   OpenedRuleEditor,
   ClosedRuleEditor,
+  ChangedRuleType,
   UpdatedRulePolicy,
+  UpdatedRulePrompt,
+  ToggledRuleEvidence,
+  UpdatedRuleMinimumConfidence,
+  UpdatedRuleGatePolicy,
   UpdatedRuleLabel,
   UpdatedRuleNoMatch,
   UpdatedRuleConflictGroup,

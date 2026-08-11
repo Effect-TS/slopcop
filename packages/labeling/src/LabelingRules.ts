@@ -219,17 +219,17 @@ export class LabelingRules extends Context.Service<
     })
     const requirePolicy = Effect.fn("LabelingRules.requirePolicy")(function* (
       repo: GitHubRepository.GitHubRepository,
-      policyId: Rule.LabelingRule["policyId"],
-      enabled: boolean,
+      policyId: Rule.PolicyLabelingRule["policyId"],
+      requirePublished: boolean,
     ) {
       const found = yield* policies.find(repo.id, policyId)
       if (Option.isNone(found))
         return yield* new InvalidLabelingRule({
           message: `Policy '${policyId}' does not exist in ${repo.slug}.`,
         })
-      if (enabled && found.value.publishedVersionId === null)
+      if (requirePublished && found.value.publishedVersionId === null)
         return yield* new InvalidLabelingRule({
-          message: "An enabled binding requires a published policy.",
+          message: "The labeling rule requires a published policy.",
         })
     })
     const mapGitHubError =
@@ -360,28 +360,47 @@ export class LabelingRules extends Context.Service<
       identity: AdminIdentity,
     ) {
       const repo = yield* repository(slug)
-      yield* requirePolicy(repo, input.policyId, input.enabled)
+      if (input._tag === "PolicyLabelingRule")
+        yield* requirePolicy(repo, input.policyId, input.enabled)
+      else if (input.gatePolicyId !== null)
+        yield* requirePolicy(repo, input.gatePolicyId, true)
       const canonical = yield* requireLabel(repo, input.label)
       const now = yield* DateTime.now
+      const shared = {
+        repositoryId: repo.id,
+        label: canonical.name,
+        onMatch: input.onMatch,
+        onNoMatch: input.onNoMatch,
+        conflictGroup: input.conflictGroup ?? null,
+        priority: input.priority ?? 0,
+        enabled: input.enabled,
+        validationStatus: "valid" as const,
+        validatedAt: now,
+        version: 1,
+      }
+      const ruleInput =
+        input._tag === "PolicyLabelingRule"
+          ? Rule.PolicyLabelingRule.insert.make({
+              ...shared,
+              _tag: input._tag,
+              policyId: input.policyId,
+            })
+          : Rule.AiLabelingRule.insert.make({
+              ...shared,
+              _tag: input._tag,
+              prompt: input.prompt,
+              evidence: input.evidence,
+              minimumConfidence: input.minimumConfidence,
+              evaluator: input.evaluator,
+              gatePolicyId: input.gatePolicyId,
+            })
       return yield* execute(
         {
           _tag: "Create",
           repositoryId: repo.id,
           repository: repo.slug,
           expectedRevision: repo.rulesRevision,
-          input: Rule.LabelingRule.insert.make({
-            repositoryId: repo.id,
-            policyId: input.policyId,
-            label: canonical.name,
-            onMatch: input.onMatch,
-            onNoMatch: input.onNoMatch,
-            conflictGroup: input.conflictGroup ?? null,
-            priority: input.priority ?? 0,
-            enabled: input.enabled,
-            validationStatus: "valid",
-            validatedAt: now,
-            version: 1,
-          }),
+          input: ruleInput,
         },
         actor(identity),
       ).pipe(Effect.flatMap(stored))
@@ -400,8 +419,27 @@ export class LabelingRules extends Context.Service<
           ruleId: id,
           currentRule: current,
         })
+      if (input._tag !== current._tag)
+        return yield* new InvalidLabelingRule({
+          message: "A labeling rule cannot be converted to another rule kind.",
+        })
       const enabled = input.enabled ?? current.enabled
-      yield* requirePolicy(repo, input.policyId ?? current.policyId, enabled)
+      if (
+        current._tag === "PolicyLabelingRule" &&
+        input._tag === "PolicyLabelingRule"
+      )
+        yield* requirePolicy(repo, input.policyId ?? current.policyId, enabled)
+      else if (
+        current._tag === "AiLabelingRule" &&
+        input._tag === "AiLabelingRule"
+      ) {
+        const gatePolicyId =
+          input.gatePolicyId === undefined
+            ? current.gatePolicyId
+            : input.gatePolicyId
+        if (gatePolicyId !== null)
+          yield* requirePolicy(repo, gatePolicyId, true)
+      }
       const now = yield* DateTime.now
       const requiresValidation =
         input.label !== undefined ||
@@ -456,11 +494,17 @@ export class LabelingRules extends Context.Service<
           expectedRevision: repo.rulesRevision,
           input: checked.exists
             ? {
+                _tag: current._tag,
                 label: checked.label.name,
                 validationStatus: "valid",
                 validatedAt: now,
               }
-            : { enabled: false, validationStatus: "missing", validatedAt: now },
+            : {
+                _tag: current._tag,
+                enabled: false,
+                validationStatus: "missing",
+                validatedAt: now,
+              },
         },
         actor(identity),
       ).pipe(Effect.flatMap(stored))
@@ -480,7 +524,7 @@ export class LabelingRules extends Context.Service<
           ruleId: id,
           expectedVersion: version,
           expectedRevision: repo.rulesRevision,
-          input: { enabled: false },
+          input: { _tag: (yield* requireRule(repo, id))._tag, enabled: false },
         },
         actor(identity),
       ).pipe(Effect.flatMap(stored))
@@ -559,6 +603,7 @@ export class LabelingRules extends Context.Service<
           expectedVersion: version,
           expectedRevision: found.value.rulesRevision,
           input: {
+            _tag: (yield* requireRule(found.value, id))._tag,
             enabled: false,
             validationStatus: "missing",
             validatedAt: now,
@@ -596,11 +641,13 @@ export class LabelingRules extends Context.Service<
                 expectedRevision: repo.value.rulesRevision,
                 input: checked.exists
                   ? {
+                      _tag: rule._tag,
                       label: checked.label.name,
                       validationStatus: "valid",
                       validatedAt: now,
                     }
                   : {
+                      _tag: rule._tag,
                       enabled: false,
                       validationStatus: "missing",
                       validatedAt: now,

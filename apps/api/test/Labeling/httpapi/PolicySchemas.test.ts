@@ -33,4 +33,24 @@ describe("policy request schemas", () => {
       }),
     ).toThrow()
   })
+
+  it("accepts a pinned published policy reference", () => {
+    const request = Schema.decodeUnknownSync(Management.CreatePolicyRequest)({
+      name: "Composed policy",
+      target: "pull_request",
+      program: {
+        target: "pull_request",
+        matchesWhen: {
+          _tag: "PolicyReference",
+          policyVersionId: "published-version-1",
+        },
+      },
+      metadata: {},
+    })
+
+    expect(request.program.matchesWhen).toEqual({
+      _tag: "PolicyReference",
+      policyVersionId: "published-version-1",
+    })
+  })
 })

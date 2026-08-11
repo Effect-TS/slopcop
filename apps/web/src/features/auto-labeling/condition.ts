@@ -7,7 +7,6 @@ export const NodeKind = Schema.Literals([
   "Not",
   "FactPredicate",
   "CollectionPredicate",
-  "AiPrompt",
   "PolicyReference",
 ])
 export type NodeKind = typeof NodeKind.Type
@@ -94,14 +93,6 @@ export type DraftCondition =
       readonly item: DraftItem
     }
   | {
-      readonly _tag: "AiPrompt"
-      readonly clientId: string
-      readonly prompt: string
-      readonly evidence: ReadonlyArray<PolicyProgram.PullRequestFact>
-      readonly minimumConfidence: number
-      readonly evaluator: "boolean-policy-v1"
-    }
-  | {
       readonly _tag: "PolicyReference"
       readonly clientId: string
       readonly policyVersionId: string
@@ -133,14 +124,6 @@ export const DraftCondition: Schema.Codec<DraftCondition, unknown> =
         fact: PolicyProgram.PullRequestCollectionFact,
         quantifier: Quantifier,
         item: DraftItem,
-      }),
-      Schema.Struct({
-        _tag: Schema.Literal("AiPrompt"),
-        clientId: Schema.String,
-        prompt: Schema.String,
-        evidence: Schema.Array(PolicyProgram.PullRequestFact),
-        minimumConfidence: Schema.Number,
-        evaluator: Schema.Literal("boolean-policy-v1"),
       }),
       Schema.Struct({
         _tag: Schema.Literal("PolicyReference"),
@@ -231,15 +214,6 @@ export const defaultCondition = (
         fact: "pull_request.changed_files",
         quantifier: "Any",
         item: defaultItem(itemClientId),
-      }
-    case "AiPrompt":
-      return {
-        _tag: "AiPrompt",
-        clientId,
-        prompt: "",
-        evidence: ["pull_request.title"],
-        minimumConfidence: 0.8,
-        evaluator: "boolean-policy-v1",
       }
     case "PolicyReference":
       return { _tag: "PolicyReference", clientId, policyVersionId: "" }
@@ -417,14 +391,6 @@ const stripCondition = (condition: DraftCondition): unknown => {
         quantifier: condition.quantifier,
         item: stripItem(condition.item),
       }
-    case "AiPrompt":
-      return {
-        _tag: "AiPrompt",
-        prompt: condition.prompt,
-        evidence: condition.evidence,
-        minimumConfidence: condition.minimumConfidence,
-        evaluator: condition.evaluator,
-      }
     case "PolicyReference":
       return {
         _tag: "PolicyReference",
@@ -521,8 +487,6 @@ export const draftConditionFrom = (
         quantifier: condition.quantifier,
         item: draftItemFrom(condition.item, nextId),
       }
-    case "AiPrompt":
-      return { ...condition, clientId: nextId() }
     case "PolicyReference":
       return { ...condition, clientId: nextId() }
   }

@@ -2,6 +2,8 @@ import * as GitHubEvent from "@slopcop/domain/GitHub/GitHubEvent"
 import type * as DomainRepository from "@slopcop/domain/GitHub/GitHubRepository"
 import * as GitHubWebhookEvent from "@slopcop/domain/GitHub/GitHubWebhookEvent"
 import * as Evaluation from "@slopcop/domain/Labeling/PolicyEvaluation"
+import type * as Rule from "@slopcop/domain/Labeling/LabelingRule"
+import type * as Policy from "@slopcop/domain/Labeling/LabelingPolicy"
 import type * as Program from "@slopcop/domain/Policy/PolicyProgram"
 import {
   GitHubClient,
@@ -9,8 +11,14 @@ import {
 } from "@slopcop/github/GitHubClient"
 import { GitHubRepositoriesRepo } from "@slopcop/github/repositories/GitHubRepositoriesRepo"
 import { OptionalPolicyAiLayer } from "@slopcop/labeling/Ai"
+import { evaluateAiLabelingRule } from "@slopcop/labeling/AiLabelingRuleEvaluator"
 import { planLabelActions } from "@slopcop/labeling/LabelActions"
-import { PolicyAi } from "@slopcop/labeling/PolicyAi"
+import {
+  PolicyAi,
+  type PolicyAiError,
+  type PolicyAiUnavailableError,
+} from "@slopcop/labeling/PolicyAi"
+import { triggersForPullRequestFacts } from "@slopcop/labeling/PolicyCompiler"
 import { evaluatePolicyProgram } from "@slopcop/labeling/PolicyEngine"
 import { PolicyFacts } from "@slopcop/labeling/PolicyFacts"
 import { LabelingRules } from "@slopcop/labeling/LabelingRules"
@@ -44,6 +52,21 @@ export class LabelingCoordinatorHeadChanged extends Data.TaggedError(
 export class LabelingCoordinatorLimitExceeded extends Data.TaggedError(
   "LabelingCoordinatorLimitExceeded",
 )<{ readonly repository: string; readonly limit: number }> {}
+
+type RuntimeRule =
+  | {
+      readonly _tag: "Policy"
+      readonly rule: Rule.PolicyLabelingRule
+      readonly version: Policy.LabelingPolicyVersion
+    }
+  | {
+      readonly _tag: "Ai"
+      readonly rule: Rule.AiLabelingRule
+      readonly gate: {
+        readonly policy: Policy.LabelingPolicy
+        readonly version: Policy.LabelingPolicyVersion
+      } | null
+    }
 
 const source = (event: GitHubWebhookEvent.GitHubWebhookEvent) => {
   switch (event.name) {
@@ -161,56 +184,72 @@ export class LabelingCoordinator extends Context.Service<
               .findVersion(policy.publishedVersionId)
               .pipe(Effect.map((version) => ({ policy, version }))),
       ).pipe(Effect.map((entries) => entries.filter((entry) => entry !== null)))
-      const boundPolicyIds = new Set(ruleRows.map((rule) => rule.policyId))
-      const directlyTriggered = active.flatMap(({ policy, version }) =>
-        version._tag === "Some" &&
-        boundPolicyIds.has(policy.id) &&
-        triggerMatches(version.value.triggerManifest, trigger)
-          ? [{ policy, version: version.value }]
-          : [],
+      const activeByPolicyId = new Map(
+        active.flatMap(({ policy, version }) =>
+          version._tag === "Some"
+            ? [[policy.id, { policy, version: version.value }]]
+            : [],
+        ),
       )
+      const runtimeRules: Array<RuntimeRule> = []
+      for (const rule of ruleRows) {
+        if (rule._tag === "PolicyLabelingRule") {
+          const resolved = activeByPolicyId.get(rule.policyId)
+          if (resolved !== undefined)
+            runtimeRules.push({
+              _tag: "Policy",
+              rule,
+              version: resolved.version,
+            })
+        } else if (rule.gatePolicyId === null)
+          runtimeRules.push({ _tag: "Ai", rule, gate: null })
+        else {
+          const gate = activeByPolicyId.get(rule.gatePolicyId)
+          if (gate !== undefined) runtimeRules.push({ _tag: "Ai", rule, gate })
+        }
+      }
+      const triggers = (runtime: RuntimeRule): ReadonlyArray<string> =>
+        runtime._tag === "Policy"
+          ? runtime.version.triggerManifest
+          : [
+              ...triggersForPullRequestFacts(runtime.rule.evidence),
+              ...(runtime.gate?.version.triggerManifest ?? []),
+            ]
       const directlyTriggeredIds = new Set(
-        directlyTriggered.map(({ policy }) => policy.id),
+        runtimeRules
+          .filter((runtime) => triggerMatches(triggers(runtime), trigger))
+          .map(({ rule }) => rule.id),
       )
       const triggeredConflictGroups = new Set(
-        ruleRows.flatMap((rule) =>
-          directlyTriggeredIds.has(rule.policyId) && rule.conflictGroup !== null
+        runtimeRules.flatMap(({ rule }) =>
+          directlyTriggeredIds.has(rule.id) && rule.conflictGroup !== null
             ? [rule.conflictGroup]
             : [],
         ),
       )
-      const expandedPolicyIds = new Set([
+      const expandedRuleIds = new Set([
         ...directlyTriggeredIds,
-        ...ruleRows.flatMap((rule) =>
+        ...runtimeRules.flatMap(({ rule }) =>
           rule.conflictGroup !== null &&
           triggeredConflictGroups.has(rule.conflictGroup)
-            ? [rule.policyId]
+            ? [rule.id]
             : [],
         ),
       ])
-      const triggered = active.flatMap(({ policy, version }) =>
-        version._tag === "Some" && expandedPolicyIds.has(policy.id)
-          ? [{ policy, version: version.value }]
-          : [],
+      const relevant = runtimeRules.filter(({ rule }) =>
+        expandedRuleIds.has(rule.id),
       )
-      if (triggered.length > 20)
+      if (relevant.length > 20)
         return yield* new LabelingCoordinatorLimitExceeded({
           repository: repository.slug,
           limit: 20,
         })
-      if (
-        triggered.filter(({ version }) =>
-          version.registryManifest.includes("ai:boolean-policy-v1"),
-        ).length > 4
-      )
+      if (relevant.filter((runtime) => runtime._tag === "Ai").length > 4)
         return yield* new LabelingCoordinatorLimitExceeded({
           repository: repository.slug,
           limit: 4,
         })
-      const triggeredIds = new Set(triggered.map(({ policy }) => policy.id))
-      const relevantRules = ruleRows.filter((rule) =>
-        triggeredIds.has(rule.policyId),
-      )
+      const relevantRules = relevant.map(({ rule }) => rule)
       if (relevantRules.length === 0) return
       const currentLabels = yield* pullRequests.getLabels({
         deliveryId: event.id,
@@ -222,7 +261,14 @@ export class LabelingCoordinator extends Context.Service<
         headSha: summary.head.sha,
       })
       const requiredFacts = new Set(
-        triggered.flatMap(({ version }) => version.registryManifest),
+        relevant.flatMap((runtime) =>
+          runtime._tag === "Policy"
+            ? runtime.version.registryManifest
+            : [
+                ...runtime.rule.evidence,
+                ...(runtime.gate?.version.registryManifest ?? []),
+              ],
+        ),
       )
       const policyFacts = yield* facts.load(
         repository,
@@ -231,18 +277,46 @@ export class LabelingCoordinator extends Context.Service<
         currentLabels,
       )
       const decisions = new Map<string, Program.PolicyEvaluationResult>()
-      const failures = new Map<
-        string,
-        import("@slopcop/labeling/PolicyEngine").PolicyOperationalError
-      >()
-      for (const { policy, version } of triggered) {
-        const evaluated = yield* evaluatePolicyProgram({
-          program: version.program,
-          repositoryId: repository.id,
-          facts: policyFacts,
-          ai,
-          resolver,
-        }).pipe(
+      const failures = new Map<string, { readonly message: string }>()
+      const gateDecisions = new Map<string, Program.PolicyEvaluationResult>()
+      for (const runtime of relevant) {
+        const evaluation: Effect.Effect<
+          Program.PolicyEvaluationResult,
+          | import("@slopcop/labeling/PolicyEngine").PolicyOperationalError
+          | PolicyAiError
+          | PolicyAiUnavailableError
+        > =
+          runtime._tag === "Policy"
+            ? evaluatePolicyProgram({
+                program: runtime.version.program,
+                repositoryId: repository.id,
+                facts: policyFacts,
+                resolver,
+              })
+            : Effect.gen(function* () {
+                if (runtime.gate !== null) {
+                  const gate = yield* evaluatePolicyProgram({
+                    program: runtime.gate.version.program,
+                    repositoryId: repository.id,
+                    facts: policyFacts,
+                    resolver,
+                  })
+                  gateDecisions.set(runtime.rule.id, gate)
+                  if (gate.outcome !== "Match")
+                    return {
+                      outcome: "Abstain",
+                      confidence: gate.confidence,
+                      rationale: `AI gate ${gate.outcome === "NoMatch" ? "did not match" : "abstained"}.`,
+                      trace: [],
+                    } satisfies Program.PolicyEvaluationResult
+                }
+                return yield* evaluateAiLabelingRule({
+                  rule: runtime.rule,
+                  facts: policyFacts,
+                  ai,
+                })
+              })
+        const evaluated = yield* evaluation.pipe(
           Effect.match({
             onFailure: (error) => ({ _tag: "Failure" as const, error }),
             onSuccess: (decision) => ({
@@ -252,8 +326,8 @@ export class LabelingCoordinator extends Context.Service<
           }),
         )
         if (evaluated._tag === "Success")
-          decisions.set(policy.id, evaluated.decision)
-        else failures.set(policy.id, evaluated.error)
+          decisions.set(runtime.rule.id, evaluated.decision)
+        else failures.set(runtime.rule.id, evaluated.error)
       }
       const actions = planLabelActions(relevantRules, decisions, currentLabels)
       const currentRevision = yield* repositories.getRulesRevision(
@@ -282,32 +356,103 @@ export class LabelingCoordinator extends Context.Service<
       const deliveryId = yield* decodeDeliveryId(event.id)
       const recordedEvaluations = new Map<string, Evaluation.PolicyEvaluation>()
       yield* Effect.forEach(
-        triggered,
-        ({ policy, version }) =>
+        relevant,
+        (runtime) =>
           Effect.gen(function* () {
-            const decision = decisions.get(policy.id)
-            const failure = failures.get(policy.id)
+            const decision = decisions.get(runtime.rule.id)
+            const failure = failures.get(runtime.rule.id)
             if (decision === undefined && failure === undefined) return
-            const recorded = yield* evaluations.recordEvaluation(
-              Evaluation.PolicyEvaluation.insert.make({
-                deliveryId,
-                repositoryId: repository.id,
-                policyId: policy.id,
-                policyVersionId: version.id,
-                target: policy.target,
-                subjectNumber: summary.number,
-                headSha: summary.head.sha,
-                automationRevision: ruleSnapshot.revision,
-                outcome: decision?.outcome ?? "Error",
-                confidence: decision?.confidence ?? 0,
-                rationale:
-                  decision?.rationale ??
-                  failure?.message ??
-                  "Policy evaluation failed.",
-                trace: decision?.trace ?? [],
-              }),
-            )
-            recordedEvaluations.set(policy.id, recorded)
+            const outcome: typeof Program.PolicyEvaluationOutcome.Type =
+              decision?.outcome ?? "Error"
+            const shared = {
+              deliveryId,
+              repositoryId: repository.id,
+              ruleId: runtime.rule.id,
+              ruleVersion: runtime.rule.version,
+              target: "pull_request" as const,
+              subjectNumber: summary.number,
+              headSha: summary.head.sha,
+              automationRevision: ruleSnapshot.revision,
+              outcome,
+              confidence: decision?.confidence ?? 0,
+              rationale:
+                decision?.rationale ??
+                failure?.message ??
+                "Rule evaluation failed.",
+            }
+            const persistedTrace: Parameters<
+              typeof Evaluation.PolicyRuleEvaluation.insert.make
+            >[0]["trace"] = (decision?.trace ?? []).map((entry) => ({
+              location: {
+                root: entry.location.root,
+                path: entry.location.path.map((segment) => ({ ...segment })),
+              },
+              outcome: entry.outcome,
+              rationale: entry.rationale,
+            }))
+            const gateDecision = gateDecisions.get(runtime.rule.id)
+            const persistedGateTrace: Parameters<
+              typeof Evaluation.AiRuleEvaluation.insert.make
+            >[0]["gateTrace"] =
+              gateDecision === undefined
+                ? null
+                : gateDecision.trace.map((entry) => ({
+                    location: {
+                      root: entry.location.root,
+                      path: entry.location.path.map((segment) => ({
+                        ...segment,
+                      })),
+                    },
+                    outcome: entry.outcome,
+                    rationale: entry.rationale,
+                  }))
+            let input: typeof Evaluation.PolicyEvaluation.insert.Type
+            if (runtime._tag === "Policy") {
+              const policyInput: Parameters<
+                typeof Evaluation.PolicyRuleEvaluation.insert.make
+              >[0] = {
+                _tag: "PolicyRuleEvaluation",
+                deliveryId: shared.deliveryId,
+                repositoryId: shared.repositoryId,
+                ruleId: shared.ruleId,
+                ruleVersion: shared.ruleVersion,
+                target: shared.target,
+                subjectNumber: shared.subjectNumber,
+                headSha: shared.headSha,
+                automationRevision: shared.automationRevision,
+                outcome: shared.outcome,
+                confidence: shared.confidence,
+                rationale: shared.rationale,
+                policyId: runtime.rule.policyId,
+                policyVersionId: runtime.version.id,
+                trace: persistedTrace,
+              }
+              input = Evaluation.PolicyRuleEvaluation.insert.make(policyInput)
+            } else {
+              const aiInput: Parameters<
+                typeof Evaluation.AiRuleEvaluation.insert.make
+              >[0] = {
+                _tag: "AiRuleEvaluation",
+                deliveryId: shared.deliveryId,
+                repositoryId: shared.repositoryId,
+                ruleId: shared.ruleId,
+                ruleVersion: shared.ruleVersion,
+                target: shared.target,
+                subjectNumber: shared.subjectNumber,
+                headSha: shared.headSha,
+                automationRevision: shared.automationRevision,
+                outcome: shared.outcome,
+                confidence: shared.confidence,
+                rationale: shared.rationale,
+                evaluator: runtime.rule.evaluator,
+                gatePolicyId: runtime.rule.gatePolicyId,
+                gatePolicyVersionId: runtime.gate?.version.id ?? null,
+                gateTrace: persistedGateTrace,
+              }
+              input = Evaluation.AiRuleEvaluation.insert.make(aiInput)
+            }
+            const recorded = yield* evaluations.recordEvaluation(input)
+            recordedEvaluations.set(runtime.rule.id, recorded)
           }),
         { discard: true },
       )
@@ -319,12 +464,8 @@ export class LabelingCoordinator extends Context.Service<
         actions,
         (action) =>
           Effect.gen(function* () {
-            const rule = relevantRules.find(
-              (candidate) => candidate.id === action.ruleId,
-            )
-            if (rule === undefined) return
-            const recorded = recordedEvaluations.get(rule.policyId)
-            if (recorded === undefined || !decisions.has(rule.policyId)) return
+            const recorded = recordedEvaluations.get(action.ruleId)
+            if (recorded === undefined || !decisions.has(action.ruleId)) return
             const execution = yield* evaluations.recordAction(
               Evaluation.PolicyActionExecution.insert.make({
                 evaluationId: recorded.id,

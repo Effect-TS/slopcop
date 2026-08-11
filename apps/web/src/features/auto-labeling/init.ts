@@ -12,7 +12,6 @@ import {
 } from "./model"
 
 export const init = (): Model => ({
-  tab: "Policies",
   repository: RepositoryState.cases.NoRepository.make({}),
   repositoryRequest: null,
   refreshError: null,

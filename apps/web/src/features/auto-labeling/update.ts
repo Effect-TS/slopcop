@@ -150,6 +150,10 @@ const updatePolicyCodeEditor = (
     return model
   const [sourceEditor] = PolicyCodeEditor.update(editor.sourceEditor, message)
   const dirty = editor.dirty || message._tag === "EditedSource"
+  const validation =
+    message._tag === "EditedSource"
+      ? ValidationState.cases.ValidationIdle.make({})
+      : model.validation
   if (editor._tag === "PolicyEditorConflict")
     return evo(model, {
       policyEditor: () =>
@@ -158,7 +162,7 @@ const updatePolicyCodeEditor = (
           sourceEditor,
           dirty,
         }),
-      validation: () => ValidationState.cases.ValidationIdle.make({}),
+      validation: () => validation,
     })
   return evo(model, {
     policyEditor: () =>
@@ -168,7 +172,7 @@ const updatePolicyCodeEditor = (
         identity: editor.identity,
         dirty,
       }),
-    validation: () => ValidationState.cases.ValidationIdle.make({}),
+    validation: () => validation,
   })
 }
 const updateRuleDraft = (
@@ -385,15 +389,6 @@ const conditionValid = (condition: DraftCondition): boolean => {
       )
     case "CollectionPredicate":
       return itemValid(condition.item, condition.fact, 1)
-    case "AiPrompt":
-      return (
-        condition.prompt.trim().length > 0 &&
-        condition.prompt.length <= 4_000 &&
-        condition.evidence.length > 0 &&
-        condition.evidence.length <= 8 &&
-        condition.minimumConfidence >= 0 &&
-        condition.minimumConfidence <= 1
-      )
     case "PolicyReference":
       return condition.policyVersionId.length > 0
   }
@@ -526,8 +521,6 @@ export const update = (model: Model, message: Message): UpdateReturn => {
         [],
       ]
     }
-    case "SelectedTab":
-      return [evo(model, { tab: () => message.tab }), []]
     case "IgnoredInput":
       return [model, []]
 
@@ -927,46 +920,6 @@ export const update = (model: Model, message: Message): UpdateReturn => {
         ),
         [],
       ]
-    case "UpdatedAiPrompt":
-      return [
-        updatePolicyDraft(model, (draft) =>
-          mapProgramConditions(draft, message.clientId, (condition) =>
-            condition._tag === "AiPrompt"
-              ? { ...condition, prompt: message.prompt }
-              : condition,
-          ),
-        ),
-        [],
-      ]
-    case "ToggledAiEvidence":
-      return [
-        updatePolicyDraft(model, (draft) =>
-          mapProgramConditions(draft, message.clientId, (condition) => {
-            if (condition._tag !== "AiPrompt") return condition
-            const selected = condition.evidence.includes(message.fact)
-            const evidence = selected
-              ? condition.evidence.filter((fact) => fact !== message.fact)
-              : condition.evidence.length >= 8
-                ? condition.evidence
-                : [...condition.evidence, message.fact]
-            return evidence.length === 0
-              ? condition
-              : { ...condition, evidence }
-          }),
-        ),
-        [],
-      ]
-    case "UpdatedAiConfidence":
-      return [
-        updatePolicyDraft(model, (draft) =>
-          mapProgramConditions(draft, message.clientId, (condition) =>
-            condition._tag === "AiPrompt"
-              ? { ...condition, minimumConfidence: message.minimumConfidence }
-              : condition,
-          ),
-        ),
-        [],
-      ]
     case "UpdatedPolicyReference":
       return [
         updatePolicyDraft(model, (draft) =>
@@ -1202,19 +1155,34 @@ export const update = (model: Model, message: Message): UpdateReturn => {
     case "OpenedNewRule": {
       const loaded = data(model)
       const first = publishedPolicies(model)[0]
-      if (loaded === null || first === undefined) return [model, []]
+      if (loaded === null) return [model, []]
+      const shared = {
+        label: loaded.labels[0]?.name ?? "",
+        onNoMatch: "preserve" as const,
+        conflictGroup: "",
+        priority: 0,
+        enabled: true,
+      }
       return openDialog(
         evo(model, {
           ruleEditor: () =>
             RuleEditorState.cases.RuleEditorEditing.make({
-              draft: {
-                policyId: first.id,
-                label: loaded.labels[0]?.name ?? "",
-                onNoMatch: "preserve",
-                conflictGroup: "",
-                priority: 0,
-                enabled: true,
-              },
+              draft:
+                first === undefined
+                  ? {
+                      _tag: "AiLabelingRule",
+                      ...shared,
+                      prompt: "",
+                      evidence: ["pull_request.title"],
+                      minimumConfidence: 0.8,
+                      evaluator: "boolean-policy-v1",
+                      gatePolicyId: null,
+                    }
+                  : {
+                      _tag: "PolicyLabelingRule",
+                      ...shared,
+                      policyId: first.id,
+                    },
               identity: { _tag: "NewRule" },
             }),
         }),
@@ -1249,12 +1217,94 @@ export const update = (model: Model, message: Message): UpdateReturn => {
             }),
             "ruleEditorDialog",
           )
+    case "ChangedRuleType": {
+      const editor = model.ruleEditor
+      if (
+        editor._tag === "RuleEditorClosed" ||
+        editor._tag === "RuleEditorSaving" ||
+        editor.identity._tag !== "NewRule" ||
+        editor.draft._tag === message.ruleType
+      )
+        return [model, []]
+      const shared = {
+        label: editor.draft.label,
+        onNoMatch: editor.draft.onNoMatch,
+        conflictGroup: editor.draft.conflictGroup,
+        priority: editor.draft.priority,
+        enabled: editor.draft.enabled,
+      }
+      const first = publishedPolicies(model)[0]
+      if (message.ruleType === "AiLabelingRule")
+        return [
+          updateRuleDraft(model, () => ({
+            _tag: "AiLabelingRule",
+            ...shared,
+            prompt: "",
+            evidence: ["pull_request.title"],
+            minimumConfidence: 0.8,
+            evaluator: "boolean-policy-v1",
+            gatePolicyId: null,
+          })),
+          [],
+        ]
+      return first === undefined
+        ? [model, []]
+        : [
+            updateRuleDraft(model, () => ({
+              _tag: "PolicyLabelingRule",
+              ...shared,
+              policyId: first.id,
+            })),
+            [],
+          ]
+    }
     case "UpdatedRulePolicy":
       return [
-        updateRuleDraft(model, (draft) => ({
-          ...draft,
-          policyId: message.policyId,
-        })),
+        updateRuleDraft(model, (draft) =>
+          draft._tag === "PolicyLabelingRule"
+            ? { ...draft, policyId: message.policyId }
+            : draft,
+        ),
+        [],
+      ]
+    case "UpdatedRulePrompt":
+      return [
+        updateRuleDraft(model, (draft) =>
+          draft._tag === "AiLabelingRule"
+            ? { ...draft, prompt: message.prompt }
+            : draft,
+        ),
+        [],
+      ]
+    case "ToggledRuleEvidence":
+      return [
+        updateRuleDraft(model, (draft) => {
+          if (draft._tag !== "AiLabelingRule") return draft
+          const evidence = draft.evidence.includes(message.fact)
+            ? draft.evidence.filter((fact) => fact !== message.fact)
+            : draft.evidence.length >= 8
+              ? draft.evidence
+              : [...draft.evidence, message.fact]
+          return { ...draft, evidence }
+        }),
+        [],
+      ]
+    case "UpdatedRuleMinimumConfidence":
+      return [
+        updateRuleDraft(model, (draft) =>
+          draft._tag === "AiLabelingRule"
+            ? { ...draft, minimumConfidence: message.minimumConfidence }
+            : draft,
+        ),
+        [],
+      ]
+    case "UpdatedRuleGatePolicy":
+      return [
+        updateRuleDraft(model, (draft) =>
+          draft._tag === "AiLabelingRule"
+            ? { ...draft, gatePolicyId: message.gatePolicyId }
+            : draft,
+        ),
         [],
       ]
     case "UpdatedRuleLabel":
@@ -1361,12 +1411,12 @@ export const update = (model: Model, message: Message): UpdateReturn => {
         repository === null ||
         item === null ||
         model.rowMutation._tag !== "RowMutationIdle" ||
-        (!item.policy.published && !item.enabled)
+        (!ruleCanEnable(item) && !item.enabled)
       )
         return [model, []]
       const requestId = model.nextRequestId
       const enabled = !item.enabled
-      if (enabled && !item.policy.published) return [model, []]
+      if (enabled && !ruleCanEnable(item)) return [model, []]
       return [
         evo(model, {
           rowMutation: () =>
@@ -1384,6 +1434,7 @@ export const update = (model: Model, message: Message): UpdateReturn => {
             ruleId: item.id,
             version: item.version,
             enabled,
+            ruleType: item._tag,
           }),
         ],
       ]
@@ -1428,7 +1479,7 @@ export const update = (model: Model, message: Message): UpdateReturn => {
         repository === null ||
         mutation._tag !== "RowMutationFailed" ||
         mutation.currentRule === null ||
-        (mutation.enabled && !mutation.currentRule.policy.published)
+        (mutation.enabled && !ruleCanEnable(mutation.currentRule))
       )
         return [model, []]
       const requestId = model.nextRequestId
@@ -1449,6 +1500,7 @@ export const update = (model: Model, message: Message): UpdateReturn => {
             ruleId: mutation.ruleId,
             version: mutation.currentRule.version,
             enabled: mutation.enabled,
+            ruleType: mutation.currentRule._tag,
           }),
         ],
       ]
@@ -1802,13 +1854,38 @@ const saveRule = (model: Model, retry: boolean): UpdateReturn => {
   }
   if (editor._tag !== "RuleEditorEditing" && editor._tag !== "RuleEditorFailed")
     return [model, []]
-  const selectedPolicy = policy(model, editor.draft.policyId)
-  return selectedPolicy === null ||
-    selectedPolicy.publishedVersionId === null ||
-    editor.draft.label.length === 0
+  return !validRuleDraft(model, editor.draft)
     ? [model, []]
     : performRuleSave(model, repository, editor.draft, editor.identity)
 }
+
+export const validRuleDraft = (model: Model, draft: RuleDraft): boolean => {
+  if (draft.label.length === 0 || !Number.isInteger(draft.priority))
+    return false
+  if (draft._tag === "PolicyLabelingRule") {
+    const selected = policy(model, draft.policyId)
+    return selected !== null && selected.publishedVersionId !== null
+  }
+  const gate =
+    draft.gatePolicyId === null ? null : policy(model, draft.gatePolicyId)
+  return (
+    draft.prompt.trim().length > 0 &&
+    draft.prompt.length <= 4_000 &&
+    draft.evidence.length > 0 &&
+    draft.evidence.length <= 8 &&
+    draft.minimumConfidence >= 0 &&
+    draft.minimumConfidence <= 1 &&
+    (draft.gatePolicyId === null ||
+      (gate !== null && gate.publishedVersionId !== null))
+  )
+}
+
+const ruleCanEnable = (
+  rule: typeof import("@slopcop/domain/Labeling/LabelingRuleManagement").PublicLabelingRule.Type,
+): boolean =>
+  rule._tag === "PolicyLabelingRule"
+    ? rule.policy.published
+    : rule.gatePolicy === null || rule.gatePolicy.published
 const performRuleSave = (
   model: Model,
   repository: Repository,

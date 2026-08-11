@@ -3,8 +3,7 @@ import type * as Management from "@slopcop/domain/Labeling/LabelingPolicyManagem
 import type * as Program from "@slopcop/domain/Policy/PolicyProgram"
 import { GitHubClient } from "@slopcop/github/GitHubClient"
 import { GitHubRepositoriesRepo } from "@slopcop/github/repositories/GitHubRepositoriesRepo"
-import { Policies } from "@slopcop/labeling/Policies"
-import { PolicyAi } from "@slopcop/labeling/PolicyAi"
+import { Policies, type PoliciesError } from "@slopcop/labeling/Policies"
 import { evaluatePolicyProgram } from "@slopcop/labeling/PolicyEngine"
 import { PolicyFacts } from "@slopcop/labeling/PolicyFacts"
 import { PoliciesRepo } from "@slopcop/labeling/repositories/PoliciesRepo"
@@ -34,7 +33,7 @@ export class LabelingPolicyTester extends Context.Service<
       pullRequestNumber: number,
     ) => Effect.Effect<
       typeof Management.TestPolicyResponse.Type,
-      LabelingPolicyTestError
+      LabelingPolicyTestError | PoliciesError
     >
   }
 >()("@slopcop/api/Labeling/LabelingPolicyTester", {
@@ -43,7 +42,6 @@ export class LabelingPolicyTester extends Context.Service<
     const repositories = yield* GitHubRepositoriesRepo
     const policies = yield* Policies
     const rows = yield* PoliciesRepo
-    const ai = yield* PolicyAi
     const facts = yield* PolicyFacts
     const resolver = {
       resolve: (id: Program.PolicyVersionId) =>
@@ -103,7 +101,6 @@ export class LabelingPolicyTester extends Context.Service<
         program: draft.program,
         repositoryId: repository.value.id,
         facts: snapshot,
-        ai,
         resolver,
       })
       return {
@@ -117,7 +114,16 @@ export class LabelingPolicyTester extends Context.Service<
       test: (slug, policyId, pullRequestNumber) =>
         test(slug, policyId, pullRequestNumber).pipe(
           Effect.mapError((cause) => {
-            if (cause._tag === "LabelingPolicyTestError") return cause
+            switch (cause._tag) {
+              case "LabelingPolicyTestError":
+              case "RepositoryNotConfigured":
+              case "PolicyNotFound":
+              case "PolicyConflict":
+              case "PolicyCompileError":
+              case "PoliciesRepoError":
+              case "GitHubRepositoriesRepoError":
+                return cause
+            }
             const notFound =
               cause._tag === "GitHubClientError" &&
               cause.operation === "GitHubClient.getPullRequest" &&

@@ -9,28 +9,18 @@ import {
   PolicyVersionId,
 } from "../Policy/PolicyProgram.ts"
 import { LabelingPolicyId } from "./LabelingPolicy.ts"
-import { LabelingRuleId } from "./LabelingRule.ts"
+import { AiEvaluator, LabelingRuleId } from "./LabelingRule.ts"
 
 export const PolicyEvaluationId = Schema.String.pipe(
   Schema.brand("PolicyEvaluationId"),
 )
-const LegacyPolicyNodeTrace = Schema.Struct({
-  id: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
-  outcome: Schema.Literals(["Match", "NoMatch", "Abstain"]),
-  rationale: Schema.String,
-})
-const PersistedPolicyNodeTrace = Schema.Union([
-  PolicyNodeTrace,
-  LegacyPolicyNodeTrace,
-])
-export class PolicyEvaluation extends Model.Class<PolicyEvaluation>(
-  "PolicyEvaluation",
-)({
+export const PolicyEvaluationTrace = Schema.Array(PolicyNodeTrace)
+const sharedEvaluationFields = {
   id: Model.UuidV7Insert(PolicyEvaluationId),
   deliveryId: GitHubEventId,
   repositoryId: GitHubRepositoryId,
-  policyId: LabelingPolicyId,
-  policyVersionId: PolicyVersionId,
+  ruleId: LabelingRuleId,
+  ruleVersion: Schema.Int,
   target: PolicyTarget,
   subjectNumber: Schema.Int,
   headSha: Schema.NullOr(Schema.String),
@@ -38,9 +28,35 @@ export class PolicyEvaluation extends Model.Class<PolicyEvaluation>(
   outcome: PolicyEvaluationOutcome,
   confidence: Schema.Number,
   rationale: Schema.String,
-  trace: Model.JsonFromString(Schema.Array(PersistedPolicyNodeTrace)),
   createdAt: Model.DateTimeInsertFromNumber,
+} as const
+
+export class PolicyRuleEvaluation extends Model.Class<PolicyRuleEvaluation>(
+  "PolicyRuleEvaluation",
+)({
+  _tag: Schema.Literal("PolicyRuleEvaluation"),
+  ...sharedEvaluationFields,
+  policyId: LabelingPolicyId,
+  policyVersionId: PolicyVersionId,
+  trace: Model.JsonFromString(PolicyEvaluationTrace),
 }) {}
+
+export class AiRuleEvaluation extends Model.Class<AiRuleEvaluation>(
+  "AiRuleEvaluation",
+)({
+  _tag: Schema.Literal("AiRuleEvaluation"),
+  ...sharedEvaluationFields,
+  evaluator: AiEvaluator,
+  gatePolicyId: Schema.NullOr(LabelingPolicyId),
+  gatePolicyVersionId: Schema.NullOr(PolicyVersionId),
+  gateTrace: Model.JsonFromString(Schema.NullOr(PolicyEvaluationTrace)),
+}) {}
+
+export const PolicyEvaluation = Model.Union([
+  PolicyRuleEvaluation,
+  AiRuleEvaluation,
+])
+export type PolicyEvaluation = typeof PolicyEvaluation.Type
 
 export const PolicyActionExecutionId = Schema.String.pipe(
   Schema.brand("PolicyActionExecutionId"),

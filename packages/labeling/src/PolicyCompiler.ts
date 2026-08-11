@@ -7,8 +7,6 @@ export const MAX_LOCAL_NODES = 64
 export const MAX_EXPANDED_NODES = 256
 export const MAX_REFERENCES = 8
 export const MAX_REFERENCE_DEPTH = 4
-export const MAX_AI_NODES = 1
-
 const RECONCILIATION_TRIGGERS = [
   "pull_request:opened",
   "pull_request:reopened",
@@ -19,7 +17,7 @@ const RECONCILIATION_TRIGGERS = [
   "pull_request:labeled",
   "pull_request:unlabeled",
 ] as const
-const FACT_TRIGGERS: Readonly<
+export const FACT_TRIGGERS: Readonly<
   Record<Program.PullRequestFact, ReadonlyArray<string>>
 > = {
   "pull_request.draft": RECONCILIATION_TRIGGERS,
@@ -45,6 +43,12 @@ const FACT_TRIGGERS: Readonly<
     "pull_request_review:dismissed",
   ],
 }
+
+export const triggersForPullRequestFacts = (
+  facts: ReadonlyArray<Program.PullRequestFact>,
+): ReadonlyArray<string> => [
+  ...new Set(facts.flatMap((fact) => FACT_TRIGGERS[fact])),
+]
 
 export class PolicyCompileError extends Data.TaggedError("PolicyCompileError")<{
   readonly reason:
@@ -84,7 +88,6 @@ export interface CompiledPolicyProgram {
   readonly nodeCount: number
   readonly expandedNodeCount: number
   readonly requiresChangedFileContent: boolean
-  readonly aiNodeCount: number
 }
 
 type ItemPredicate =
@@ -109,7 +112,6 @@ export const compilePolicyProgram = Effect.fn("PolicyCompiler.compile")(
     const references = new Set<Program.PolicyVersionId>()
     let localNodes = 0
     let expandedNodes = 0
-    let aiNodes = 0
     let requiresChangedFileContent = false
 
     const count = (
@@ -228,17 +230,6 @@ export const compilePolicyProgram = Effect.fn("PolicyCompiler.compile")(
                   local,
                   location,
                 )
-              case "AiPrompt":
-                aiNodes++
-                if (aiNodes > MAX_AI_NODES)
-                  return yield* new PolicyCompileError({
-                    reason: "LimitExceeded",
-                    message:
-                      "A policy reference closure may contain at most one AI node.",
-                    location,
-                  })
-                condition.evidence.forEach((fact) => facts.add(fact))
-                return
               case "PolicyReference": {
                 if (stack.has(condition.policyVersionId))
                   return yield* new PolicyCompileError({
@@ -345,7 +336,6 @@ export const compilePolicyProgram = Effect.fn("PolicyCompiler.compile")(
       nodeCount: localNodes,
       expandedNodeCount: expandedNodes,
       requiresChangedFileContent,
-      aiNodeCount: aiNodes,
     } satisfies CompiledPolicyProgram
   },
 )

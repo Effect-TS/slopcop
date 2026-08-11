@@ -10,7 +10,7 @@ import { GitHubClient } from "@slopcop/github/GitHubClient"
 import { GitHubRepositoriesRepo } from "@slopcop/github/repositories/GitHubRepositoriesRepo"
 import { LabelingRules } from "@slopcop/labeling/LabelingRules"
 import { OptionalPolicyAiLayer } from "@slopcop/labeling/Ai"
-import { PolicyAi } from "@slopcop/labeling/PolicyAi"
+import { PolicyAi, PolicyAiError } from "@slopcop/labeling/PolicyAi"
 import { evaluatePolicyProgram } from "@slopcop/labeling/PolicyEngine"
 import { PolicyFacts } from "@slopcop/labeling/PolicyFacts"
 import { PoliciesRepo } from "@slopcop/labeling/repositories/PoliciesRepo"
@@ -63,17 +63,6 @@ const deterministicProgram: Program.PolicyProgram = {
     value: false,
   },
 }
-const aiProgram: Program.PolicyProgram = {
-  target: "pull_request",
-  appliesWhen: null,
-  matchesWhen: {
-    _tag: "AiPrompt",
-    prompt: "Classify",
-    evidence: ["pull_request.title"],
-    minimumConfidence: 0.8,
-    evaluator: "boolean-policy-v1",
-  },
-}
 const policy = new Policy.LabelingPolicy({
   id: policyId,
   repositoryId: repository.id,
@@ -98,7 +87,8 @@ const version = (program: Program.PolicyProgram) =>
     publicationStatus: "published",
     createdAt: now,
   })
-const rule = new Rule.LabelingRule({
+const rule = new Rule.PolicyLabelingRule({
+  _tag: "PolicyLabelingRule",
   id: ruleId,
   repositoryId: repository.id,
   policyId,
@@ -115,6 +105,29 @@ const rule = new Rule.LabelingRule({
   updatedAt: now,
   deletedAt: Option.none(),
 })
+const aiRule = (gatePolicyId: Policy.LabelingPolicy["id"] | null = null) =>
+  new Rule.AiLabelingRule({
+    _tag: "AiLabelingRule",
+    id: ruleId,
+    repositoryId: repository.id,
+    label: "managed",
+    onMatch: "ensure-present",
+    onNoMatch: "ensure-absent",
+    conflictGroup: null,
+    priority: 0,
+    enabled: true,
+    validationStatus: "valid",
+    validatedAt: now,
+    version: 1,
+    prompt: "Classify",
+    evidence: ["pull_request.title"],
+    minimumConfidence: 0.8,
+    evaluator: "boolean-policy-v1",
+    gatePolicyId,
+    createdAt: now,
+    updatedAt: now,
+    deletedAt: Option.none(),
+  })
 const event = Schema.decodeUnknownSync(Webhook.GitHubWebhookEvent)({
   id: "delivery",
   name: "pull_request",
@@ -150,6 +163,7 @@ interface State {
   revision: number
   currentTitle: string
   aiFails: boolean
+  aiCalls: number
   labels: Set<string>
   applies: number
   markedMissing: number
@@ -164,6 +178,7 @@ const state = (): State => ({
   revision: 7,
   currentTitle: "Fix",
   aiFails: false,
+  aiCalls: 0,
   labels: new Set(["unmanaged"]),
   applies: 0,
   markedMissing: 0,
@@ -320,25 +335,40 @@ const layer = (
         }),
         Layer.succeed(PolicyAi, {
           evaluate: () =>
-            value.aiFails
-              ? Effect.fail("AI unavailable")
-              : Effect.succeed({
-                  matches: true,
-                  confidence: 1,
-                  rationale: "match",
-                }),
+            Effect.suspend(() => {
+              value.aiCalls++
+              return value.aiFails
+                ? Effect.fail(
+                    new PolicyAiError({
+                      message: "AI unavailable",
+                      cause: null,
+                    }),
+                  )
+                : Effect.succeed({
+                    matches: true,
+                    confidence: 1,
+                    rationale: "match",
+                  })
+            }),
         }),
         Layer.succeed(PolicyEvaluationsRepo, {
           recordEvaluation: (input) =>
             Effect.sync(() => {
               value.evaluations.push(input)
-              return new Evaluation.PolicyEvaluation({
-                ...input,
-                id: Schema.decodeUnknownSync(Evaluation.PolicyEvaluationId)(
-                  `evaluation-${value.evaluations.length}`,
-                ),
-                createdAt: now,
-              })
+              const id = Schema.decodeUnknownSync(
+                Evaluation.PolicyEvaluationId,
+              )(`evaluation-${value.evaluations.length}`)
+              return input._tag === "PolicyRuleEvaluation"
+                ? new Evaluation.PolicyRuleEvaluation({
+                    ...input,
+                    id,
+                    createdAt: now,
+                  })
+                : new Evaluation.AiRuleEvaluation({
+                    ...input,
+                    id,
+                    createdAt: now,
+                  })
             }),
           recordAction: (input) =>
             Effect.suspend(() => {
@@ -396,7 +426,6 @@ const run = (
 describe("LabelingCoordinator", () => {
   it.effect("runs deterministic evaluation without OPENAI_API_KEY", () =>
     Effect.gen(function* () {
-      const ai = yield* PolicyAi
       const result = yield* evaluatePolicyProgram({
         program: deterministicProgram,
         repositoryId: repository.id,
@@ -412,37 +441,9 @@ describe("LabelingCoordinator", () => {
           requiredChecks: null,
           latestReviews: null,
         },
-        ai,
         resolver: { resolve: () => Effect.succeed(null) },
       })
       expect(result.outcome).toBe("Match")
-      const error = yield* Effect.flip(
-        evaluatePolicyProgram({
-          program: aiProgram,
-          repositoryId: repository.id,
-          facts: {
-            draft: false,
-            title: "Fix",
-            body: null,
-            baseRef: "main",
-            headSha: "sha",
-            currentLabels: [],
-            changedFiles: null,
-            changedFilesComplete: null,
-            requiredChecks: null,
-            latestReviews: null,
-          },
-          ai,
-          resolver: { resolve: () => Effect.succeed(null) },
-        }),
-      )
-      expect(error).toMatchObject({
-        stage: "ai",
-        location: { root: "matchesWhen", path: [] },
-        retryable: false,
-        message:
-          "AI policy evaluation is unavailable because OPENAI_API_KEY is not configured.",
-      })
     }).pipe(
       Effect.provide(OptionalPolicyAiLayer),
       Effect.provideService(
@@ -536,7 +537,8 @@ describe("LabelingCoordinator", () => {
         updatedAt: policy.updatedAt,
         deletedAt: policy.deletedAt,
       })
-      const groupedRule = new Rule.LabelingRule({
+      const groupedRule = new Rule.PolicyLabelingRule({
+        _tag: "PolicyLabelingRule",
         id: rule.id,
         repositoryId: rule.repositoryId,
         policyId: rule.policyId,
@@ -553,7 +555,8 @@ describe("LabelingCoordinator", () => {
         updatedAt: rule.updatedAt,
         deletedAt: rule.deletedAt,
       })
-      const siblingRule = new Rule.LabelingRule({
+      const siblingRule = new Rule.PolicyLabelingRule({
+        _tag: "PolicyLabelingRule",
         id: Schema.decodeUnknownSync(Rule.LabelingRuleId)("sibling-rule"),
         repositoryId: rule.repositoryId,
         policyId: siblingPolicyId,
@@ -635,13 +638,55 @@ describe("LabelingCoordinator", () => {
     const value = state()
     value.aiFails = true
     return Effect.gen(function* () {
-      yield* run(value, aiProgram)
+      yield* run(value, deterministicProgram, {
+        policies: [],
+        versions: [],
+        rules: [aiRule()],
+      })
       expect(value.applies).toBe(0)
       expect(value.evaluations).toMatchObject([
-        { outcome: "Error", confidence: 0, trace: [] },
+        {
+          _tag: "AiRuleEvaluation",
+          ruleId,
+          ruleVersion: 1,
+          outcome: "Error",
+          confidence: 0,
+          gateTrace: null,
+        },
       ])
       expect(value.actions).toEqual([])
       expect([...value.labels]).toEqual(["unmanaged"])
+    })
+  })
+  it.effect("skips AI when its deterministic gate does not match", () => {
+    const value = state()
+    const noMatchProgram: Program.PolicyProgram = {
+      target: "pull_request",
+      appliesWhen: null,
+      matchesWhen: {
+        _tag: "FactPredicate",
+        fact: "pull_request.draft",
+        operator: "Equals",
+        value: true,
+      },
+    }
+    return Effect.gen(function* () {
+      yield* run(value, noMatchProgram, {
+        policies: [policy],
+        versions: [version(noMatchProgram)],
+        rules: [aiRule(policyId)],
+      })
+      expect(value.aiCalls).toBe(0)
+      expect(value.evaluations).toMatchObject([
+        {
+          _tag: "AiRuleEvaluation",
+          outcome: "Abstain",
+          gatePolicyId: policyId,
+          gatePolicyVersionId: versionId,
+          gateTrace: [{ outcome: "NoMatch" }],
+        },
+      ])
+      expect(value.actions).toMatchObject([{ action: "preserve" }])
     })
   })
 })

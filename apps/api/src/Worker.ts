@@ -33,6 +33,8 @@ const PolicyTesterLayer = LabelingPolicyTester.layerNoDeps.pipe(
 )
 const RuleTesterLayer = LabelingRuleTester.layerNoDeps.pipe(
   Layer.provide(PolicyTesterLayer),
+  Layer.provide(PolicyFacts.layer),
+  Layer.provide(OptionalPolicyAiLayer),
   Layer.provide(LabelingRules.layer),
   Layer.provide(GitHubClient.layer),
   Layer.provide(GitHubRepositoriesRepo.layer),

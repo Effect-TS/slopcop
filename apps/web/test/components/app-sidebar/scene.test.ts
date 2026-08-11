@@ -22,13 +22,24 @@ const sceneView = Scene.withViewInputs(AppSidebar.view, {
         {
           value: "AutoLabeling",
           label: "Auto-Labeling",
-          description: "Citation policies",
+          description: "Label rules",
+          icon: ih.span([], ["icon"]),
+        },
+        {
+          value: "Policies",
+          label: "Policies",
+          description: "Policy programs",
           icon: ih.span([], ["icon"]),
         },
       ],
     },
   ],
-  toNavigationHref: (value) => (value === "Root" ? "/" : "/auto-labeling"),
+  toNavigationHref: (value) =>
+    value === "Root"
+      ? "/"
+      : value === "Policies"
+        ? "/policies"
+        : "/auto-labeling",
   isNavigationItemCurrent: (value) => value === "AutoLabeling",
   toView: () => ih.div([], ["Page content"]),
 })
@@ -37,13 +48,16 @@ describe("AppSidebar", () => {
   it("renders configured navigation with current-page semantics", () => {
     const navigation = Scene.selector('nav[aria-label="Patrol"]')
     const autoLabelingLink = Scene.selector('a[href="/auto-labeling"]')
+    const policiesLink = Scene.selector('a[href="/policies"]')
 
     Scene.scene(
       { update: AppSidebar.update, view: sceneView() },
       Scene.given(model),
       Scene.expect(navigation).toContainText("Auto-Labeling"),
+      Scene.expect(navigation).toContainText("Policies"),
       Scene.expect(autoLabelingLink).toHaveAttr("aria-current", "page"),
       Scene.expect(autoLabelingLink).toHaveAttr("data-current"),
+      Scene.expect(policiesLink).not.toHaveAttr("aria-current", "page"),
     )
   })
 

@@ -18,7 +18,7 @@ export const update = (model: Model, message: Message): UpdateReturn => {
         [],
       ]
     case "EditedSource": {
-      const validation = validateSource(message.source)
+      const validation = validateSource(message.source, model.references)
       return validation._tag === "Valid"
         ? [
             evo(model, {

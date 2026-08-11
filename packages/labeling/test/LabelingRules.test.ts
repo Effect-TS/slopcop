@@ -35,7 +35,8 @@ const repository = new GitHubRepository.GitHubRepository({
   deletedAt: Option.none(),
 })
 const policyId = Schema.decodeUnknownSync(Policy.LabelingPolicyId)("policy")
-const current = new Rule.LabelingRule({
+const current = new Rule.PolicyLabelingRule({
+  _tag: "PolicyLabelingRule",
   id: Schema.decodeUnknownSync(Rule.LabelingRuleId)("rule"),
   repositoryId: repository.id,
   policyId,
@@ -75,10 +76,14 @@ describe("LabelingRules validation", () => {
           insert: () => unavailable,
           update: (_id, _version, input) =>
             Effect.succeed(
-              new Rule.LabelingRule({
+              new Rule.PolicyLabelingRule({
+                _tag: "PolicyLabelingRule",
                 id: current.id,
                 repositoryId: current.repositoryId,
-                policyId: input.policyId,
+                policyId:
+                  input._tag === "PolicyLabelingRule"
+                    ? input.policyId
+                    : current.policyId,
                 label: input.label,
                 onMatch: input.onMatch,
                 onNoMatch: input.onNoMatch,

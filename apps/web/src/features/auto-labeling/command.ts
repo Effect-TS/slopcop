@@ -239,8 +239,7 @@ export const SaveRule = FoldkitCommand.define("SaveRule", {
   execute: ({ requestId, repository, identity, draft }) =>
     Effect.gen(function* () {
       const client = yield* ApiClient
-      const payload = {
-        policyId: draft.policyId,
+      const shared = {
         label: draft.label,
         onNoMatch: draft.onNoMatch,
         conflictGroup:
@@ -250,14 +249,52 @@ export const SaveRule = FoldkitCommand.define("SaveRule", {
       }
       const rule =
         identity._tag === "NewRule"
-          ? yield* client.labelingRules.createRule({
-              params: repository,
-              payload: { ...payload, onMatch: "ensure-present" },
-            })
-          : yield* client.labelingRules.patchRule({
-              params: { ...repository, ruleId: identity.id },
-              payload: { ...payload, version: identity.version },
-            })
+          ? draft._tag === "PolicyLabelingRule"
+            ? yield* client.labelingRules.createRule({
+                params: repository,
+                payload: {
+                  _tag: draft._tag,
+                  ...shared,
+                  onMatch: "ensure-present",
+                  policyId: draft.policyId,
+                },
+              })
+            : yield* client.labelingRules.createRule({
+                params: repository,
+                payload: {
+                  _tag: draft._tag,
+                  ...shared,
+                  onMatch: "ensure-present",
+                  prompt: draft.prompt,
+                  evidence: draft.evidence,
+                  minimumConfidence: draft.minimumConfidence,
+                  evaluator: draft.evaluator,
+                  gatePolicyId: draft.gatePolicyId,
+                },
+              })
+          : draft._tag === "PolicyLabelingRule"
+            ? yield* client.labelingRules.patchRule({
+                params: { ...repository, ruleId: identity.id },
+                payload: {
+                  _tag: draft._tag,
+                  ...shared,
+                  policyId: draft.policyId,
+                  version: identity.version,
+                },
+              })
+            : yield* client.labelingRules.patchRule({
+                params: { ...repository, ruleId: identity.id },
+                payload: {
+                  _tag: draft._tag,
+                  ...shared,
+                  prompt: draft.prompt,
+                  evidence: draft.evidence,
+                  minimumConfidence: draft.minimumConfidence,
+                  evaluator: draft.evaluator,
+                  gatePolicyId: draft.gatePolicyId,
+                  version: identity.version,
+                },
+              })
       return M.CompletedSaveRule({ requestId, repository, rule })
     }).pipe(
       Effect.catch((error) =>
@@ -285,15 +322,22 @@ export const ToggleRule = FoldkitCommand.define("ToggleRule", {
     ruleId: RuleId,
     version: Schema.Int,
     enabled: Schema.Boolean,
+    ruleType: Schema.Literals(["PolicyLabelingRule", "AiLabelingRule"]),
   },
   messages: [M.CompletedToggleRule, M.FailedToToggleRule],
-  execute: ({ requestId, repository, ruleId, version, enabled }) =>
+  execute: ({ requestId, repository, ruleId, version, enabled, ruleType }) =>
     Effect.gen(function* () {
       const client = yield* ApiClient
-      const rule = yield* client.labelingRules.patchRule({
-        params: { ...repository, ruleId },
-        payload: { version, enabled },
-      })
+      const rule =
+        ruleType === "PolicyLabelingRule"
+          ? yield* client.labelingRules.patchRule({
+              params: { ...repository, ruleId },
+              payload: { _tag: ruleType, version, enabled },
+            })
+          : yield* client.labelingRules.patchRule({
+              params: { ...repository, ruleId },
+              payload: { _tag: ruleType, version, enabled },
+            })
       return M.CompletedToggleRule({ requestId, repository, rule })
     }).pipe(
       Effect.catch((error) =>

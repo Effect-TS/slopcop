@@ -73,23 +73,11 @@ BEFORE UPDATE ON "labeling_policy_triggers"
 BEGIN SELECT RAISE(ABORT,'labeling policy triggers are immutable'); END;
 
 INSERT INTO "labeling_policies" ("id","repository_id","name","target","version","created_at","updated_at")
-SELECT 'policy:'||"id","repository_id","name",'pull_request',1,"created_at","updated_at"
-FROM "labeling_rules" WHERE "kind"='ai';
-INSERT INTO "labeling_policies" ("id","repository_id","name","target","version","created_at","updated_at")
 SELECT 'policy:ready:'||"repository_id","repository_id",'Ready for review','pull_request',1,min("created_at"),max("updated_at")
 FROM "labeling_rules" WHERE "kind"='ready-for-review' GROUP BY "repository_id";
-
-INSERT INTO "labeling_policy_versions" ("id","policy_id","repository_id","revision","program","content_hash","registry_manifest","trigger_manifest","publication_status","created_at")
-SELECT 'policy-version:'||"id",'policy:'||"id","repository_id",1,
-  json_object('target','pull_request','appliesWhen',NULL,'matchesWhen',json_object(
-    '_tag','AiPrompt','prompt',"instructions",
-    'evidence',json_array('pull_request.title','pull_request.body','pull_request.base_ref','pull_request.changed_files'),
-    'minimumConfidence',"confidence_threshold",'evaluator','boolean-policy-v1')),
-  'legacy-ai:'||"id",
-  json_array('pull_request.title','pull_request.body','pull_request.base_ref','pull_request.changed_files','pull_request.changed_files.content','ai:boolean-policy-v1'),
-  json_array('pull_request:opened','pull_request:reopened','pull_request:synchronize','pull_request:edited','pull_request:ready_for_review','pull_request:converted_to_draft','pull_request:labeled','pull_request:unlabeled'),
-  'published',"created_at"
-FROM "labeling_rules" WHERE "kind"='ai';
+INSERT INTO "labeling_policies" ("id","repository_id","name","target","version","created_at","updated_at")
+SELECT 'policy:ai-gate:'||"repository_id","repository_id",'Not generated release','pull_request',1,min("created_at"),max("updated_at")
+FROM "labeling_rules" WHERE "kind"='ai' GROUP BY "repository_id";
 
 INSERT INTO "labeling_policy_versions" ("id","policy_id","repository_id","revision","program","content_hash","registry_manifest","trigger_manifest","publication_status","created_at")
 SELECT 'policy-version:ready:'||"repository_id",'policy:ready:'||"repository_id","repository_id",1,
@@ -122,6 +110,14 @@ INSERT INTO "legacy_generated_release_guard" VALUES (json_object(
     )
   )
 ));
+INSERT INTO "labeling_policy_versions" ("id","policy_id","repository_id","revision","program","content_hash","registry_manifest","trigger_manifest","publication_status","created_at")
+SELECT 'policy-version:ai-gate:'||"repository_id",'policy:ai-gate:'||"repository_id","repository_id",1,
+  json_object('target','pull_request','appliesWhen',NULL,'matchesWhen',json((SELECT "program" FROM "legacy_generated_release_guard"))),
+  'legacy-not-generated-release-v1',
+  json_array('pull_request.title','pull_request.body','pull_request.changed_files'),
+  json_array('pull_request:opened','pull_request:reopened','pull_request:synchronize','pull_request:edited','pull_request:ready_for_review','pull_request:converted_to_draft','pull_request:labeled','pull_request:unlabeled'),
+  'published',min("created_at")
+FROM "labeling_rules" WHERE "kind"='ai' GROUP BY "repository_id";
 UPDATE "labeling_policy_versions"
 SET "program"=json_set("program",'$.appliesWhen',json((SELECT "program" FROM "legacy_generated_release_guard"))),
     "content_hash"='generic-ready-v3'
@@ -136,17 +132,12 @@ SET "program"=json_remove(
   '$.matchesWhen.conditions[3].id'
 )
 WHERE "id" LIKE 'policy-version:ready:%';
-UPDATE "labeling_policy_versions"
-SET "program"=json_set("program",'$.appliesWhen',json((SELECT "program" FROM "legacy_generated_release_guard")))
-WHERE "policy_id" IN (
-  SELECT 'policy:'||"id" FROM "labeling_rules"
-  WHERE "kind"='ai' AND "exclusive_group"='change-kind'
-);
 DROP TABLE "legacy_generated_release_guard";
 
-UPDATE "labeling_policies" SET "published_version_id"=CASE
+UPDATE "labeling_policies"
+SET "published_version_id"=CASE
   WHEN "id" LIKE 'policy:ready:%' THEN 'policy-version:ready:'||"repository_id"
-  ELSE 'policy-version:'||substr("id",8) END;
+  ELSE 'policy-version:ai-gate:'||"repository_id" END;
 INSERT INTO "labeling_policy_drafts" ("policy_id","repository_id","program","metadata","version","created_at","updated_at")
 SELECT "policy_id","repository_id","program",'{}',1,"created_at","created_at" FROM "labeling_policy_versions";
 INSERT INTO "labeling_policy_triggers" ("policy_version_id","repository_id","event","action")
@@ -212,7 +203,13 @@ BEGIN SELECT RAISE(ABORT,'published policy triggers are immutable'); END;
 CREATE TABLE "labeling_rules_new" (
   "id" TEXT NOT NULL,
   "repository_id" TEXT NOT NULL,
-  "policy_id" TEXT NOT NULL,
+  "_tag" TEXT NOT NULL CHECK ("_tag" IN ('PolicyLabelingRule','AiLabelingRule')),
+  "policy_id" TEXT,
+  "prompt" TEXT,
+  "evidence" TEXT,
+  "minimum_confidence" REAL,
+  "evaluator" TEXT,
+  "gate_policy_id" TEXT,
   "label" TEXT NOT NULL CHECK (length("label") BETWEEN 1 AND 50),
   "on_match" TEXT NOT NULL CHECK ("on_match"='ensure-present'),
   "on_no_match" TEXT NOT NULL CHECK ("on_no_match" IN ('ensure-absent','preserve')),
@@ -229,10 +226,31 @@ CREATE TABLE "labeling_rules_new" (
   UNIQUE ("id","repository_id"),
   FOREIGN KEY ("repository_id") REFERENCES "github_repositories"("id") ON DELETE CASCADE,
   FOREIGN KEY ("policy_id","repository_id") REFERENCES "labeling_policies"("id","repository_id") ON DELETE RESTRICT,
-  CHECK (NOT "enabled" OR "validation_status"='valid')
+  FOREIGN KEY ("gate_policy_id","repository_id") REFERENCES "labeling_policies"("id","repository_id") ON DELETE RESTRICT,
+  CHECK (NOT "enabled" OR "validation_status"='valid'),
+  CHECK (
+    ("_tag"='PolicyLabelingRule' AND "policy_id" IS NOT NULL
+      AND "prompt" IS NULL AND "evidence" IS NULL
+      AND "minimum_confidence" IS NULL AND "evaluator" IS NULL
+      AND "gate_policy_id" IS NULL)
+    OR
+    ("_tag"='AiLabelingRule' AND "policy_id" IS NULL
+      AND length("prompt") BETWEEN 1 AND 4000
+      AND json_valid("evidence") AND json_type("evidence")='array'
+      AND json_array_length("evidence") BETWEEN 1 AND 8
+      AND "minimum_confidence" BETWEEN 0 AND 1
+      AND "evaluator"='boolean-policy-v1')
+  )
 );
 INSERT INTO "labeling_rules_new"
-SELECT "id","repository_id",CASE WHEN "kind"='ai' THEN 'policy:'||"id" ELSE 'policy:ready:'||"repository_id" END,
+SELECT "id","repository_id",
+  CASE WHEN "kind"='ai' THEN 'AiLabelingRule' ELSE 'PolicyLabelingRule' END,
+  CASE WHEN "kind"='ai' THEN NULL ELSE 'policy:ready:'||"repository_id" END,
+  CASE WHEN "kind"='ai' THEN "instructions" ELSE NULL END,
+  CASE WHEN "kind"='ai' THEN json_array('pull_request.title','pull_request.body','pull_request.base_ref','pull_request.changed_files') ELSE NULL END,
+  CASE WHEN "kind"='ai' THEN "confidence_threshold" ELSE NULL END,
+  CASE WHEN "kind"='ai' THEN 'boolean-policy-v1' ELSE NULL END,
+  CASE WHEN "kind"='ai' THEN 'policy:ai-gate:'||"repository_id" ELSE NULL END,
   "label",'ensure-present',CASE WHEN "mode"='reconcile' THEN 'ensure-absent' ELSE 'preserve' END,
   "exclusive_group",0,"enabled","validation_status","validated_at","version","created_at","updated_at","deleted_at"
 FROM "labeling_rules";
@@ -274,8 +292,14 @@ CREATE TABLE "policy_evaluations" (
   "id" TEXT NOT NULL,
   "delivery_id" TEXT NOT NULL,
   "repository_id" TEXT NOT NULL,
-  "policy_id" TEXT NOT NULL,
-  "policy_version_id" TEXT NOT NULL,
+  "_tag" TEXT NOT NULL CHECK ("_tag" IN ('PolicyRuleEvaluation','AiRuleEvaluation')),
+  "rule_id" TEXT NOT NULL,
+  "rule_version" INTEGER NOT NULL CHECK ("rule_version">0),
+  "policy_id" TEXT,
+  "policy_version_id" TEXT,
+  "evaluator" TEXT,
+  "gate_policy_id" TEXT,
+  "gate_policy_version_id" TEXT,
   "target" TEXT NOT NULL CHECK ("target" IN ('pull_request','issue')),
   "subject_number" INTEGER NOT NULL CHECK ("subject_number">0),
   "head_sha" TEXT,
@@ -284,17 +308,31 @@ CREATE TABLE "policy_evaluations" (
   "outcome" TEXT NOT NULL CHECK ("outcome" IN ('Match','NoMatch','Abstain','Error')),
   "confidence" REAL NOT NULL CHECK ("confidence" BETWEEN 0 AND 1),
   "rationale" TEXT NOT NULL,
-  "trace" TEXT NOT NULL CHECK (json_valid("trace")),
+  "trace" TEXT CHECK ("trace" IS NULL OR json_valid("trace")),
+  "gate_trace" TEXT CHECK ("gate_trace" IS NULL OR json_valid("gate_trace")),
   "created_at" INTEGER NOT NULL DEFAULT (unixepoch()*1000),
+  CHECK (
+    ("_tag"='PolicyRuleEvaluation' AND "policy_id" IS NOT NULL AND "policy_version_id" IS NOT NULL
+      AND "trace" IS NOT NULL AND "evaluator" IS NULL AND "gate_policy_id" IS NULL
+      AND "gate_policy_version_id" IS NULL AND "gate_trace" IS NULL)
+    OR
+    ("_tag"='AiRuleEvaluation' AND "policy_id" IS NULL AND "policy_version_id" IS NULL
+      AND "trace" IS NULL AND "evaluator"='boolean-policy-v1'
+      AND (("gate_policy_id" IS NULL AND "gate_policy_version_id" IS NULL AND "gate_trace"='null')
+        OR ("gate_policy_id" IS NOT NULL AND "gate_policy_version_id" IS NOT NULL)))
+  ),
   PRIMARY KEY ("id"),
   UNIQUE ("id","repository_id"),
-  UNIQUE ("delivery_id","policy_version_id","subject_number","subject_generation"),
+  UNIQUE ("delivery_id","rule_id","rule_version","subject_number","subject_generation"),
   FOREIGN KEY ("delivery_id") REFERENCES "github_events"("id") ON DELETE RESTRICT,
   FOREIGN KEY ("repository_id") REFERENCES "github_repositories"("id") ON DELETE CASCADE,
+  FOREIGN KEY ("rule_id","repository_id") REFERENCES "labeling_rules"("id","repository_id") ON DELETE RESTRICT,
   FOREIGN KEY ("policy_id","repository_id") REFERENCES "labeling_policies"("id","repository_id") ON DELETE RESTRICT,
-  FOREIGN KEY ("policy_version_id","policy_id","repository_id") REFERENCES "labeling_policy_versions"("id","policy_id","repository_id") ON DELETE RESTRICT
+  FOREIGN KEY ("policy_version_id","policy_id","repository_id") REFERENCES "labeling_policy_versions"("id","policy_id","repository_id") ON DELETE RESTRICT,
+  FOREIGN KEY ("gate_policy_id","repository_id") REFERENCES "labeling_policies"("id","repository_id") ON DELETE RESTRICT,
+  FOREIGN KEY ("gate_policy_version_id","gate_policy_id","repository_id") REFERENCES "labeling_policy_versions"("id","policy_id","repository_id") ON DELETE RESTRICT
 );
-CREATE INDEX "policy_evaluations_policy_subject" ON "policy_evaluations"("policy_id","subject_number","created_at");
+CREATE INDEX "policy_evaluations_rule_subject" ON "policy_evaluations"("rule_id","subject_number","created_at");
 CREATE TABLE "policy_action_executions" (
   "id" TEXT PRIMARY KEY,
   "evaluation_id" TEXT NOT NULL,

@@ -3,6 +3,10 @@ import * as GitHubLabel from "../GitHub/GitHubLabel.ts"
 import { GitHubRepositorySlug } from "../GitHub/GitHubRepository.ts"
 import { LabelingPolicyId, LabelingPolicyName } from "./LabelingPolicy.ts"
 import {
+  AiEvaluator,
+  AiLabelingRuleEvidence,
+  AiLabelingRuleMinimumConfidence,
+  AiLabelingRulePrompt,
   LabelingRuleConflictGroup,
   LabelingRuleId,
   LabelingRuleValidationStatus,
@@ -19,9 +23,13 @@ export const RulePath = Schema.Struct({
   ...GitHubRepositorySlug.fields,
   ruleId: LabelingRuleId,
 })
-export const PublicLabelingRule = Schema.Struct({
+const PublicPolicy = Schema.Struct({
+  id: LabelingPolicyId,
+  name: LabelingPolicyName,
+  published: Schema.Boolean,
+})
+const publicSharedFields = {
   id: LabelingRuleId,
-  policyId: LabelingPolicyId,
   label: GitHubLabel.GitHubLabelName,
   onMatch: LabelOnMatch,
   onNoMatch: LabelOnNoMatch,
@@ -33,12 +41,27 @@ export const PublicLabelingRule = Schema.Struct({
   version: Schema.Int,
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
-  policy: Schema.Struct({
-    id: LabelingPolicyId,
-    name: LabelingPolicyName,
-    published: Schema.Boolean,
-  }),
+} as const
+export const PublicPolicyLabelingRule = Schema.Struct({
+  _tag: Schema.Literal("PolicyLabelingRule"),
+  ...publicSharedFields,
+  policyId: LabelingPolicyId,
+  policy: PublicPolicy,
 })
+export const PublicAiLabelingRule = Schema.Struct({
+  _tag: Schema.Literal("AiLabelingRule"),
+  ...publicSharedFields,
+  prompt: AiLabelingRulePrompt,
+  evidence: AiLabelingRuleEvidence,
+  minimumConfidence: AiLabelingRuleMinimumConfidence,
+  evaluator: AiEvaluator,
+  gatePolicyId: Schema.NullOr(LabelingPolicyId),
+  gatePolicy: Schema.NullOr(PublicPolicy),
+})
+export const PublicLabelingRule = Schema.Union([
+  PublicPolicyLabelingRule,
+  PublicAiLabelingRule,
+])
 export type PublicLabelingRule = typeof PublicLabelingRule.Type
 
 export const ListLabelingRulesQuery = Schema.Struct({
@@ -60,9 +83,8 @@ export const ListLabelingRulesResponse = Schema.Struct({
   activity: LabelingRuleActivitySummary,
 })
 
-export const PublicLabelingRuleAuditValue = Schema.Struct({
+const publicAuditSharedFields = {
   id: LabelingRuleId,
-  policyId: LabelingPolicyId,
   label: GitHubLabel.GitHubLabelName,
   onMatch: LabelOnMatch,
   onNoMatch: LabelOnNoMatch,
@@ -72,6 +94,24 @@ export const PublicLabelingRuleAuditValue = Schema.Struct({
   validationStatus: LabelingRuleValidationStatus,
   validatedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   version: Schema.Int,
+} as const
+export const PublicPolicyLabelingRuleAuditValue = Schema.Struct({
+  _tag: Schema.Literal("PolicyLabelingRule"),
+  ...publicAuditSharedFields,
+  policyId: LabelingPolicyId,
+})
+export const PublicAiLabelingRuleAuditValue = Schema.Struct({
+  _tag: Schema.Literal("AiLabelingRule"),
+  ...publicAuditSharedFields,
+  prompt: AiLabelingRulePrompt,
+  evidence: AiLabelingRuleEvidence,
+  minimumConfidence: AiLabelingRuleMinimumConfidence,
+  evaluator: AiEvaluator,
+  gatePolicyId: Schema.NullOr(LabelingPolicyId),
+})
+export const PublicLegacyPolicyLabelingRuleAuditValue = Schema.Struct({
+  ...publicAuditSharedFields,
+  policyId: LabelingPolicyId,
 })
 export const PublicLegacyLabelingRuleAuditValue = Schema.Struct({
   id: LabelingRuleId,
@@ -87,23 +127,19 @@ export const PublicLegacyLabelingRuleAuditValue = Schema.Struct({
   validatedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   version: Schema.Int,
 })
+export const PublicLabelingRuleAuditValue = Schema.Union([
+  PublicPolicyLabelingRuleAuditValue,
+  PublicAiLabelingRuleAuditValue,
+  PublicLegacyPolicyLabelingRuleAuditValue,
+  PublicLegacyLabelingRuleAuditValue,
+])
 export const PublicLabelingRuleAuditEntry = Schema.Struct({
   id: LabelingRuleAuditEntryId,
   ruleId: LabelingRuleId,
   actor: Schema.String,
   operation: LabelingRuleAuditOperation,
-  before: Schema.NullOr(
-    Schema.Union([
-      PublicLabelingRuleAuditValue,
-      PublicLegacyLabelingRuleAuditValue,
-    ]),
-  ),
-  after: Schema.NullOr(
-    Schema.Union([
-      PublicLabelingRuleAuditValue,
-      PublicLegacyLabelingRuleAuditValue,
-    ]),
-  ),
+  before: Schema.NullOr(PublicLabelingRuleAuditValue),
+  after: Schema.NullOr(PublicLabelingRuleAuditValue),
   createdAt: Schema.DateTimeUtcFromString,
 })
 export const LabelingRuleAuditCursor = Schema.String.check(
@@ -163,34 +199,68 @@ export const ValidateCandidateLabelRequest = Schema.Struct({
 export const ValidateCandidateLabelResponse =
   GitHubLabel.GitHubLabelValidationResult
 
-export const CreateLabelingRuleRequest = Schema.Struct({
-  policyId: LabelingPolicyId,
+const createSharedFields = {
   label: GitHubLabel.GitHubLabelName,
   onMatch: LabelOnMatch,
   onNoMatch: LabelOnNoMatch,
   conflictGroup: Schema.optionalKey(LabelingRuleConflictGroup),
   priority: Schema.optionalKey(Schema.Int),
   enabled: Schema.Boolean,
+} as const
+export const CreatePolicyLabelingRuleRequest = Schema.Struct({
+  _tag: Schema.Literal("PolicyLabelingRule"),
+  ...createSharedFields,
+  policyId: LabelingPolicyId,
 })
+export const CreateAiLabelingRuleRequest = Schema.Struct({
+  _tag: Schema.Literal("AiLabelingRule"),
+  ...createSharedFields,
+  prompt: AiLabelingRulePrompt,
+  evidence: AiLabelingRuleEvidence,
+  minimumConfidence: AiLabelingRuleMinimumConfidence,
+  evaluator: AiEvaluator,
+  gatePolicyId: Schema.NullOr(LabelingPolicyId),
+})
+export const CreateLabelingRuleRequest = Schema.Union([
+  CreatePolicyLabelingRuleRequest,
+  CreateAiLabelingRuleRequest,
+])
 export type CreateLabelingRuleRequest = typeof CreateLabelingRuleRequest.Type
-export const PatchLabelingRuleRequest = Schema.Struct({
-  policyId: Schema.optionalKey(LabelingPolicyId),
+
+const patchSharedFields = {
   label: Schema.optionalKey(GitHubLabel.GitHubLabelName),
   onNoMatch: Schema.optionalKey(LabelOnNoMatch),
   conflictGroup: Schema.optionalKey(LabelingRuleConflictGroup),
   priority: Schema.optionalKey(Schema.Int),
   enabled: Schema.optionalKey(Schema.Boolean),
   version: Schema.Int,
+} as const
+export const PatchPolicyLabelingRuleRequest = Schema.Struct({
+  _tag: Schema.Literal("PolicyLabelingRule"),
+  ...patchSharedFields,
+  policyId: Schema.optionalKey(LabelingPolicyId),
 })
+export const PatchAiLabelingRuleRequest = Schema.Struct({
+  _tag: Schema.Literal("AiLabelingRule"),
+  ...patchSharedFields,
+  prompt: Schema.optionalKey(AiLabelingRulePrompt),
+  evidence: Schema.optionalKey(AiLabelingRuleEvidence),
+  minimumConfidence: Schema.optionalKey(AiLabelingRuleMinimumConfidence),
+  evaluator: Schema.optionalKey(AiEvaluator),
+  gatePolicyId: Schema.optionalKey(Schema.NullOr(LabelingPolicyId)),
+})
+export const PatchLabelingRuleRequest = Schema.Union([
+  PatchPolicyLabelingRuleRequest,
+  PatchAiLabelingRuleRequest,
+])
 export type PatchLabelingRuleRequest = typeof PatchLabelingRuleRequest.Type
 export const RuleVersionRequest = Schema.Struct({ version: Schema.Int })
 export const RuleVersionQuery = RuleVersionRequest
 export const TestLabelingRuleRequest = Schema.Struct({
   pullRequestNumber: Schema.Int.check(Schema.isGreaterThan(0)),
 })
-export const TestLabelingRuleResponse = Schema.Struct({
+const testResponseSharedFields = {
   ruleId: LabelingRuleId,
-  policyId: LabelingPolicyId,
   pullRequestNumber: Schema.Int.check(Schema.isGreaterThan(0)),
   outcome: Schema.Literals(["Match", "NoMatch", "Abstain"]),
   confidence: Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 })),
@@ -200,4 +270,18 @@ export const TestLabelingRuleResponse = Schema.Struct({
     add: Schema.Array(GitHubLabel.GitHubLabelName),
     remove: Schema.Array(GitHubLabel.GitHubLabelName),
   }),
+} as const
+export const TestPolicyLabelingRuleResponse = Schema.Struct({
+  _tag: Schema.Literal("PolicyLabelingRule"),
+  ...testResponseSharedFields,
+  policyId: LabelingPolicyId,
 })
+export const TestAiLabelingRuleResponse = Schema.Struct({
+  _tag: Schema.Literal("AiLabelingRule"),
+  ...testResponseSharedFields,
+  gatePolicyId: Schema.NullOr(LabelingPolicyId),
+})
+export const TestLabelingRuleResponse = Schema.Union([
+  TestPolicyLabelingRuleResponse,
+  TestAiLabelingRuleResponse,
+])

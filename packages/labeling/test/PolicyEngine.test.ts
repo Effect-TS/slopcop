@@ -6,7 +6,6 @@ import {
 } from "@slopcop/labeling/PolicyCompiler"
 import {
   evaluatePolicyProgram,
-  type AiPromptEvaluator,
   type ProgramResolver,
   type PullRequestFacts,
 } from "@slopcop/labeling/PolicyEngine"
@@ -18,10 +17,6 @@ const versionId = Schema.decodeUnknownSync(Program.PolicyVersionId)
 const context = { repositoryId: "repo-1", policyId: "policy-1" }
 const missingResolver: PolicyVersionResolver & ProgramResolver = {
   resolve: () => Effect.succeed(null),
-}
-const noAi: AiPromptEvaluator = {
-  evaluate: () =>
-    Effect.succeed({ matches: false, confidence: 1, rationale: "No match." }),
 }
 const facts: PullRequestFacts = {
   draft: false,
@@ -58,7 +53,6 @@ const program = (matchesWhen: Program.Condition): Program.PolicyProgram => ({
 const evaluate = (
   policy: Program.PolicyProgram,
   options?: {
-    readonly ai?: AiPromptEvaluator
     readonly resolver?: ProgramResolver
     readonly values?: PullRequestFacts
   },
@@ -67,7 +61,6 @@ const evaluate = (
     program: policy,
     repositoryId: "repo-1",
     facts: options?.values ?? facts,
-    ai: options?.ai ?? noAi,
     resolver: options?.resolver ?? missingResolver,
   })
 const resolved = (
@@ -304,162 +297,6 @@ describe("PolicyEngine composition", () => {
         },
         { root: "matchesWhen", path: [] },
       ])
-    }),
-  )
-
-  it.effect("short-circuits All on NoMatch before AI failure", () =>
-    Effect.gen(function* () {
-      let calls = 0
-      const decision = yield* evaluate(
-        program({
-          _tag: "All",
-          conditions: [
-            leaf("draft", true),
-            {
-              _tag: "AiPrompt",
-              prompt: "Classify",
-              evidence: ["pull_request.title"],
-              minimumConfidence: 0.5,
-              evaluator: "boolean-policy-v1",
-            },
-          ],
-        }),
-        {
-          ai: {
-            evaluate: () => {
-              calls++
-              return Effect.fail("unavailable")
-            },
-          },
-        },
-      )
-      expect(decision.outcome).toBe("NoMatch")
-      expect(calls).toBe(0)
-    }),
-  )
-
-  it.effect("short-circuits Any on Match before AI failure", () =>
-    Effect.gen(function* () {
-      let calls = 0
-      const decision = yield* evaluate(
-        program({
-          _tag: "Any",
-          conditions: [
-            leaf("not-draft", false),
-            {
-              _tag: "AiPrompt",
-              prompt: "Classify",
-              evidence: ["pull_request.title"],
-              minimumConfidence: 0.5,
-              evaluator: "boolean-policy-v1",
-            },
-          ],
-        }),
-        {
-          ai: {
-            evaluate: () => {
-              calls++
-              return Effect.fail("unavailable")
-            },
-          },
-        },
-      )
-      expect(decision.outcome).toBe("Match")
-      expect(calls).toBe(0)
-    }),
-  )
-
-  it.effect("fails operationally only without a decisive result", () =>
-    Effect.gen(function* () {
-      const error = yield* Effect.flip(
-        evaluate(
-          program({
-            _tag: "Any",
-            conditions: [
-              {
-                _tag: "AiPrompt",
-                prompt: "Classify",
-                evidence: ["pull_request.title"],
-                minimumConfidence: 0.5,
-                evaluator: "boolean-policy-v1",
-              },
-              leaf("draft", true),
-            ],
-          }),
-          { ai: { evaluate: () => Effect.fail("unavailable") } },
-        ),
-      )
-      expect(error).toMatchObject({
-        _tag: "PolicyOperationalError",
-        stage: "ai",
-        location: {
-          root: "matchesWhen",
-          path: [{ _tag: "Any", index: 0 }],
-        },
-      })
-    }),
-  )
-
-  it.effect("preserves All minimum and Any maximum confidence", () =>
-    Effect.gen(function* () {
-      const aiNode = (prompt: string): Program.Condition => ({
-        _tag: "AiPrompt",
-        prompt,
-        evidence: ["pull_request.title"],
-        minimumConfidence: 0,
-        evaluator: "boolean-policy-v1",
-      })
-      const ai: AiPromptEvaluator = {
-        evaluate: ({ prompt }) =>
-          Effect.succeed({
-            matches: true,
-            confidence: prompt === "low" ? 0.4 : 0.9,
-            rationale: prompt,
-          }),
-      }
-      const all = yield* evaluate(
-        program({
-          _tag: "All",
-          conditions: [aiNode("low"), leaf("draft", false)],
-        }),
-        { ai },
-      )
-      expect(all.confidence).toBe(0.4)
-      const any = yield* evaluate(
-        program({
-          _tag: "Any",
-          conditions: [leaf("miss", true), aiNode("high")],
-        }),
-        { ai },
-      )
-      expect(any.confidence).toBe(1)
-    }),
-  )
-
-  it.effect("rejects non-finite AI confidence at the evaluator boundary", () =>
-    Effect.gen(function* () {
-      const error = yield* Effect.flip(
-        evaluate(
-          program({
-            _tag: "AiPrompt",
-            prompt: "invalid",
-            evidence: ["pull_request.title"],
-            minimumConfidence: 0,
-            evaluator: "boolean-policy-v1",
-          }),
-          {
-            ai: {
-              evaluate: () =>
-                Effect.succeed({
-                  matches: true,
-                  confidence: Number.NaN,
-                  rationale: "invalid",
-                }),
-            },
-          },
-        ),
-      )
-      expect(error).toMatchObject({ stage: "ai", retryable: false })
     }),
   )
 
@@ -884,53 +721,6 @@ describe("ready-for-review generic predicates", () => {
           },
         })
         expect(decision.outcome).toBe("NoMatch")
-      }),
-  )
-  it.effect(
-    "guards migrated change-kind AI evaluation for generated releases",
-    () =>
-      Effect.gen(function* () {
-        let calls = 0
-        const decision = yield* evaluate(
-          {
-            target: "pull_request",
-            appliesWhen: readyProgram.appliesWhen,
-            matchesWhen: {
-              _tag: "AiPrompt",
-              prompt: "Classify change kind",
-              evidence: ["pull_request.title"],
-              minimumConfidence: 0,
-              evaluator: "boolean-policy-v1",
-            },
-          },
-          {
-            ai: {
-              evaluate: () => {
-                calls++
-                return Effect.succeed({
-                  matches: true,
-                  confidence: 1,
-                  rationale: "match",
-                })
-              },
-            },
-            values: {
-              ...facts,
-              title: "Version Packages",
-              body: "[Changesets release](https://github.com/changesets/action) GitHub action\n# Releases",
-              changedFiles: [
-                {
-                  path: "packages/effect/package.json",
-                  status: "modified",
-                  patch: null,
-                  content: null,
-                },
-              ],
-            },
-          },
-        )
-        expect(decision.outcome).toBe("Abstain")
-        expect(calls).toBe(0)
       }),
   )
 })

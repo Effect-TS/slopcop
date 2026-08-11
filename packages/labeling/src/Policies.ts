@@ -311,30 +311,24 @@ export class Policies extends Context.Service<
             program: draft.program,
             contentHash,
             registryManifest: compiled.requiresChangedFileContent
-              ? [
-                  ...compiled.facts,
-                  "pull_request.changed_files.content",
-                  ...(compiled.aiNodeCount > 0 ? ["ai:boolean-policy-v1"] : []),
-                ]
-              : [
-                  ...compiled.facts,
-                  ...(compiled.aiNodeCount > 0 ? ["ai:boolean-policy-v1"] : []),
-                ],
+              ? [...compiled.facts, "pull_request.changed_files.content"]
+              : compiled.facts,
             triggerManifest: compiled.triggers,
             publicationStatus: "staged",
           }),
         )
       }
-      yield* rows.insertDependencies(
-        staged.id,
-        repository.id,
-        compiled.references,
-      )
-      yield* rows.insertTriggers(staged.id, repository.id, compiled.triggers)
-      const published =
-        staged.publicationStatus === "published"
-          ? staged
-          : yield* rows.activateVersion(staged.id, repository.id)
+      let published: Policy.LabelingPolicyVersion
+      if (staged.publicationStatus === "published") published = staged
+      else {
+        yield* rows.insertDependencies(
+          staged.id,
+          repository.id,
+          compiled.references,
+        )
+        yield* rows.insertTriggers(staged.id, repository.id, compiled.triggers)
+        published = yield* rows.activateVersion(staged.id, repository.id)
+      }
       const currentPolicy = yield* requirePolicy(repository, id)
       const currentDraft = yield* requireDraft(id)
       if (

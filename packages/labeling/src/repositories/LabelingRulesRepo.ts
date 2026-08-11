@@ -38,7 +38,7 @@ const FindRequest = Schema.Struct({
 const UpdateRequest = Schema.Struct({
   ruleId: LabelingRule.LabelingRuleId,
   expectedVersion: Schema.Int,
-  input: LabelingRule.LabelingRule.update,
+  input: LabelingRule.LabelingRuleUpdate,
 })
 const RemoveRequest = Schema.Struct({
   repositoryId: GitHubRepository.GitHubRepositoryId,
@@ -68,12 +68,12 @@ export class LabelingRulesRepo extends Context.Service<
       LabelingRulesRepoError
     >
     readonly insert: (
-      input: typeof LabelingRule.LabelingRule.insert.Type,
+      input: LabelingRule.LabelingRuleInsert,
     ) => Effect.Effect<LabelingRule.LabelingRule, LabelingRulesRepoError>
     readonly update: (
       ruleId: LabelingRule.LabelingRule["id"],
       expectedVersion: number,
-      input: typeof LabelingRule.LabelingRule.update.Type,
+      input: LabelingRule.LabelingRuleUpdate,
     ) => Effect.Effect<LabelingRule.LabelingRule, LabelingRulesRepoError>
     readonly remove: (
       repositoryId: GitHubRepository.GitHubRepository["id"],
@@ -106,7 +106,7 @@ export class LabelingRulesRepo extends Context.Service<
         sql`SELECT * FROM labeling_rules WHERE repository_id=${repositoryId} AND id=${ruleId} AND deleted_at IS NULL`,
     })
     const insertRow = SqlSchema.findOneOption({
-      Request: LabelingRule.LabelingRule.insert,
+      Request: LabelingRule.LabelingRuleInsert,
       Result: LabelingRule.LabelingRule,
       execute: (input) =>
         sql`INSERT INTO labeling_rules ${sql.insert(input)} RETURNING *`,
@@ -114,14 +114,29 @@ export class LabelingRulesRepo extends Context.Service<
     const updateRow = SqlSchema.findOneOption({
       Request: UpdateRequest,
       Result: LabelingRule.LabelingRule,
-      execute: ({ expectedVersion, input, ruleId }) => sql`
-        UPDATE labeling_rules SET policy_id=${input.policyId},label=${input.label},
-          on_match=${input.onMatch},on_no_match=${input.onNoMatch},
-          conflict_group=${input.conflictGroup},priority=${input.priority},
-          enabled=${input.enabled},validation_status=${input.validationStatus},
-          validated_at=${input.validatedAt},version=version+1,
-          updated_at=unixepoch()*1000
-        WHERE id=${ruleId} AND version=${expectedVersion} AND deleted_at IS NULL RETURNING *`,
+      execute: ({ expectedVersion, input, ruleId }) =>
+        input._tag === "PolicyLabelingRule"
+          ? sql`
+            UPDATE labeling_rules SET policy_id=${input.policyId},
+              prompt=NULL,evidence=NULL,minimum_confidence=NULL,evaluator=NULL,
+              gate_policy_id=NULL,label=${input.label},on_match=${input.onMatch},
+              on_no_match=${input.onNoMatch},conflict_group=${input.conflictGroup},
+              priority=${input.priority},enabled=${input.enabled},
+              validation_status=${input.validationStatus},validated_at=${input.validatedAt},
+              version=version+1,updated_at=unixepoch()*1000
+            WHERE id=${ruleId} AND version=${expectedVersion}
+              AND _tag='PolicyLabelingRule' AND deleted_at IS NULL RETURNING *`
+          : sql`
+            UPDATE labeling_rules SET policy_id=NULL,prompt=${input.prompt},
+              evidence=${input.evidence},minimum_confidence=${input.minimumConfidence},
+              evaluator=${input.evaluator},gate_policy_id=${input.gatePolicyId},
+              label=${input.label},on_match=${input.onMatch},
+              on_no_match=${input.onNoMatch},conflict_group=${input.conflictGroup},
+              priority=${input.priority},enabled=${input.enabled},
+              validation_status=${input.validationStatus},validated_at=${input.validatedAt},
+              version=version+1,updated_at=unixepoch()*1000
+            WHERE id=${ruleId} AND version=${expectedVersion}
+              AND _tag='AiLabelingRule' AND deleted_at IS NULL RETURNING *`,
     })
     const removeRow = SqlSchema.findOneOption({
       Request: RemoveRequest,

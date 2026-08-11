@@ -2,7 +2,6 @@ import * as Dialog from "@foldkit/ui/dialog"
 import * as PolicyManagement from "@slopcop/domain/Labeling/LabelingPolicyManagement"
 import * as PolicyProgram from "@slopcop/domain/Policy/PolicyProgram"
 import * as RuleManagement from "@slopcop/domain/Labeling/LabelingRuleManagement"
-import * as Option from "effect/Option"
 import type { Html, HtmlBuilder } from "foldkit/html"
 import * as Submodel from "foldkit/submodel"
 import * as PolicyCodeEditor from "../../components/policy-editor"
@@ -15,9 +14,8 @@ import {
   RuleActionMenu,
   type Model,
   type RepositoryData,
-  type Tab,
 } from "./model"
-import { validPolicyDraft } from "./update"
+import { validPolicyDraft, validRuleDraft } from "./update"
 
 type Policy = typeof PolicyManagement.PublicPolicy.Type
 type Rule = typeof RuleManagement.PublicLabelingRule.Type
@@ -30,30 +28,40 @@ const destructiveButton =
 const inputClass =
   "min-h-10 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-xs outline-hidden focus:border-ring focus:ring-2 focus:ring-ring/20"
 
-export const view = Submodel.defineView<Model, M.Message>((model, h) => {
-  const dialogOpen =
-    model.policyEditorDialog.isOpen ||
-    model.publishDialog.isOpen ||
-    model.ruleEditorDialog.isOpen ||
-    model.ruleDeleteDialog.isOpen ||
-    model.testDialog.isOpen
-  return h.div(
-    [h.Class("w-full self-stretch")],
-    [
-      h.section(
-        [
-          h.AriaLabelledBy("auto-labeling-title"),
-          h.Inert(dialogOpen),
-          h.Class("px-4 py-6 sm:px-6 lg:px-8"),
-        ],
-        [header(h, model), tabPanel(h, model)],
-      ),
-      ...modals(h, model),
-    ],
-  )
-})
+export type Surface = "Policies" | "AutoLabeling"
+export type ViewInputs = Readonly<{ surface: Surface }>
 
-const header = (h: HtmlBuilder<M.Message>, model: Model): Html =>
+export const view = Submodel.defineView<Model, M.Message, ViewInputs>(
+  (model, inputs, h) => {
+    const { surface } = inputs
+    const dialogOpen =
+      surface === "Policies"
+        ? model.policyEditorDialog.isOpen ||
+          model.publishDialog.isOpen ||
+          model.testDialog.isOpen
+        : model.ruleEditorDialog.isOpen || model.ruleDeleteDialog.isOpen
+    return h.div(
+      [h.Class("w-full self-stretch")],
+      [
+        h.section(
+          [
+            h.AriaLabelledBy(surfaceTitleId(surface)),
+            h.Inert(dialogOpen),
+            h.Class("px-4 py-6 sm:px-6 lg:px-8"),
+          ],
+          [header(h, model, surface), repositoryPanel(h, model, surface)],
+        ),
+        ...modals(h, model, surface),
+      ],
+    )
+  },
+)
+
+const header = (
+  h: HtmlBuilder<M.Message>,
+  model: Model,
+  surface: Surface,
+): Html =>
   h.div(
     [],
     [
@@ -73,10 +81,10 @@ const header = (h: HtmlBuilder<M.Message>, model: Model): Html =>
               ),
               h.h2(
                 [
-                  h.Id("auto-labeling-title"),
+                  h.Id(surfaceTitleId(surface)),
                   h.Class("text-2xl font-semibold tracking-tight sm:text-3xl"),
                 ],
-                ["Auto-labeling"],
+                [surface === "Policies" ? "Policies" : "Auto-labeling"],
               ),
               h.p(
                 [
@@ -85,7 +93,9 @@ const header = (h: HtmlBuilder<M.Message>, model: Model): Html =>
                   ),
                 ],
                 [
-                  "Build reusable policy programs, publish exact versions, and bind labels to published policies.",
+                  surface === "Policies"
+                    ? "Build reusable policy programs and publish exact versions."
+                    : "Apply deterministic policies or AI classification to GitHub labels.",
                 ],
               ),
             ],
@@ -93,13 +103,11 @@ const header = (h: HtmlBuilder<M.Message>, model: Model): Html =>
           h.button(
             [
               h.Type("button"),
-              ...(model.repository._tag !== "LoadedRepository" ||
-              (model.tab === "Label rules" &&
-                publishedPolicies(model).length === 0)
+              ...(model.repository._tag !== "LoadedRepository"
                 ? [h.Disabled(true)]
                 : []),
               h.OnClick(
-                model.tab === "Policies"
+                surface === "Policies"
                   ? M.OpenedNewPolicy()
                   : M.OpenedNewRule(),
               ),
@@ -107,70 +115,24 @@ const header = (h: HtmlBuilder<M.Message>, model: Model): Html =>
             ],
             [
               Icon.plus(),
-              model.tab === "Policies" ? "New policy" : "New label rule",
+              surface === "Policies" ? "New policy" : "New label rule",
             ],
           ),
         ],
       ),
-      tabs(h, model.tab),
     ],
   )
 
-const tabs = (h: HtmlBuilder<M.Message>, selected: Tab): Html =>
+const surfaceTitleId = (surface: Surface): string =>
+  surface === "Policies" ? "policies-title" : "auto-labeling-title"
+
+const repositoryPanel = (
+  h: HtmlBuilder<M.Message>,
+  model: Model,
+  surface: Surface,
+): Html =>
   h.div(
-    [
-      h.Role("tablist"),
-      h.AriaLabel("Auto-labeling sections"),
-      h.Class("mt-6 flex gap-1 border-b"),
-    ],
-    (["Policies", "Label rules"] as const).map((tab) =>
-      h.button(
-        [
-          h.Type("button"),
-          h.Id(tabId(tab)),
-          h.Role("tab"),
-          h.AriaSelected(selected === tab),
-          h.AriaControls(panelId(tab)),
-          h.Tabindex(selected === tab ? 0 : -1),
-          h.OnClick(M.SelectedTab({ tab })),
-          h.OnKeyDownFocus((key) => {
-            const target = tabKeyTarget(key, selected)
-            return target === null
-              ? Option.none()
-              : Option.some({
-                  focusSelector: `#${tabId(target)}`,
-                  message: M.SelectedTab({ tab: target }),
-                })
-          }),
-          h.Class(
-            `border-b-2 px-4 py-2 text-sm font-medium ${selected === tab ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`,
-          ),
-        ],
-        [tab],
-      ),
-    ),
-  )
-const tabSlug = (tab: Tab) => (tab === "Policies" ? "policies" : "label-rules")
-const tabId = (tab: Tab) => `auto-labeling-tab-${tabSlug(tab)}`
-const panelId = (tab: Tab) => `auto-labeling-panel-${tabSlug(tab)}`
-const tabKeyTarget = (key: string, selected: Tab): Tab | null =>
-  key === "Home"
-    ? "Policies"
-    : key === "End"
-      ? "Label rules"
-      : key === "ArrowLeft" || key === "ArrowRight"
-        ? selected === "Policies"
-          ? "Label rules"
-          : "Policies"
-        : null
-const tabPanel = (h: HtmlBuilder<M.Message>, model: Model): Html =>
-  h.div(
-    [
-      h.Id(panelId(model.tab)),
-      h.Role("tabpanel"),
-      h.AriaLabelledBy(tabId(model.tab)),
-      h.Tabindex(0),
-    ],
+    [],
     [
       ...(model.statusMessage === null
         ? []
@@ -186,7 +148,7 @@ const tabPanel = (h: HtmlBuilder<M.Message>, model: Model): Html =>
               [model.statusMessage],
             ),
           ]),
-      repositoryView(h, model),
+      repositoryView(h, model, surface),
     ],
   )
 
@@ -196,7 +158,11 @@ const repositoryName = (model: Model): string =>
     : model.repository._tag === "LoadedRepository"
       ? `${model.repository.data.repository.owner}/${model.repository.data.repository.repo}`
       : `${model.repository.repository.owner}/${model.repository.repository.repo}`
-const repositoryView = (h: HtmlBuilder<M.Message>, model: Model): Html => {
+const repositoryView = (
+  h: HtmlBuilder<M.Message>,
+  model: Model,
+  surface: Surface,
+): Html => {
   switch (model.repository._tag) {
     case "NoRepository":
       return statusPanel(
@@ -231,7 +197,7 @@ const repositoryView = (h: HtmlBuilder<M.Message>, model: Model): Html => {
                   M.RetriedRepositoryLoad(),
                 ),
               ]),
-          model.tab === "Policies"
+          surface === "Policies"
             ? policiesView(h, model, model.repository.data)
             : rulesView(h, model, model.repository.data),
         ],
@@ -255,7 +221,7 @@ const policiesView = (
       ),
       ...(data.policies.length === 0
         ? [
-            statusPanel(
+            tableEmptyState(
               h,
               "No policies yet",
               "Create a pull request policy program.",
@@ -303,7 +269,11 @@ const policyRow = (
   data: RepositoryData,
   policy: Policy,
 ): Html => {
-  const usage = data.rules.filter((rule) => rule.policyId === policy.id).length
+  const usage = data.rules.filter((rule) =>
+    rule._tag === "PolicyLabelingRule"
+      ? rule.policyId === policy.id
+      : rule.gatePolicyId === policy.id,
+  ).length
   return h.keyed("tr")(
     policy.id,
     [],
@@ -355,14 +325,7 @@ const rulesView = (
           ]
         : []),
       ...(publishedPolicies(model).length === 0
-        ? [
-            errorPanel(
-              h,
-              "Publish a policy before creating or enabling label rules.",
-              "View policies",
-              M.SelectedTab({ tab: "Policies" }),
-            ),
-          ]
+        ? [policyRequiredPanel(h)]
         : []),
       h.div(
         [h.Class("overflow-hidden rounded-xl border bg-card shadow-sm")],
@@ -370,15 +333,15 @@ const rulesView = (
           tableHeader(
             h,
             "Label rules",
-            "Bind a published policy to a GitHub label.",
+            "Apply policy or AI rules to GitHub labels.",
             `${data.rules.length} configured / revision ${data.ruleRevision}`,
           ),
           ...(data.rules.length === 0
             ? [
-                statusPanel(
+                tableEmptyState(
                   h,
                   "No label rules yet",
-                  "Bind a published policy to a label.",
+                  "Create a policy or AI label rule.",
                 ),
               ]
             : [
@@ -399,7 +362,8 @@ const rulesView = (
                               [],
                               [
                                 heading(h, "On", "w-20 text-center"),
-                                heading(h, "Policy", "min-w-64"),
+                                heading(h, "Type", "text-center"),
+                                heading(h, "Policy / gate", "min-w-64"),
                                 heading(h, "Label", "text-center"),
                                 heading(h, "No match", "text-center"),
                                 heading(h, "Group / priority", "text-center"),
@@ -445,13 +409,17 @@ const ruleRow = (
       ),
       h.td(
         [h.Class("p-2")],
+        [statusBadge(h, rule._tag === "PolicyLabelingRule" ? "Policy" : "AI")],
+      ),
+      h.td(
+        [h.Class("p-2")],
         [
-          h.span([h.Class("font-medium")], [rule.policy.name]),
-          ...(!rule.policy.published
+          h.span([h.Class("font-medium")], [ruleContext(rule)]),
+          ...(!ruleCanEnable(rule)
             ? [
                 h.p(
                   [h.Class("mt-1 text-xs text-destructive")],
-                  ["Unpublished; cannot enable"],
+                  ["Unpublished policy; cannot enable"],
                 ),
               ]
             : []),
@@ -481,8 +449,8 @@ const ruleToggle = (
       h.Type("button"),
       h.Role("switch"),
       h.AriaChecked(rule.enabled),
-      h.AriaLabel(`${rule.enabled ? "Disable" : "Enable"} ${rule.policy.name}`),
-      ...(saving || (!rule.enabled && !rule.policy.published)
+      h.AriaLabel(`${rule.enabled ? "Disable" : "Enable"} ${ruleName(rule)}`),
+      ...(saving || (!rule.enabled && !ruleCanEnable(rule))
         ? [h.Disabled(true)]
         : []),
       h.OnClick(M.ToggledRule({ ruleId: rule.id })),
@@ -540,7 +508,7 @@ const ruleMenu = (
           M.GotRuleMenuMessage({ ruleId: rule.id, message }),
         viewInputs: menuInputs(
           h,
-          `Actions for ${rule.policy.name} / ${rule.label}`,
+          `Actions for ${ruleName(rule)} / ${rule.label}`,
           RuleAction.literals,
           "label rule",
         ),
@@ -577,20 +545,24 @@ const menuInputs = <Action extends string>(
 const modals = (
   h: HtmlBuilder<M.Message>,
   model: Model,
+  surface: Surface,
 ): ReadonlyArray<Html> => [
-  ...(model.policyEditor._tag === "PolicyEditorClosed"
+  ...(surface !== "Policies" || model.policyEditor._tag === "PolicyEditorClosed"
     ? []
     : [policyEditor(h, model)]),
-  ...(model.publishing._tag === "PublishClosed"
+  ...(surface !== "Policies" || model.publishing._tag === "PublishClosed"
     ? []
     : [publishModal(h, model)]),
-  ...(model.ruleEditor._tag === "RuleEditorClosed"
+  ...(surface !== "AutoLabeling" || model.ruleEditor._tag === "RuleEditorClosed"
     ? []
     : [ruleEditor(h, model)]),
-  ...(model.ruleDeletion._tag === "RuleDeleteClosed"
+  ...(surface !== "AutoLabeling" ||
+  model.ruleDeletion._tag === "RuleDeleteClosed"
     ? []
     : [deleteRuleModal(h, model)]),
-  ...(model.test._tag === "TestClosed" ? [] : [testModal(h, model)]),
+  ...(surface !== "Policies" || model.test._tag === "TestClosed"
+    ? []
+    : [testModal(h, model)]),
 ]
 
 const policyEditor = (h: HtmlBuilder<M.Message>, model: Model): Html => {
@@ -717,7 +689,7 @@ const policyEditor = (h: HtmlBuilder<M.Message>, model: Model): Html => {
           h.p(
             [h.Class("mb-3 mt-1 text-xs text-muted-foreground")],
             [
-              "Edit the complete pull request policy as JSON. Press Ctrl-Space for context-aware completions.",
+              'Edit the complete pull request policy as JSON. Press Ctrl-Space for context-aware completions, including "Include published policy" to pin and reuse another policy.',
             ],
           ),
           h.submodel({
@@ -826,7 +798,16 @@ const validationView = (h: HtmlBuilder<M.Message>, model: Model): Html => {
       return h.empty
     case "ValidationFailed":
       return alert(h, model.validation.message)
-    case "ValidationResult":
+    case "ValidationResult": {
+      const references = model.validation.result.references.map((versionId) => {
+        if (model.repository._tag !== "LoadedRepository") return versionId
+        const policy = model.repository.data.policies.find(
+          (policy) => policy.publishedVersionId === versionId,
+        )
+        return policy === undefined
+          ? versionId
+          : `${policy.name} (${versionId})`
+      })
       return h.div(
         [
           h.Role("status"),
@@ -843,8 +824,17 @@ const validationView = (h: HtmlBuilder<M.Message>, model: Model): Html => {
               `${model.validation.result.nodeCount} nodes / facts: ${model.validation.result.facts.join(", ") || "none"} / triggers: ${model.validation.result.triggers.join(", ") || "none"}`,
             ],
           ),
+          ...(references.length === 0
+            ? []
+            : [
+                h.p(
+                  [h.Class("mt-1")],
+                  [`Included published policies: ${references.join(", ")}`],
+                ),
+              ]),
         ],
       )
+    }
   }
 }
 
@@ -953,12 +943,10 @@ const ruleEditor = (h: HtmlBuilder<M.Message>, model: Model): Html => {
   const loaded =
     model.repository._tag === "LoadedRepository" ? model.repository.data : null
   const published = publishedPolicies(model)
-  const selected =
-    loaded?.policies.find((policy) => policy.id === editor.draft.policyId) ??
-    null
-  const unavailable = selected === null || selected.publishedVersionId === null
+  const unavailable = !validRuleDraft(model, editor.draft)
   const saving = editor._tag === "RuleEditorSaving"
   const conflict = editor._tag === "RuleEditorConflict"
+  const newRule = editor.identity._tag === "NewRule"
   return modalShell(
     h,
     model.ruleEditorDialog,
@@ -971,7 +959,7 @@ const ruleEditor = (h: HtmlBuilder<M.Message>, model: Model): Html => {
         editor.identity._tag === "NewRule"
           ? "Create label rule"
           : "Edit label rule",
-        "Published policy binding",
+        editor.draft._tag === "PolicyLabelingRule" ? "Policy rule" : "AI rule",
         M.ClosedRuleEditor(),
         saving,
       ),
@@ -980,38 +968,85 @@ const ruleEditor = (h: HtmlBuilder<M.Message>, model: Model): Html => {
         : conflict
           ? [conflictAlert(h, editor.message)]
           : []),
-      ...(unavailable
+      ...(editor.draft._tag === "PolicyLabelingRule" && published.length === 0
         ? [
             alert(
               h,
-              "This policy is unpublished. Select a published policy before saving or enabling the rule.",
+              "Publish a policy before saving a policy rule. You can create an ungated AI rule without one.",
             ),
           ]
         : []),
+      ...(newRule
+        ? [
+            field(
+              h,
+              "rule-type",
+              "Rule type",
+              h.select(
+                [
+                  h.Id("rule-type"),
+                  h.Value(editor.draft._tag),
+                  h.OnInput((value) =>
+                    M.ChangedRuleType({
+                      ruleType:
+                        value === "AiLabelingRule"
+                          ? "AiLabelingRule"
+                          : "PolicyLabelingRule",
+                    }),
+                  ),
+                  h.Class(inputClass),
+                ],
+                [
+                  h.option(
+                    [
+                      h.Value("PolicyLabelingRule"),
+                      ...(published.length === 0 ? [h.Disabled(true)] : []),
+                    ],
+                    ["Policy rule"],
+                  ),
+                  h.option([h.Value("AiLabelingRule")], ["AI rule"]),
+                ],
+              ),
+              "mt-5",
+            ),
+          ]
+        : [
+            h.p(
+              [h.Class("mt-5 text-sm text-muted-foreground")],
+              [
+                `Rule type: ${editor.draft._tag === "PolicyLabelingRule" ? "Policy" : "AI"}. Existing rule types cannot be changed.`,
+              ],
+            ),
+          ]),
+      ...(editor.draft._tag === "PolicyLabelingRule"
+        ? [
+            field(
+              h,
+              "rule-policy",
+              "Published policy",
+              h.select(
+                [
+                  h.Id("rule-policy"),
+                  h.Value(editor.draft.policyId),
+                  h.OnInput((value) => {
+                    const item = published.find((policy) => policy.id === value)
+                    return item === undefined
+                      ? M.IgnoredInput()
+                      : M.UpdatedRulePolicy({ policyId: item.id })
+                  }),
+                  h.Class(inputClass),
+                ],
+                published.map((policy) =>
+                  h.option([h.Value(policy.id)], [policy.name]),
+                ),
+              ),
+              "mt-4",
+            ),
+          ]
+        : aiRuleFields(h, editor.draft, published)),
       h.div(
         [h.Class("mt-5 grid gap-4 sm:grid-cols-2")],
         [
-          field(
-            h,
-            "rule-policy",
-            "Published policy",
-            h.select(
-              [
-                h.Id("rule-policy"),
-                h.Value(editor.draft.policyId),
-                h.OnInput((value) => {
-                  const item = published.find((policy) => policy.id === value)
-                  return item === undefined
-                    ? M.IgnoredInput()
-                    : M.UpdatedRulePolicy({ policyId: item.id })
-                }),
-                h.Class(inputClass),
-              ],
-              published.map((policy) =>
-                h.option([h.Value(policy.id)], [policy.name]),
-              ),
-            ),
-          ),
           field(
             h,
             "rule-label",
@@ -1060,11 +1095,14 @@ const ruleEditor = (h: HtmlBuilder<M.Message>, model: Model): Html => {
               h.Id("rule-group"),
               h.Type("text"),
               h.Value(editor.draft.conflictGroup),
+              h.AriaDescribedBy("rule-group-description"),
               h.OnInput((conflictGroup) =>
                 M.UpdatedRuleConflictGroup({ conflictGroup }),
               ),
               h.Class(inputClass),
             ]),
+            "",
+            "Rules with the same group are mutually exclusive. If several match, the lowest priority number wins and other labels in the group are removed.",
           ),
           field(
             h,
@@ -1128,9 +1166,7 @@ const ruleEditor = (h: HtmlBuilder<M.Message>, model: Model): Html => {
                 h.button(
                   [
                     h.Type("button"),
-                    ...(saving || unavailable || editor.draft.label.length === 0
-                      ? [h.Disabled(true)]
-                      : []),
+                    ...(saving || unavailable ? [h.Disabled(true)] : []),
                     h.OnClick(M.SavedRule()),
                     h.Class(primaryButton),
                   ],
@@ -1142,6 +1178,128 @@ const ruleEditor = (h: HtmlBuilder<M.Message>, model: Model): Html => {
     ],
   )
 }
+
+const aiRuleFields = (
+  h: HtmlBuilder<M.Message>,
+  draft: Extract<
+    Model["ruleEditor"],
+    { _tag: "RuleEditorEditing" }
+  >["draft"] & { readonly _tag: "AiLabelingRule" },
+  published: ReadonlyArray<Policy>,
+): ReadonlyArray<Html> => [
+  field(
+    h,
+    "rule-prompt",
+    "AI prompt",
+    h.textarea([
+      h.Id("rule-prompt"),
+      h.Value(draft.prompt),
+      h.AriaInvalid(
+        draft.prompt.trim().length === 0 || draft.prompt.length > 4_000,
+      ),
+      h.OnInput((prompt) => M.UpdatedRulePrompt({ prompt })),
+      h.Class(`${inputClass} min-h-28`),
+    ]),
+    "mt-4",
+  ),
+  h.fieldset(
+    [h.Class("mt-4 rounded-lg border p-3")],
+    [
+      h.legend(
+        [
+          h.Class(
+            "px-1 font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground",
+          ),
+        ],
+        ["Information available to AI"],
+      ),
+      h.p(
+        [h.Class("mb-3 text-sm text-muted-foreground")],
+        [
+          "Selected pull request information is sent to the AI alongside your prompt. Select only what the AI needs to make this decision.",
+        ],
+      ),
+      h.div(
+        [h.Class("grid gap-2 sm:grid-cols-2")],
+        pullRequestFacts.map((fact) =>
+          h.label(
+            [h.Class("flex items-center gap-2 text-sm")],
+            [
+              h.input([
+                h.Type("checkbox"),
+                h.AriaLabel(fact),
+                h.Checked(draft.evidence.includes(fact)),
+                h.OnClick(M.ToggledRuleEvidence({ fact })),
+              ]),
+              fact,
+            ],
+          ),
+        ),
+      ),
+      ...(draft.evidence.length === 0
+        ? [
+            h.p(
+              [h.Class("mt-2 text-sm text-destructive")],
+              ["Select at least one evidence fact."],
+            ),
+          ]
+        : []),
+    ],
+  ),
+  h.div(
+    [h.Class("mt-4 grid gap-4 sm:grid-cols-2")],
+    [
+      field(
+        h,
+        "rule-confidence",
+        "Minimum confidence",
+        h.input([
+          h.Id("rule-confidence"),
+          h.Type("number"),
+          h.Value(String(draft.minimumConfidence)),
+          h.Min("0"),
+          h.Max("1"),
+          h.Step("0.01"),
+          h.OnInput((value) =>
+            M.UpdatedRuleMinimumConfidence({
+              minimumConfidence: Number(value),
+            }),
+          ),
+          h.Class(inputClass),
+        ]),
+      ),
+      field(
+        h,
+        "rule-gate-policy",
+        "Gate policy (optional)",
+        h.select(
+          [
+            h.Id("rule-gate-policy"),
+            h.Value(draft.gatePolicyId ?? ""),
+            h.AriaDescribedBy("rule-gate-policy-description"),
+            h.OnInput((value) => {
+              const gate = published.find((policy) => policy.id === value)
+              return value === ""
+                ? M.UpdatedRuleGatePolicy({ gatePolicyId: null })
+                : gate === undefined
+                  ? M.IgnoredInput()
+                  : M.UpdatedRuleGatePolicy({ gatePolicyId: gate.id })
+            }),
+            h.Class(inputClass),
+          ],
+          [
+            h.option([h.Value("")], ["No deterministic gate"]),
+            ...published.map((policy) =>
+              h.option([h.Value(policy.id)], [policy.name]),
+            ),
+          ],
+        ),
+        "sm:col-span-2",
+        "AI runs only when this published policy matches. If it does not match, the current label is preserved.",
+      ),
+    ],
+  ),
+]
 
 const deleteRuleModal = (h: HtmlBuilder<M.Message>, model: Model): Html => {
   const deletion = model.ruleDeletion
@@ -1157,7 +1315,7 @@ const deleteRuleModal = (h: HtmlBuilder<M.Message>, model: Model): Html => {
         h,
         model.ruleDeleteDialog,
         "Delete label rule",
-        `${deletion.rule.policy.name} / ${deletion.rule.label}`,
+        `${ruleName(deletion.rule)} / ${deletion.rule.label}`,
         M.DismissedDeleteRule(),
         deleting,
       ),
@@ -1169,7 +1327,7 @@ const deleteRuleModal = (h: HtmlBuilder<M.Message>, model: Model): Html => {
         [
           deletion.rule.enabled
             ? "Disable this rule before deleting it."
-            : "This removes only the binding; policy versions remain intact.",
+            : "This removes only the label rule; policies remain intact.",
         ],
       ),
       h.div(
@@ -1489,6 +1647,27 @@ const errorPanel = (
       ),
     ],
   )
+const policyRequiredPanel = (h: HtmlBuilder<M.Message>): Html =>
+  h.div(
+    [
+      h.Role("alert"),
+      h.Class(
+        "mt-6 rounded-xl border border-destructive/30 bg-destructive/5 p-4",
+      ),
+    ],
+    [
+      h.p(
+        [],
+        [
+          "No policies are published. Policy rules and AI gates are unavailable, but ungated AI rules can still be created.",
+        ],
+      ),
+      h.a(
+        [h.Href("/policies"), h.Class(`mt-3 ${secondaryButton}`)],
+        ["View policies"],
+      ),
+    ],
+  )
 const statusPanel = (
   h: HtmlBuilder<M.Message>,
   title: string,
@@ -1496,6 +1675,18 @@ const statusPanel = (
 ): Html =>
   h.div(
     [h.Class("mt-6 rounded-xl border bg-card p-6 text-center")],
+    [
+      h.h3([h.Class("font-semibold")], [title]),
+      h.p([h.Class("mt-2 text-sm text-muted-foreground")], [description]),
+    ],
+  )
+const tableEmptyState = (
+  h: HtmlBuilder<M.Message>,
+  title: string,
+  description: string,
+): Html =>
+  h.div(
+    [h.Class("px-4 py-8 text-center")],
     [
       h.h3([h.Class("font-semibold")], [title]),
       h.p([h.Class("mt-2 text-sm text-muted-foreground")], [description]),
@@ -1538,6 +1729,7 @@ const field = (
   label: string,
   control: Html,
   className = "",
+  description?: string,
 ): Html =>
   h.div(
     [h.Class(className)],
@@ -1552,6 +1744,17 @@ const field = (
         [label],
       ),
       control,
+      ...(description === undefined
+        ? []
+        : [
+            h.p(
+              [
+                h.Id(`${id}-description`),
+                h.Class("mt-2 text-xs leading-5 text-muted-foreground"),
+              ],
+              [description],
+            ),
+          ]),
     ],
   )
 const statusBadge = (h: HtmlBuilder<M.Message>, label: string): Html =>
@@ -1578,3 +1781,23 @@ const publishedPolicies = (model: Model): ReadonlyArray<Policy> =>
         (policy) => policy.publishedVersionId !== null,
       )
     : []
+
+const pullRequestFacts = [
+  ...PolicyProgram.PullRequestScalarFact.literals,
+  ...PolicyProgram.PullRequestCollectionFact.literals,
+] as const
+
+const ruleName = (rule: Rule): string =>
+  rule._tag === "PolicyLabelingRule" ? rule.policy.name : `AI ${rule.label}`
+
+const ruleContext = (rule: Rule): string =>
+  rule._tag === "PolicyLabelingRule"
+    ? rule.policy.name
+    : rule.gatePolicy === null
+      ? "No gate policy"
+      : `Gate: ${rule.gatePolicy.name}`
+
+const ruleCanEnable = (rule: Rule): boolean =>
+  rule._tag === "PolicyLabelingRule"
+    ? rule.policy.published
+    : rule.gatePolicy === null || rule.gatePolicy.published

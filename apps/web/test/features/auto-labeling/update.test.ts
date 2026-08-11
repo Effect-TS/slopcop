@@ -6,7 +6,10 @@ import * as Result from "effect/Result"
 import * as Schema from "effect/Schema"
 import { describe, expect, it } from "vite-plus/test"
 import * as AutoLabeling from "../../../src/features/auto-labeling.ts"
-import { toProgram } from "../../../src/features/auto-labeling/condition.ts"
+import {
+  NodeKind,
+  toProgram,
+} from "../../../src/features/auto-labeling/condition.ts"
 
 const repository = { owner: "effect", repo: "slopcop" }
 const otherRepository = { owner: "effect", repo: "platform" }
@@ -61,6 +64,7 @@ const detail = Schema.decodeUnknownSync(PolicyManagement.PublicPolicyDetail)({
   },
 })
 const rule = Schema.decodeUnknownSync(RuleManagement.PublicLabelingRule)({
+  _tag: "PolicyLabelingRule",
   id: "rule-1",
   policyId: publishedPolicy.id,
   label: "documentation",
@@ -347,41 +351,8 @@ describe("generic policy programs", () => {
     })
   })
 
-  it("configures AI with fixed evaluator, evidence, prompt, and confidence", () => {
-    const model = newPolicyModel()
-    if (model.policyEditor._tag !== "PolicyEditorEditing")
-      throw new Error("Expected policy editor")
-    const clientId = model.policyEditor.draft.matchesWhen.clientId
-    const [ai] = AutoLabeling.update(
-      model,
-      AutoLabeling.ChangedConditionKind({ clientId, kind: "AiPrompt" }),
-    )
-    const [prompted] = AutoLabeling.update(
-      ai,
-      AutoLabeling.UpdatedAiPrompt({
-        clientId,
-        prompt: "Does this change documentation?",
-      }),
-    )
-    const [evidence] = AutoLabeling.update(
-      prompted,
-      AutoLabeling.ToggledAiEvidence({ clientId, fact: "pull_request.body" }),
-    )
-    const [confidence] = AutoLabeling.update(
-      evidence,
-      AutoLabeling.UpdatedAiConfidence({ clientId, minimumConfidence: 0.9 }),
-    )
-    expect(confidence.policyEditor).toMatchObject({
-      draft: {
-        matchesWhen: {
-          _tag: "AiPrompt",
-          evaluator: "boolean-policy-v1",
-          prompt: "Does this change documentation?",
-          evidence: ["pull_request.title", "pull_request.body"],
-          minimumConfidence: 0.9,
-        },
-      },
-    })
+  it("does not expose AI as a policy condition kind", () => {
+    expect(NodeKind.literals).not.toContain("AiPrompt")
   })
 
   it("pins PolicyReference to an exact published version ID", () => {
@@ -700,8 +671,8 @@ describe("policy detail, validation, publication, and testing", () => {
   })
 })
 
-describe("published policy label bindings and request safety", () => {
-  it("blocks new bindings when no policy is published", () => {
+describe("label rule variants and request safety", () => {
+  it("opens an ungated AI rule when no policy is published", () => {
     const [loading] = AutoLabeling.update(
       AutoLabeling.init(),
       AutoLabeling.SelectedRepositoryChanged({ repository }),
@@ -714,12 +685,19 @@ describe("published policy label bindings and request safety", () => {
         rules: [],
       }),
     )
-    const [unchanged, commands] = AutoLabeling.update(
+    const [editing, commands] = AutoLabeling.update(
       draftOnly,
       AutoLabeling.OpenedNewRule(),
     )
-    expect(unchanged).toEqual(draftOnly)
-    expect(commands).toEqual([])
+    expect(editing.ruleEditor).toMatchObject({
+      _tag: "RuleEditorEditing",
+      draft: {
+        _tag: "AiLabelingRule",
+        gatePolicyId: null,
+        evaluator: "boolean-policy-v1",
+      },
+    })
+    expect(commands.some((command) => command.name === "ShowDialog")).toBe(true)
   })
 
   it("creates a rule bound to a published PolicyId with generic behavior", () => {
@@ -746,10 +724,54 @@ describe("published policy label bindings and request safety", () => {
     expect(commands[0]?.args).toMatchObject({
       identity: { _tag: "NewRule" },
       draft: {
+        _tag: "PolicyLabelingRule",
         policyId: publishedPolicy.id,
         onNoMatch: "ensure-absent",
         conflictGroup: "area",
         priority: 20,
+      },
+    })
+  })
+
+  it("creates an AI rule with evidence, confidence, and an optional gate", () => {
+    const [policyDraft] = AutoLabeling.update(
+      loadedModel(),
+      AutoLabeling.OpenedNewRule(),
+    )
+    const [aiDraft] = AutoLabeling.update(
+      policyDraft,
+      AutoLabeling.ChangedRuleType({ ruleType: "AiLabelingRule" }),
+    )
+    const [prompted] = AutoLabeling.update(
+      aiDraft,
+      AutoLabeling.UpdatedRulePrompt({
+        prompt: "Does this pull request change documentation?",
+      }),
+    )
+    const [withEvidence] = AutoLabeling.update(
+      prompted,
+      AutoLabeling.ToggledRuleEvidence({ fact: "pull_request.body" }),
+    )
+    const [confident] = AutoLabeling.update(
+      withEvidence,
+      AutoLabeling.UpdatedRuleMinimumConfidence({ minimumConfidence: 0.9 }),
+    )
+    const [gated] = AutoLabeling.update(
+      confident,
+      AutoLabeling.UpdatedRuleGatePolicy({
+        gatePolicyId: publishedPolicy.id,
+      }),
+    )
+    const [, commands] = AutoLabeling.update(gated, AutoLabeling.SavedRule())
+    expect(commands[0]?.args).toMatchObject({
+      identity: { _tag: "NewRule" },
+      draft: {
+        _tag: "AiLabelingRule",
+        prompt: "Does this pull request change documentation?",
+        evidence: ["pull_request.title", "pull_request.body"],
+        minimumConfidence: 0.9,
+        evaluator: "boolean-policy-v1",
+        gatePolicyId: publishedPolicy.id,
       },
     })
   })
@@ -1150,23 +1172,6 @@ describe("final policy UI lifecycle and boundary safety", () => {
     expect(
       AutoLabeling.update(invalidIn, AutoLabeling.SavedPolicy())[1],
     ).toEqual([])
-
-    const [ai] = AutoLabeling.update(
-      model,
-      AutoLabeling.ChangedConditionKind({ clientId, kind: "AiPrompt" }),
-    )
-    const [longPrompt] = AutoLabeling.update(
-      ai,
-      AutoLabeling.UpdatedAiPrompt({ clientId, prompt: "x".repeat(4_001) }),
-    )
-    if (longPrompt.policyEditor._tag !== "PolicyEditorEditing")
-      throw new Error("Expected policy editor")
-    expect(AutoLabeling.validPolicyDraft(longPrompt.policyEditor.draft)).toBe(
-      false,
-    )
-    expect(Result.isFailure(toProgram(longPrompt.policyEditor.draft))).toBe(
-      true,
-    )
   })
 
   it("strips visual editor client identities from policy programs", () => {

@@ -8,7 +8,7 @@ export const init = (input: {
   readonly references: ReadonlyArray<PolicyReference>
 }): Model => ({
   id: input.id,
-  source: formatProgram(input.program),
+  source: formatProgram(input.program, input.references),
   program: input.program,
   error: null,
   mountStatus: "Mounting",

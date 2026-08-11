@@ -14,7 +14,7 @@ export const planLabelActions = (
   const winners = new Map<string, Rule.LabelingRule["id"]>()
   const grouped = new Map<string, Array<Rule.LabelingRule>>()
   for (const rule of rules) {
-    const decision = decisions.get(rule.policyId)
+    const decision = decisions.get(rule.id)
     if (
       rule.conflictGroup !== null &&
       rule.enabled &&
@@ -34,7 +34,7 @@ export const planLabelActions = (
     if (winner !== undefined) winners.set(group, winner.id)
   }
   return rules.map((rule) => {
-    const decision = decisions.get(rule.policyId)
+    const decision = decisions.get(rule.id)
     if (
       !rule.enabled ||
       rule.validationStatus !== "valid" ||

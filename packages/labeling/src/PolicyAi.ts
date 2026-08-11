@@ -1,10 +1,29 @@
+import type { AiEvaluator } from "@slopcop/domain/Labeling/LabelingRule"
 import * as Context from "effect/Context"
 import * as Data from "effect/Data"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Schema from "effect/Schema"
 import * as LanguageModel from "effect/unstable/ai/LanguageModel"
-import type { AiPromptEvaluator } from "./PolicyEngine.ts"
+
+export interface PolicyAiEvaluatorInput {
+  readonly evaluator: AiEvaluator
+  readonly prompt: string
+  readonly evidence: Readonly<Record<string, unknown>>
+}
+export interface PolicyAiEvaluatorResult {
+  readonly matches: boolean
+  readonly confidence: number
+  readonly rationale: string
+}
+export interface PolicyAiEvaluator {
+  readonly evaluate: (
+    input: PolicyAiEvaluatorInput,
+  ) => Effect.Effect<
+    PolicyAiEvaluatorResult,
+    PolicyAiError | PolicyAiUnavailableError
+  >
+}
 
 const Response = Schema.Struct({
   matches: Schema.Boolean,
@@ -25,7 +44,7 @@ export class PolicyAiUnavailableError extends Data.TaggedError(
   readonly message: string
 }> {}
 
-export class PolicyAi extends Context.Service<PolicyAi, AiPromptEvaluator>()(
+export class PolicyAi extends Context.Service<PolicyAi, PolicyAiEvaluator>()(
   "@slopcop/labeling/PolicyAi",
   {
     make: Effect.gen(function* () {

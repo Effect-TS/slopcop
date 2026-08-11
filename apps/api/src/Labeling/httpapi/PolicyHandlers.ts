@@ -110,6 +110,16 @@ const mapPolicyTestError = (
         }),
       )
 
+const mapPolicyTestOperationError = (
+  error: LabelingPolicyTestError | PoliciesError,
+): Effect.Effect<
+  never,
+  PublicPolicyError | PullRequestNotFound | PolicyTestUnavailable
+> =>
+  error._tag === "LabelingPolicyTestError"
+    ? mapPolicyTestError(error)
+    : mapError(error)
+
 export const LabelingPoliciesApiHandlersLayer = HttpApiBuilder.group(
   RootApi,
   "labelingPolicies",
@@ -176,11 +186,7 @@ export const LabelingPoliciesApiHandlersLayer = HttpApiBuilder.group(
       testPolicy: ({ params, payload }) =>
         tester
           .test(params, params.policyId, payload.pullRequestNumber)
-          .pipe(
-            Effect.catchTag("LabelingPolicyTestError", (error) =>
-              mapPolicyTestError(error),
-            ),
-          ),
+          .pipe(Effect.catch(mapPolicyTestOperationError)),
     })
   }),
 ).pipe(Layer.provide(LabelingAdminMiddlewareLayer))

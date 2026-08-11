@@ -11,7 +11,8 @@ const repositoryId = Schema.decodeUnknownSync(
   GitHubRepository.GitHubRepositoryId,
 )("repo")
 const policyId = Schema.decodeUnknownSync(Policy.LabelingPolicyId)("policy")
-const rule = new Rule.LabelingRule({
+const rule = new Rule.PolicyLabelingRule({
+  _tag: "PolicyLabelingRule",
   id: Schema.decodeUnknownSync(Rule.LabelingRuleId)("rule"),
   repositoryId,
   policyId,
@@ -34,20 +35,21 @@ describe("label actions", () => {
     expect(
       planLabelActions(
         [rule],
-        new Map([[policyId, { ...base, outcome: "Abstain" }]]),
+        new Map([[rule.id, { ...base, outcome: "Abstain" }]]),
         new Set(["ready"]),
       )[0]?.action,
     ).toBe("preserve")
     expect(
       planLabelActions(
         [rule],
-        new Map([[policyId, { ...base, outcome: "NoMatch" }]]),
+        new Map([[rule.id, { ...base, outcome: "NoMatch" }]]),
         new Set(["ready"]),
       )[0]?.action,
     ).toBe("remove")
   })
   it("selects one deterministic owner in a conflict group", () => {
-    const preferred = new Rule.LabelingRule({
+    const preferred = new Rule.PolicyLabelingRule({
+      _tag: "PolicyLabelingRule",
       id: Schema.decodeUnknownSync(Rule.LabelingRuleId)("preferred"),
       repositoryId: rule.repositoryId,
       policyId: rule.policyId,
@@ -64,7 +66,8 @@ describe("label actions", () => {
       updatedAt: rule.updatedAt,
       deletedAt: rule.deletedAt,
     })
-    const secondary = new Rule.LabelingRule({
+    const secondary = new Rule.PolicyLabelingRule({
+      _tag: "PolicyLabelingRule",
       id: Schema.decodeUnknownSync(Rule.LabelingRuleId)("secondary"),
       repositoryId: rule.repositoryId,
       policyId: rule.policyId,
@@ -85,7 +88,11 @@ describe("label actions", () => {
       [secondary, preferred],
       new Map([
         [
-          policyId,
+          preferred.id,
+          { outcome: "Match", confidence: 1, rationale: "test", trace: [] },
+        ],
+        [
+          secondary.id,
           { outcome: "Match", confidence: 1, rationale: "test", trace: [] },
         ],
       ]),

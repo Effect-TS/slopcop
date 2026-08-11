@@ -31,20 +31,6 @@ export interface PullRequestFacts {
   readonly requiredChecks: ReadonlyArray<CheckObservation> | null
   readonly latestReviews: ReadonlyArray<ReviewObservation> | null
 }
-export interface AiPromptEvaluator {
-  readonly evaluate: (input: {
-    readonly evaluator: Program.AiEvaluator
-    readonly prompt: string
-    readonly evidence: Readonly<Record<string, unknown>>
-  }) => Effect.Effect<
-    {
-      readonly matches: boolean
-      readonly confidence: number
-      readonly rationale: string
-    },
-    unknown
-  >
-}
 export interface ResolvedRuntimePolicyVersion {
   readonly id: Program.PolicyVersionId
   readonly policyId: string
@@ -60,23 +46,12 @@ export interface ProgramResolver {
 export class PolicyOperationalError extends Data.TaggedError(
   "PolicyOperationalError",
 )<{
-  readonly stage: "ai" | "reference"
+  readonly stage: "reference"
   readonly location: Program.PolicyNodeLocation
   readonly retryable: boolean
   readonly message: string
   readonly cause: unknown
 }> {}
-const isTaggedCause = (
-  cause: unknown,
-  tag: string,
-): cause is { readonly _tag: string; readonly message: string } =>
-  typeof cause === "object" &&
-  cause !== null &&
-  "_tag" in cause &&
-  cause._tag === tag &&
-  "message" in cause &&
-  typeof cause.message === "string"
-
 type NodeResult = {
   readonly outcome: Program.PolicyOutcome
   readonly confidence: number
@@ -254,13 +229,10 @@ export const evaluatePolicyProgram = Effect.fn("PolicyEngine.evaluate")(
     readonly program: Program.PolicyProgram
     readonly repositoryId: string
     readonly facts: PullRequestFacts
-    readonly ai: AiPromptEvaluator
     readonly resolver: ProgramResolver
   }) {
     const trace: Array<Program.PolicyNodeTrace> = []
-    const aiMemo = new Map<string, Evaluated>()
     const activeReferences = new Set<Program.PolicyVersionId>()
-    let aiCalls = 0
 
     const evaluateProgram = (
       program: Program.PolicyProgram,
@@ -426,83 +398,6 @@ export const evaluatePolicyProgram = Effect.fn("PolicyEngine.evaluate")(
                     : result("Abstain", abstain.rationale, confidence),
                 )
               }
-            }
-            break
-          }
-          case "AiPrompt": {
-            const evidence = Object.fromEntries(
-              node.evidence.map((key) => [key, fact(input.facts, key)]),
-            )
-            const key = JSON.stringify([node.evaluator, node.prompt, evidence])
-            const cached = aiMemo.get(key)
-            if (cached !== undefined) value = cached
-            else if (aiCalls >= 1)
-              value = {
-                _tag: "Failure",
-                error: new PolicyOperationalError({
-                  stage: "ai",
-                  location,
-                  retryable: false,
-                  message: "Policy evaluation exceeded the one-call AI budget.",
-                  cause: null,
-                }),
-              }
-            else {
-              aiCalls++
-              value = yield* input.ai
-                .evaluate({
-                  evaluator: node.evaluator,
-                  prompt: node.prompt,
-                  evidence,
-                })
-                .pipe(
-                  Effect.match({
-                    onFailure: (cause): Evaluated => ({
-                      _tag: "Failure",
-                      error: new PolicyOperationalError({
-                        stage: "ai",
-                        location,
-                        retryable: !isTaggedCause(
-                          cause,
-                          "PolicyAiUnavailableError",
-                        ),
-                        message: isTaggedCause(
-                          cause,
-                          "PolicyAiUnavailableError",
-                        )
-                          ? cause.message
-                          : "The registered AI evaluator failed.",
-                        cause,
-                      }),
-                    }),
-                    onSuccess: (response): Evaluated =>
-                      !Number.isFinite(response.confidence) ||
-                      response.confidence < 0 ||
-                      response.confidence > 1
-                        ? {
-                            _tag: "Failure",
-                            error: new PolicyOperationalError({
-                              stage: "ai",
-                              location,
-                              retryable: false,
-                              message:
-                                "The registered AI evaluator returned confidence outside the finite 0..1 range.",
-                              cause: response.confidence,
-                            }),
-                          }
-                        : evaluated(
-                            result(
-                              response.matches &&
-                                response.confidence >= node.minimumConfidence
-                                ? "Match"
-                                : "NoMatch",
-                              response.rationale,
-                              response.confidence,
-                            ),
-                          ),
-                  }),
-                )
-              aiMemo.set(key, value)
             }
             break
           }

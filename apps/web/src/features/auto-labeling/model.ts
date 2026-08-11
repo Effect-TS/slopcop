@@ -19,8 +19,6 @@ export const PolicyVersionId = PolicyProgram.PolicyVersionId
 export type PolicyVersionId = typeof PolicyVersionId.Type
 export const RuleId = LabelingRule.LabelingRuleId
 export type RuleId = typeof RuleId.Type
-export const Tab = Schema.Literals(["Policies", "Label rules"])
-export type Tab = typeof Tab.Type
 export const PolicyAction = Schema.Literals(["Edit", "Test", "Publish"])
 export type PolicyAction = typeof PolicyAction.Type
 export const RuleAction = Schema.Literals(["Edit", "Delete"])
@@ -49,14 +47,28 @@ export const RuleIdentity = Schema.Union([NewRule, ExistingRule]).pipe(
 )
 export type RuleIdentity = typeof RuleIdentity.Type
 
-export const RuleDraft = Schema.Struct({
-  policyId: PolicyId,
+const RuleDraftShared = {
   label: Schema.String,
   onNoMatch: LabelingRule.LabelOnNoMatch,
   conflictGroup: Schema.String,
   priority: Schema.Int,
   enabled: Schema.Boolean,
+} as const
+export const PolicyRuleDraft = Schema.TaggedStruct("PolicyLabelingRule", {
+  ...RuleDraftShared,
+  policyId: PolicyId,
 })
+export const AiRuleDraft = Schema.TaggedStruct("AiLabelingRule", {
+  ...RuleDraftShared,
+  prompt: Schema.String,
+  evidence: Schema.Array(PolicyProgram.PullRequestFact),
+  minimumConfidence: Schema.Number,
+  evaluator: Schema.Literal("boolean-policy-v1"),
+  gatePolicyId: Schema.NullOr(PolicyId),
+})
+export const RuleDraft = Schema.Union([PolicyRuleDraft, AiRuleDraft]).pipe(
+  Schema.toTaggedUnion("_tag"),
+)
 export type RuleDraft = typeof RuleDraft.Type
 
 export const RepositoryData = Schema.Struct({
@@ -275,7 +287,6 @@ export const RowMutationState = Schema.Union([
 ]).pipe(Schema.toTaggedUnion("_tag"))
 
 export const Model = Schema.Struct({
-  tab: Tab,
   repository: RepositoryState,
   repositoryRequest: Schema.NullOr(RepositoryRequest),
   refreshError: Schema.NullOr(Schema.String),
@@ -308,11 +319,23 @@ export const currentRepository = (model: Model): Repository | null =>
 
 export const ruleDraftFrom = (
   rule: typeof RuleManagement.PublicLabelingRule.Type,
-): RuleDraft => ({
-  policyId: rule.policyId,
-  label: rule.label,
-  onNoMatch: rule.onNoMatch,
-  conflictGroup: rule.conflictGroup ?? "",
-  priority: rule.priority,
-  enabled: rule.enabled,
-})
+): RuleDraft => {
+  const shared = {
+    label: rule.label,
+    onNoMatch: rule.onNoMatch,
+    conflictGroup: rule.conflictGroup ?? "",
+    priority: rule.priority,
+    enabled: rule.enabled,
+  }
+  return rule._tag === "PolicyLabelingRule"
+    ? { _tag: rule._tag, ...shared, policyId: rule.policyId }
+    : {
+        _tag: rule._tag,
+        ...shared,
+        prompt: rule.prompt,
+        evidence: rule.evidence,
+        minimumConfidence: rule.minimumConfidence,
+        evaluator: rule.evaluator,
+        gatePolicyId: rule.gatePolicyId,
+      }
+}

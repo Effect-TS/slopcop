@@ -106,6 +106,22 @@ describe("policy editor", () => {
     expect(issue._tag).toBe("InvalidPolicy")
   })
 
+  it("rejects AI nodes in deterministic policies", () => {
+    const validation = PolicyEditor.validateSource(
+      JSON.stringify({
+        target: "pull_request",
+        matchesWhen: {
+          aiPrompt: "Classify this pull request.",
+          evidence: ["pull_request.title"],
+          minimumConfidence: 0.8,
+          evaluator: "boolean-policy-v1",
+        },
+      }),
+    )
+
+    expect(validation._tag).toBe("InvalidPolicy")
+  })
+
   it("allows appliesWhen to be omitted from authored JSON", () => {
     const source = JSON.stringify({
       target: defaultProgram.target,
@@ -303,7 +319,7 @@ describe("policy editor", () => {
 
   it("offers repository policy references by name", async () => {
     const source = `{
-  "policyVersionId": ""
+  "policy": ""
 }`
     const position = source.lastIndexOf('""') + 1
     const state = EditorState.create({ doc: source, extensions: [json()] })
@@ -322,6 +338,65 @@ describe("policy editor", () => {
         detail: "version-1",
       }),
     )
+  })
+
+  it("resolves policy names to immutable published version pins", () => {
+    const reference = {
+      name: "Shared policy",
+      policyVersionId: Schema.decodeUnknownSync(PolicyProgram.PolicyVersionId)(
+        "version-1",
+      ),
+    }
+    const validation = PolicyEditor.validateSource(
+      JSON.stringify({
+        target: "pull_request",
+        matchesWhen: { policy: "Shared policy" },
+      }),
+      [reference],
+    )
+
+    expect(validation).toMatchObject({
+      _tag: "Valid",
+      program: {
+        matchesWhen: {
+          _tag: "PolicyReference",
+          policyVersionId: "version-1",
+        },
+      },
+    })
+    expect(
+      PolicyEditor.formatProgram(
+        Schema.decodeUnknownSync(PolicyProgram.PolicyProgram)({
+          target: "pull_request",
+          matchesWhen: {
+            _tag: "PolicyReference",
+            policyVersionId: "version-1",
+          },
+        }),
+        [reference],
+      ),
+    ).toContain('"policy": "Shared policy"')
+  })
+
+  it("rejects ambiguous published policy names", () => {
+    const validation = PolicyEditor.validateSource(
+      JSON.stringify({
+        target: "pull_request",
+        matchesWhen: { policy: "Shared policy" },
+      }),
+      ["version-1", "version-2"].map((policyVersionId) => ({
+        name: "Shared policy",
+        policyVersionId: Schema.decodeUnknownSync(
+          PolicyProgram.PolicyVersionId,
+        )(policyVersionId),
+      })),
+    )
+
+    expect(validation).toMatchObject({
+      _tag: "InvalidPolicy",
+      message:
+        "More than one published policy is named 'Shared policy'. Rename one before including it.",
+    })
   })
 
   it("offers collection fields inside semantic item groups", async () => {
@@ -355,10 +430,12 @@ describe("policy editor", () => {
     ])
   })
 
-  it("does not offer internal policy fields", async () => {
+  it("only offers properties inside an opened property-name string", async () => {
     const propertySource = `{
-  "fact": "pull_request.title",
-  ""
+  "target": "pull_request",
+  "matchesWhen": {
+    ""
+  }
 }`
     const propertyPosition = propertySource.lastIndexOf('""') + 1
     const propertyResult = await policyCompletionSource([])(
@@ -374,14 +451,26 @@ describe("policy editor", () => {
     expect(propertyResult?.options.map((option) => option.label)).not.toContain(
       "_tag",
     )
+    expect(propertyResult?.options.map((option) => option.label)).toContain(
+      "fact",
+    )
+    expect(propertyResult?.options.map((option) => option.label)).not.toContain(
+      "Fact predicate node",
+    )
+    expect(propertyResult?.options.map((option) => option.label)).not.toContain(
+      "All condition group",
+    )
+  })
 
-    const snippetSource = `{
+  it("offers full nodes at an unquoted empty-node position", async () => {
+    const markedSource = `{
   "target": "pull_request",
   "matchesWhen": {
-    ""
+    |
   }
 }`
-    const snippetPosition = snippetSource.lastIndexOf('""') + 1
+    const snippetPosition = markedSource.indexOf("|")
+    const snippetSource = markedSource.replace("|", "")
     const element = document.createElement("div")
     document.body.append(element)
     const editor = createPolicyEditor({
@@ -398,10 +487,17 @@ describe("policy editor", () => {
     const snippetIndex = currentCompletions(editor.state).findIndex(
       (option) => option.label === "Fact predicate node",
     )
+    expect(
+      currentCompletions(editor.state).map((option) => option.label),
+    ).toContain("Include published policy")
+    expect(
+      currentCompletions(editor.state).map((option) => option.label),
+    ).not.toContain("AI prompt node")
     expect(snippetIndex).toBeGreaterThanOrEqual(0)
     editor.dispatch({ effects: setSelectedCompletion(snippetIndex) })
     await new Promise((resolve) => setTimeout(resolve, 100))
     expect(acceptCompletion(editor)).toBe(true)
+    expect(editor.state.doc.toString()).toContain('"fact":')
     expect(editor.state.doc.toString()).not.toContain('"id"')
     expect(editor.state.doc.toString()).not.toContain('"_tag"')
     editor.destroy()
