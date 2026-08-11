@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect"
 import * as KeyValueStore from "effect/unstable/persistence/KeyValueStore"
 import * as Match from "effect/Match"
+import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
 import * as FoldkitCommand from "foldkit/command"
 import * as Navigation from "foldkit/navigation"
@@ -12,14 +13,18 @@ import { evo } from "foldkit/struct"
 import * as Url from "foldkit/url"
 import { ApiClient } from "./api-client"
 import * as AppSidebar from "./components/app-sidebar/index"
+import * as AutoLabeling from "./features/auto-labeling"
 import * as Icon from "./features/icon"
 import * as Setup from "./features/setup"
+import * as Settings from "./features/settings"
 import * as RepositorySelector from "./components/repository-selector"
 import * as Router from "./router"
 
 // MODEL
 
 export const Model = Schema.Struct({
+  autoLabeling: AutoLabeling.Model,
+  settings: Settings.Model,
   setup: Setup.Model,
   sidebar: AppSidebar.Model,
   route: Router.AppRoute,
@@ -52,11 +57,23 @@ export const GotSetupMessage = m("GotSetupMessage", {
 })
 export type GotSetupMessage = typeof GotSetupMessage.Type
 
+export const GotAutoLabelingMessage = m("GotAutoLabelingMessage", {
+  message: AutoLabeling.Message,
+})
+export type GotAutoLabelingMessage = typeof GotAutoLabelingMessage.Type
+
+export const GotSettingsMessage = m("GotSettingsMessage", {
+  message: Settings.Message,
+})
+export type GotSettingsMessage = typeof GotSettingsMessage.Type
+
 export const Message = Schema.Union([
   ClickedLink,
   ChangedUrl,
   CompletedLoadExternal,
   CompletedNavigateInternal,
+  GotAutoLabelingMessage,
+  GotSettingsMessage,
   GotSidebarMessage,
   GotSetupMessage,
 ])
@@ -98,6 +115,33 @@ const mapSetupCommands = (
     GotSetupMessage({ message }),
   )
 
+const mapAutoLabelingCommands = (
+  commands: ReadonlyArray<AutoLabeling.Command>,
+): ReadonlyArray<Command> =>
+  FoldkitCommand.mapMessages(commands, (message) =>
+    GotAutoLabelingMessage({ message }),
+  )
+
+const mapSettingsCommands = (
+  commands: ReadonlyArray<Settings.Command>,
+): ReadonlyArray<Command> =>
+  FoldkitCommand.mapMessages(commands, (message) =>
+    GotSettingsMessage({ message }),
+  )
+
+const selectedRepository = (sidebar: AppSidebar.Model) =>
+  Option.getOrNull(
+    RepositorySelector.selectedRepository(sidebar.repositorySelector),
+  )
+
+const isSameRepository = (
+  left: ReturnType<typeof selectedRepository>,
+  right: ReturnType<typeof selectedRepository>,
+): boolean =>
+  left === null
+    ? right === null
+    : right !== null && left.owner === right.owner && left.repo === right.repo
+
 const reloadRepositoryCommands = (): ReadonlyArray<Command> =>
   mapSidebarCommands(
     AppSidebar.mapRepositorySelectorCommands([
@@ -122,14 +166,69 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       CompletedLoadExternal: () => [model, []],
       CompletedNavigateInternal: () => [model, []],
 
+      GotAutoLabelingMessage: ({ message: autoLabelingMessage }) => {
+        const [autoLabeling, commands] = AutoLabeling.update(
+          model.autoLabeling,
+          autoLabelingMessage,
+        )
+        return [
+          evo(model, { autoLabeling: () => autoLabeling }),
+          mapAutoLabelingCommands(commands),
+        ]
+      },
+
+      GotSettingsMessage: ({ message: settingsMessage }) => {
+        const [settings, commands] = Settings.update(
+          model.settings,
+          settingsMessage,
+        )
+        return [
+          evo(model, { settings: () => settings }),
+          [
+            ...mapSettingsCommands(commands),
+            ...(settingsMessage._tag === "UpdatedRepositoryEnabled"
+              ? reloadRepositoryCommands()
+              : []),
+          ],
+        ]
+      },
+
       GotSidebarMessage: ({ message: sidebarMessage }) => {
+        const previousRepository = selectedRepository(model.sidebar)
         const [sidebar, commands] = AppSidebar.update(
           model.sidebar,
           sidebarMessage,
         )
+        const nextRepository = selectedRepository(sidebar)
+        if (isSameRepository(previousRepository, nextRepository)) {
+          return [
+            evo(model, { sidebar: () => sidebar }),
+            mapSidebarCommands(commands),
+          ]
+        }
+        const [autoLabeling, autoLabelingCommands] = AutoLabeling.update(
+          model.autoLabeling,
+          AutoLabeling.SelectedRepositoryChanged({
+            repository:
+              nextRepository === null
+                ? null
+                : { owner: nextRepository.owner, repo: nextRepository.repo },
+          }),
+        )
+        const [settings] = Settings.update(
+          model.settings,
+          Settings.SelectedRepositoryChanged({ repository: nextRepository }),
+        )
         return [
-          evo(model, { sidebar: () => sidebar }),
-          mapSidebarCommands(commands),
+          evo(model, {
+            autoLabeling: () => autoLabeling,
+            settings: () => settings,
+            sidebar: () => sidebar,
+          }),
+          [
+            ...mapSidebarCommands(commands),
+            ...mapAutoLabelingCommands(autoLabelingCommands),
+          ],
         ]
       },
       GotSetupMessage: ({ message: setupMessage }) => {
@@ -173,7 +272,13 @@ export const init: Runtime.RoutingApplicationInit<
   const [setup, setupCommands] = Setup.init()
 
   return [
-    { route: Router.urlToAppRoute(url), setup, sidebar },
+    {
+      autoLabeling: AutoLabeling.init(),
+      settings: Settings.init(),
+      route: Router.urlToAppRoute(url),
+      setup,
+      sidebar,
+    },
     [...mapSidebarCommands(commands), ...mapSetupCommands(setupCommands)],
   ]
 }
@@ -188,8 +293,17 @@ const sidebarSubscriptions = Subscription.lift(AppSidebar.subscriptions)<
   toParentMessage: (message) => GotSidebarMessage({ message }),
 })
 
+const autoLabelingSubscriptions = Subscription.lift(AutoLabeling.subscriptions)<
+  Model,
+  Message
+>({
+  toChildModel: (model) => model.autoLabeling,
+  toParentMessage: (message) => GotAutoLabelingMessage({ message }),
+})
+
 export const subscriptions = Subscription.aggregate<Model, Message>()(
   sidebarSubscriptions,
+  autoLabelingSubscriptions,
 )
 
 // VIEW
@@ -207,7 +321,19 @@ const navigationGroups: ReadonlyArray<AppSidebar.NavigationGroup> = [
       {
         value: "AutoLabeling",
         label: "Auto-Labeling",
-        description: "Citation policies",
+        description: "Label rules",
+        icon: Icon.tags(),
+      },
+      {
+        value: "Policies",
+        label: "Policies",
+        description: "Department policies",
+        icon: Icon.tags(),
+      },
+      {
+        value: "Settings",
+        label: "Settings",
+        description: "Precinct controls",
         icon: Icon.tags(),
       },
     ],
@@ -220,6 +346,10 @@ const navigationHref = (value: AppSidebar.NavigationValue): string => {
       return Router.rootRouter()
     case "AutoLabeling":
       return Router.autoLabelingRouter()
+    case "Policies":
+      return Router.policiesRouter()
+    case "Settings":
+      return Router.settingsRouter()
   }
 }
 
@@ -246,6 +376,37 @@ const comingSoonView = (h: HtmlBuilder<Message>) =>
     ],
   )
 
+const routeView = (model: Model, h: HtmlBuilder<Message>) => {
+  switch (model.route._tag) {
+    case "AutoLabeling":
+      return h.submodel({
+        slotId: "labeling",
+        model: model.autoLabeling,
+        view: AutoLabeling.view,
+        viewInputs: { surface: "AutoLabeling" },
+        toParentMessage: (message) => GotAutoLabelingMessage({ message }),
+      })
+    case "Policies":
+      return h.submodel({
+        slotId: "labeling",
+        model: model.autoLabeling,
+        view: AutoLabeling.view,
+        viewInputs: { surface: "Policies" },
+        toParentMessage: (message) => GotAutoLabelingMessage({ message }),
+      })
+    case "Settings":
+      return h.submodel({
+        slotId: "settings",
+        model: model.settings,
+        view: Settings.view,
+        toParentMessage: (message) => GotSettingsMessage({ message }),
+      })
+    case "Root":
+    case "NotFound":
+      return comingSoonView(h)
+  }
+}
+
 export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
   title:
     model.setup._tag === "Ready" ? "SlopCop" : "Connect repositories | SlopCop",
@@ -257,9 +418,17 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
           view: AppSidebar.view,
           viewInputs: {
             navigationGroups,
+            pageTitle:
+              model.route._tag === "AutoLabeling"
+                ? "Auto-Labeling"
+                : model.route._tag === "Policies"
+                  ? "Policies"
+                  : model.route._tag === "Settings"
+                    ? "Settings"
+                    : "Overview",
             toNavigationHref: navigationHref,
             isNavigationItemCurrent: (value) => model.route._tag === value,
-            toView: (_) => comingSoonView(h),
+            toView: (_) => routeView(model, h),
           },
           toParentMessage: (message) => GotSidebarMessage({ message }),
         })

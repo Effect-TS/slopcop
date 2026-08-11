@@ -4,19 +4,12 @@ import { GitHubEventId } from "../GitHub/GitHubEvent.ts"
 import * as GitHubLabel from "../GitHub/GitHubLabel.ts"
 import { GitHubRepositoryId } from "../GitHub/GitHubRepository.ts"
 import { LabelingRuleId } from "./LabelingRule.ts"
-
 export const LabelingDecisionId = Schema.String.pipe(
   Schema.brand("LabelingDecisionId"),
 )
-
 export const LabelingSubjectType = Schema.Literals(["pull_request", "issue"])
-
-const SelectedRuleIdsField = Model.JsonFromString(Schema.Array(LabelingRuleId))
-
-const LabelsField = Model.JsonFromString(
-  Schema.Array(GitHubLabel.GitHubLabelName),
-)
-
+const RuleIds = Model.JsonFromString(Schema.Array(LabelingRuleId))
+const Labels = Model.JsonFromString(Schema.Array(GitHubLabel.GitHubLabelName))
 export class LabelingDecision extends Model.Class<LabelingDecision>(
   "LabelingDecision",
 )({
@@ -27,11 +20,11 @@ export class LabelingDecision extends Model.Class<LabelingDecision>(
   subjectNumber: Model.GeneratedByApp(Schema.Int),
   headSha: Model.GeneratedByApp(Schema.NullOr(Schema.String)),
   rulesRevision: Model.GeneratedByApp(Schema.Int),
-  selectedRuleIds: SelectedRuleIdsField,
-  selectedLabels: LabelsField,
+  selectedRuleIds: RuleIds,
+  selectedLabels: Labels,
   model: Model.GeneratedByApp(Schema.String),
   promptVersion: Model.GeneratedByApp(Schema.String),
-  labelsAdded: LabelsField,
-  labelsRemoved: LabelsField,
+  labelsAdded: Labels,
+  labelsRemoved: Labels,
   createdAt: Model.DateTimeInsertFromNumber,
 }) {}

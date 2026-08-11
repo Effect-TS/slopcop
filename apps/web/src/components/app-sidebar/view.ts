@@ -45,6 +45,7 @@ export type NavigationConfig = Readonly<{
 
 export type ViewInputs = Readonly<{
   navigationGroups: ReadonlyArray<NavigationGroup>
+  pageTitle: string
   toNavigationHref: (value: NavigationValue) => string
   isNavigationItemCurrent: (value: NavigationValue) => boolean
   toView: (render: RenderInfo) => Html
@@ -89,6 +90,7 @@ const desktopSidebar = (
     isCollapsed,
     layout,
     navigationGroups,
+    pageTitle,
     panel,
     toNavigationHref,
     toView,
@@ -98,6 +100,7 @@ const desktopSidebar = (
 
   const main = sidebarMain(h, model, {
     content,
+    pageTitle,
     sidebarTrigger: button,
   })
 
@@ -146,6 +149,7 @@ const mobileSidebar = (
     isVisible,
     layout,
     navigationGroups,
+    pageTitle,
     panel,
     title,
     toNavigationHref,
@@ -155,6 +159,7 @@ const mobileSidebar = (
   const content = toView({ trigger: button })
   const main = sidebarMain(h, model, {
     content,
+    pageTitle,
     sidebarTrigger: button,
   })
 
@@ -220,16 +225,18 @@ const sidebarMain = (
   model: Model,
   {
     content,
+    pageTitle,
     sidebarTrigger,
   }: {
     readonly content: Html
+    readonly pageTitle: string
     readonly sidebarTrigger: ReadonlyArray<ChildAttribute>
   },
 ): Html =>
   h.main(
     [h.Class("min-w-0 flex-1 bg-background text-foreground")],
     [
-      mainHeader(h, model, { sidebarTrigger }),
+      mainHeader(h, model, { pageTitle, sidebarTrigger }),
       h.div(
         [h.Class("grid min-h-[calc(100svh-4rem)] place-items-center p-6")],
         [content],
@@ -268,7 +275,7 @@ const sidebarHeader = (
   return ih.div(
     [
       ih.Class(
-        `flex flex-col p-2 gap-3 ${isCollapsed ? "[&_[data-repository-selector]]:justify-center" : ""}`,
+        `flex flex-col p-2 gap-3 ${isCollapsed ? "**:data-repository-selector:justify-center" : ""}`,
       ),
     ],
     [
@@ -342,7 +349,7 @@ const sidebarGroup = (
       h.div(
         [
           h.Class(
-            "flex h-8 shrink-0 items-center rounded-md px-2 text-xs font-medium text-sidebar-foreground/70 ring-sidebar-ring outline-hidden transition-[margin,opacity] duration-200 ease-linear group-data-[collapsed]/sidebar:-mt-8 group-data-[collapsed]/sidebar:opacity-0 focus-visible:ring-2 [&>svg]:size-4",
+            "flex h-8 shrink-0 items-center rounded-md px-2 text-xs font-medium text-sidebar-foreground/70 ring-sidebar-ring outline-hidden transition-[margin,opacity] duration-200 ease-linear group-data-collapsed/sidebar:-mt-8 group-data-collapsed/sidebar:opacity-0 focus-visible:ring-2 [&>svg]:size-4",
           ),
         ],
         [group.label],
@@ -383,7 +390,7 @@ const sidebarNavigationItem = (
             ? [h.AriaCurrent("page"), h.DataAttribute("current", "")]
             : []),
           h.Class(
-            "peer/menu-button group/menu-button flex w-full h-auto items-center gap-2 overflow-hidden rounded-md px-2 py-1 text-left text-sm ring-sidebar-ring outline-hidden cursor-pointer transition-[width,height,padding] group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-data-[collapsed]/sidebar:mx-auto group-data-[collapsed]/sidebar:size-8! focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 data-open:hover:bg-sidebar-accent data-open:hover:text-sidebar-accent-foreground data-current:bg-sidebar-accent data-current:text-sidebar-accent-foreground data-current:font-medium [&_svg]:shrink-0 [&>span:last-child]:truncate hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+            "peer/menu-button group/menu-button flex w-full h-auto items-center gap-2 overflow-hidden rounded-md px-2 py-1 text-left text-sm ring-sidebar-ring outline-hidden cursor-pointer transition-[width,height,padding] group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-data-collapsed/sidebar:mx-auto group-data-collapsed/sidebar:size-8! focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 data-open:hover:bg-sidebar-accent data-open:hover:text-sidebar-accent-foreground data-current:font-medium [&_svg]:shrink-0 [&>span:last-child]:truncate hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
           ),
         ],
         [
@@ -412,8 +419,12 @@ const mainHeader = (
   h: HtmlBuilder<Message>,
   model: Model,
   {
+    pageTitle,
     sidebarTrigger,
-  }: { readonly sidebarTrigger: ReadonlyArray<ChildAttribute> },
+  }: {
+    readonly pageTitle: string
+    readonly sidebarTrigger: ReadonlyArray<ChildAttribute>
+  },
 ): Html => {
   const repository = Option.match(
     RepositorySelector.selectedRepository(model.repositorySelector),
@@ -447,7 +458,7 @@ const mainHeader = (
             [],
             [
               h.p([h.Class("text-xs font-medium")], [repository]),
-              h.h1([h.Class("font-bold")], ["Overview"]),
+              h.h1([h.Class("font-bold")], [pageTitle]),
             ],
           ),
         ],

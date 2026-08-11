@@ -24,6 +24,8 @@ const GitHubClientOperation = Schema.Literals([
   "GitHubClient.getRepositoryLabel",
   "GitHubClient.listRepositoryLabels",
   "GitHubClient.listPullRequestFiles",
+  "GitHubClient.listOpenPullRequests",
+  "GitHubClient.getPullRequest",
   "GitHubClient.listItemLabels",
   "GitHubClient.addItemLabels",
   "GitHubClient.removeItemLabel",
@@ -56,6 +58,24 @@ const PullRequestSummary = Schema.Struct({
 })
 export type PullRequestSummary = typeof PullRequestSummary.Type
 
+const OpenPullRequest = Schema.Struct({
+  number: Schema.Int.check(Schema.isGreaterThan(0)),
+  title: Schema.String,
+  draft: Schema.Boolean,
+  user: Schema.optionalKey(
+    Schema.NullOr(Schema.Struct({ login: Schema.String })),
+  ),
+  updated_at: Schema.optionalKey(Schema.NullOr(Schema.DateTimeUtcFromString)),
+})
+
+export interface PullRequestCandidate {
+  readonly number: number
+  readonly title: string
+  readonly draft: boolean
+  readonly author: string | null
+  readonly updatedAt: typeof Schema.DateTimeUtcFromString.Type | null
+}
+
 export interface RequiredCheck {
   readonly context: string
   readonly integrationId: number | null
@@ -76,6 +96,7 @@ export interface CheckRun {
     | "timed_out"
     | null
   readonly appId: number | null
+  readonly producer: string | null
 }
 
 export interface CommitStatus {
@@ -128,7 +149,12 @@ const CheckRunsResponse = Schema.Struct({
           "timed_out",
         ]),
       ),
-      app: Schema.NullOr(Schema.Struct({ id: Schema.Finite })),
+      app: Schema.NullOr(
+        Schema.Struct({
+          id: Schema.Finite,
+          slug: Schema.optionalKey(Schema.String),
+        }),
+      ),
     }),
   ),
 })
@@ -182,6 +208,14 @@ export class GitHubClient extends Context.Service<
       GitHubPullRequest.GitHubPullRequestFile,
       GitHubClientError
     >
+    readonly listOpenPullRequests: (
+      repository: GitHubRepository.GitHubRepository,
+      limit: number,
+    ) => Effect.Effect<ReadonlyArray<PullRequestCandidate>, GitHubClientError>
+    readonly getPullRequest: (
+      repository: GitHubRepository.GitHubRepository,
+      number: number,
+    ) => Effect.Effect<PullRequestSummary, GitHubClientError>
     readonly listItemLabels: (
       repository: GitHubRepository.GitHubRepository,
       number: number,
@@ -248,9 +282,14 @@ export class GitHubClient extends Context.Service<
     const decodeGitHubPullRequestFiles = HttpClientResponse.schemaBodyJson(
       Schema.Array(GitHubPullRequest.GitHubPullRequestFile),
     )
+    const decodeOpenPullRequests = HttpClientResponse.schemaBodyJson(
+      Schema.Array(OpenPullRequest),
+    )
     const decodePullRequestSummaries = HttpClientResponse.schemaBodyJson(
       Schema.Array(PullRequestSummary),
     )
+    const decodePullRequestSummary =
+      HttpClientResponse.schemaBodyJson(PullRequestSummary)
     const decodePullRequestReviews = HttpClientResponse.schemaBodyJson(
       PullRequestReviewsResponse,
     )
@@ -402,6 +441,85 @@ export class GitHubClient extends Context.Service<
           return [files, nextPage(pageNumber, response)] as const
         }),
       )
+
+    const listOpenPullRequests = Effect.fn("GitHubClient.listOpenPullRequests")(
+      function* (
+        repository: GitHubRepository.GitHubRepository,
+        requestedLimit: number,
+      ) {
+        const limit = Math.min(
+          Math.max(Math.floor(requestedLimit), 0),
+          PAGE_SIZE,
+        )
+        if (limit === 0) return []
+
+        return yield* Stream.paginate(
+          { page: 1, remaining: limit },
+          ({ page, remaining }) =>
+            Effect.gen(function* () {
+              const operation = "GitHubClient.listOpenPullRequests"
+              const response = yield* execute(
+                repository,
+                operation,
+                HttpClientRequest.get(
+                  `${GITHUB_API_URL}${repositoryPath(repository)}/pulls`,
+                ).pipe(
+                  HttpClientRequest.setUrlParams({
+                    state: "open",
+                    sort: "updated",
+                    direction: "desc",
+                    per_page: Math.min(PAGE_SIZE, remaining),
+                    page,
+                  }),
+                ),
+              )
+              yield* requireStatus(operation, response, 200)
+              const pullRequests = yield* decodeOpenPullRequests(response).pipe(
+                mapResponseDecodeError(operation, response),
+              )
+              const candidates = pullRequests
+                .slice(0, remaining)
+                .map((pull) => ({
+                  number: pull.number,
+                  title: pull.title,
+                  draft: pull.draft,
+                  author: pull.user?.login ?? null,
+                  updatedAt: pull.updated_at ?? null,
+                }))
+              const nextRemaining = remaining - candidates.length
+              return [
+                candidates,
+                nextRemaining > 0 && candidates.length > 0
+                  ? nextPage(page, response).pipe(
+                      Option.map((next) => ({
+                        page: next,
+                        remaining: nextRemaining,
+                      })),
+                    )
+                  : Option.none(),
+              ] as const
+            }),
+        ).pipe(Stream.runCollect)
+      },
+    )
+
+    const getPullRequest = Effect.fn("GitHubClient.getPullRequest")(function* (
+      repository: GitHubRepository.GitHubRepository,
+      number: number,
+    ) {
+      const operation = "GitHubClient.getPullRequest"
+      const response = yield* execute(
+        repository,
+        operation,
+        HttpClientRequest.get(
+          `${GITHUB_API_URL}${repositoryPath(repository)}/pulls/${number}`,
+        ),
+      )
+      yield* requireStatus(operation, response, 200)
+      return yield* decodePullRequestSummary(response).pipe(
+        mapResponseDecodeError(operation, response),
+      )
+    })
 
     const listItemLabels = (
       repository: GitHubRepository.GitHubRepository,
@@ -649,6 +767,9 @@ export class GitHubClient extends Context.Service<
               status: check.status,
               conclusion: check.conclusion,
               appId: check.app?.id ?? null,
+              producer:
+                check.app?.slug ??
+                (check.app === null ? null : String(check.app.id)),
             })),
             nextPage(pageNumber, response),
           ] as const
@@ -687,6 +808,8 @@ export class GitHubClient extends Context.Service<
       getRepositoryLabel,
       listRepositoryLabels,
       listPullRequestFiles,
+      listOpenPullRequests,
+      getPullRequest,
       listItemLabels,
       addItemLabels,
       removeItemLabel,

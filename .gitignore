@@ -1,14 +1,17 @@
-# Dependencies and build output
+# Dependencies 
 node_modules/
+
+# Build Output
 dist/
 coverage/
-*.tsbuildinfo
 
 # Alchemy state
 .alchemy/
 
 # Local configuration
 .direnv/
+
+# Environment Variables
 .env*
 !.env.example
 *.local
@@ -26,3 +29,6 @@ pnpm-debug.log*
 
 # AI agent worktrees
 .claude/worktrees/
+
+# TypeScript
+*.tsbuildinfo

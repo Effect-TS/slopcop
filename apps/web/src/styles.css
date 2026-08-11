@@ -177,6 +177,14 @@
   body {
     @apply bg-background text-foreground;
   }
+  select:not([multiple]) {
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 20 20' fill='none' stroke='%2371747c' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 8 4 4 4-4'/%3E%3C/svg%3E");
+    background-position: right 1.25rem center;
+    background-repeat: no-repeat;
+    background-size: 1.25rem;
+    padding-right: 3.25rem;
+  }
 }
 
 @utility police-tape {

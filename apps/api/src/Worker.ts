@@ -13,6 +13,32 @@ import { GitHubSetup } from "@slopcop/github/GitHubSetup"
 import { D1Database, makeDatabaseLayer } from "@slopcop/infra/Sql"
 import * as CloudflareResourceNames from "@slopcop/infra/CloudflareResourceNames"
 import { Repositories } from "./GitHub/Repositories.ts"
+import { Policies } from "@slopcop/labeling/Policies"
+import { GitHubClient } from "@slopcop/github/GitHubClient"
+import { GitHubRepositoriesRepo } from "@slopcop/github/repositories/GitHubRepositoriesRepo"
+import { LabelingPolicyTester } from "./Labeling/LabelingPolicyTester.ts"
+import { PolicyFacts } from "@slopcop/labeling/PolicyFacts"
+import { PoliciesRepo } from "@slopcop/labeling/repositories/PoliciesRepo"
+import { OptionalPolicyAiLayer } from "@slopcop/labeling/Ai"
+import { LabelingRuleTester } from "./Labeling/LabelingRuleTester.ts"
+import { LabelingRuleTestCandidates } from "./Labeling/LabelingRuleTestCandidates.ts"
+
+const PolicyTesterLayer = LabelingPolicyTester.layerNoDeps.pipe(
+  Layer.provide(PolicyFacts.layer),
+  Layer.provide(OptionalPolicyAiLayer),
+  Layer.provide(Policies.layer),
+  Layer.provide(PoliciesRepo.layer),
+  Layer.provide(GitHubClient.layer),
+  Layer.provide(GitHubRepositoriesRepo.layer),
+)
+const RuleTesterLayer = LabelingRuleTester.layerNoDeps.pipe(
+  Layer.provide(PolicyTesterLayer),
+  Layer.provide(PolicyFacts.layer),
+  Layer.provide(OptionalPolicyAiLayer),
+  Layer.provide(LabelingRules.layer),
+  Layer.provide(GitHubClient.layer),
+  Layer.provide(GitHubRepositoriesRepo.layer),
+)
 
 export const makeWorker = (options: {
   readonly resourceNames: CloudflareResourceNames.ResourceNames
@@ -35,10 +61,16 @@ export const makeWorker = (options: {
         fileWebResponse: () =>
           Effect.die("HttpPlatform.fileWebResponse not supported"),
       })
-
       const HttpLayer = Layer.mergeAll(ApiHandlersLayer, ApiDocsLayer).pipe(
         Layer.provide(FetchHttpClient.layer),
+        Layer.provide(PolicyTesterLayer),
+        Layer.provide(RuleTesterLayer),
+        Layer.provide(LabelingRuleTestCandidates.layer),
         Layer.provide(LabelingRules.layer),
+        Layer.provide(Policies.layer),
+        Layer.provide(PoliciesRepo.layer),
+        Layer.provide(GitHubClient.layer),
+        Layer.provide(GitHubRepositoriesRepo.layer),
         Layer.provide(Repositories.layer),
         Layer.provide(GitHubSetup.layer),
         Layer.provide([Etag.layer, HttpPlatformStubLayer, Path.layer]),

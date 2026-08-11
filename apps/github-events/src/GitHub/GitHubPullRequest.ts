@@ -2,7 +2,6 @@ import * as GitHubLabel from "@slopcop/domain/GitHub/GitHubLabel"
 import * as DomainGitHubPullRequest from "@slopcop/domain/GitHub/GitHubPullRequest"
 import * as GitHubRepository from "@slopcop/domain/GitHub/GitHubRepository"
 import * as PullRequestWebhookEvent from "@slopcop/domain/GitHub/WebhookEvent/GitHubPullRequest"
-import * as LabelClassification from "@slopcop/domain/Labeling/LabelClassification"
 import * as Context from "effect/Context"
 import * as Data from "effect/Data"
 import * as Effect from "effect/Effect"
@@ -16,6 +15,16 @@ import {
   GitHubRepositoriesRepo,
   type GitHubRepositoriesRepoError,
 } from "@slopcop/github/repositories/GitHubRepositoriesRepo"
+
+export interface LabelChanges {
+  readonly add: ReadonlyArray<string>
+  readonly remove: ReadonlyArray<string>
+}
+
+export interface AppliedLabelChanges {
+  readonly added: ReadonlyArray<string>
+  readonly removed: ReadonlyArray<string>
+}
 
 export class RepositoryInstallationMismatch extends Data.TaggedError(
   "RepositoryInstallationMismatch",
@@ -144,11 +153,8 @@ export class GitHubPullRequest extends Context.Service<
     >
     readonly applyLabels: (
       pullRequest: DomainGitHubPullRequest.GitHubPullRequest,
-      changes: LabelClassification.LabelChanges,
-    ) => Effect.Effect<
-      LabelClassification.AppliedLabelChanges,
-      GitHubPullRequestLabelsError
-    >
+      changes: LabelChanges,
+    ) => Effect.Effect<AppliedLabelChanges, GitHubPullRequestLabelsError>
   }
 >()("@slopcop/github-events/GitHubPullRequest", {
   make: Effect.gen(function* () {
@@ -290,7 +296,7 @@ export class GitHubPullRequest extends Context.Service<
 
     const applyLabels = Effect.fn("GitHubPullRequest.applyLabels")(function* (
       pullRequest: DomainGitHubPullRequest.GitHubPullRequest,
-      changes: LabelClassification.LabelChanges,
+      changes: LabelChanges,
     ) {
       const current = yield* getLabels(pullRequest)
       const additions = [...new Set(changes.add)].filter(

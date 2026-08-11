@@ -1,298 +1,411 @@
 import { RootApi } from "@slopcop/api/RootApi"
-import {
-  DuplicateLabelingRule as ApiDuplicateLabelingRule,
-  GitHubLabelNotFound,
-  GitHubLabelValidationUnavailable,
-  InvalidLabelingRule as ApiInvalidLabelingRule,
-  LabelingRuleConflict as ApiLabelingRuleConflict,
-  LabelingRuleNotFound as ApiLabelingRuleNotFound,
-  LabelingRulesRevisionConflict,
-  RepositoryNotConfigured as ApiRepositoryNotConfigured,
-} from "@slopcop/api/LabelingRules/Errors"
+import * as ApiError from "@slopcop/api/LabelingRules/Errors"
 import { LabelingAdminIdentity } from "@slopcop/api/LabelingRules/Security"
-import * as LabelingRule from "@slopcop/domain/Labeling/LabelingRule"
-import * as LabelingRuleAuditEntry from "@slopcop/domain/Labeling/LabelingRuleAuditEntry"
-import * as LabelingRuleManagement from "@slopcop/domain/Labeling/LabelingRuleManagement"
-import * as Effect from "effect/Effect"
-import * as Layer from "effect/Layer"
-import * as Schema from "effect/Schema"
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder"
+import * as Management from "@slopcop/domain/Labeling/LabelingRuleManagement"
+import type * as Policy from "@slopcop/domain/Labeling/LabelingPolicy"
+import type * as Rule from "@slopcop/domain/Labeling/LabelingRule"
+import type * as Audit from "@slopcop/domain/Labeling/LabelingRuleAuditEntry"
+import { RepositoryNotConfigured } from "@slopcop/github/Errors"
+import { GitHubClientError } from "@slopcop/github/GitHubClient"
 import {
   LabelingRules,
   type LabelingRulesError,
 } from "@slopcop/labeling/LabelingRules"
+import { Policies } from "@slopcop/labeling/Policies"
+import type { PoliciesError } from "@slopcop/labeling/Policies"
+import * as Effect from "effect/Effect"
+import * as Layer from "effect/Layer"
+import * as Schema from "effect/Schema"
+import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder"
+import { LabelingRuleTestCandidates } from "../LabelingRuleTestCandidates.ts"
+import {
+  LabelingRuleTester,
+  type LabelingRuleTestError,
+} from "../LabelingRuleTester.ts"
 import { LabelingAdminMiddlewareLayer } from "./Security.ts"
 
-const decodeApiRule = Schema.decodeEffect(
-  Schema.toType(LabelingRuleManagement.PublicLabelingRule),
+const decodeRule = Schema.decodeEffect(
+  Schema.toType(Management.PublicLabelingRule),
 )
-
-export const toPublicRule = (rule: LabelingRule.LabelingRule) =>
-  decodeApiRule(rule).pipe(Effect.orDie)
-
-const decodePublicAuditEntry = Schema.decodeEffect(
-  Schema.toType(LabelingRuleManagement.PublicLabelingRuleAuditEntry),
-)
-
-const publicAuditValue = (
-  value: LabelingRuleAuditEntry.LabelingRuleAuditValue | null,
+export const toPublicRule = (
+  rule: Rule.LabelingRule,
+  policy: Policy.LabelingPolicy | null,
 ) => {
+  const shared = {
+    _tag: rule._tag,
+    id: rule.id,
+    label: rule.label,
+    onMatch: rule.onMatch,
+    onNoMatch: rule.onNoMatch,
+    conflictGroup: rule.conflictGroup,
+    priority: rule.priority,
+    enabled: rule.enabled,
+    validationStatus: rule.validationStatus,
+    validatedAt: rule.validatedAt,
+    version: rule.version,
+    createdAt: rule.createdAt,
+    updatedAt: rule.updatedAt,
+  }
+  if (rule._tag === "PolicyLabelingRule") {
+    if (policy === null)
+      return Effect.die(
+        `Rule '${rule.id}' references missing policy '${rule.policyId}'.`,
+      )
+    return decodeRule({
+      ...shared,
+      _tag: rule._tag,
+      policyId: rule.policyId,
+      policy: {
+        id: policy.id,
+        name: policy.name,
+      },
+    }).pipe(Effect.orDie)
+  }
+  return decodeRule({
+    ...shared,
+    _tag: rule._tag,
+    prompt: rule.prompt,
+    evidence: rule.evidence,
+    minimumConfidence: rule.minimumConfidence,
+    evaluator: rule.evaluator,
+    gatePolicyId: rule.gatePolicyId,
+    gatePolicy:
+      policy === null
+        ? null
+        : {
+            id: policy.id,
+            name: policy.name,
+          },
+  }).pipe(Effect.orDie)
+}
+const decodeAudit = Schema.decodeEffect(
+  Schema.toType(Management.PublicLabelingRuleAuditEntry),
+)
+const auditValue = (value: Audit.StoredLabelingRuleAuditValue | null) => {
   if (value === null) return null
   const { repositoryId: _repositoryId, ...publicValue } = value
   return publicValue
 }
-
-export const toPublicAuditEntry = (
-  entry: LabelingRuleAuditEntry.LabelingRuleAuditEntry,
-) => {
+export const toPublicAuditEntry = (entry: Audit.LabelingRuleAuditEntry) => {
   const ruleId = entry.after?.id ?? entry.before?.id
-  if (ruleId === undefined) {
-    return Effect.die(
-      `Audit entry '${entry.id}' has neither a before nor an after snapshot.`,
-    )
-  }
-  return decodePublicAuditEntry({
+  if (ruleId === undefined)
+    return Effect.die(`Audit entry '${entry.id}' has no rule snapshot.`)
+  return decodeAudit({
     id: entry.id,
     ruleId,
     actor: entry.actor,
     operation: entry.operation,
-    before: publicAuditValue(entry.before),
-    after: publicAuditValue(entry.after),
+    before: auditValue(entry.before),
+    after: auditValue(entry.after),
     createdAt: entry.createdAt,
   }).pipe(Effect.orDie)
 }
-
 export const parseAuditCursor = (
-  cursor:
-    | typeof LabelingRuleManagement.LabelingRuleAuditCursor.Type
-    | undefined,
+  cursor: typeof Management.LabelingRuleAuditCursor.Type | undefined,
 ) => {
   if (cursor === undefined) return Effect.succeed(null)
   const separator = cursor.indexOf(":")
   return Schema.decodeUnknownEffect(
     Schema.Struct({
       createdAt: Schema.NumberFromString,
-      id: LabelingRuleAuditEntry.LabelingRuleAuditEntryId,
+      id: Schema.String.pipe(Schema.brand("LabelingRuleAuditEntryId")),
     }),
   )({
     createdAt: cursor.slice(0, separator),
     id: cursor.slice(separator + 1),
   }).pipe(Effect.orDie)
 }
-
 export const formatAuditCursor = (
   cursor: { readonly createdAt: number; readonly id: string } | null,
 ) =>
   cursor === null
     ? Effect.succeed(null)
-    : Schema.decodeUnknownEffect(
-        LabelingRuleManagement.LabelingRuleAuditCursor,
-      )(`${cursor.createdAt}:${cursor.id}`).pipe(Effect.orDie)
+    : Schema.decodeUnknownEffect(Management.LabelingRuleAuditCursor)(
+        `${cursor.createdAt}:${cursor.id}`,
+      ).pipe(Effect.orDie)
 
-const internalFailure = (error: LabelingRulesError) =>
-  Effect.logError("Labeling rules operation failed", error).pipe(
-    Effect.andThen(Effect.die(error)),
+interface PolicyReader {
+  readonly list: (slug: {
+    readonly owner: string
+    readonly repo: string
+  }) => Effect.Effect<
+    {
+      readonly repository: string
+      readonly revision: number
+      readonly policies: ReadonlyArray<Policy.LabelingPolicy>
+    },
+    PoliciesError
+  >
+}
+const policyFor = Effect.fn("Handlers.policyFor")(function* (
+  policies: PolicyReader,
+  slug: { readonly owner: string; readonly repo: string },
+  rule: Rule.LabelingRule,
+) {
+  const policyId =
+    rule._tag === "PolicyLabelingRule" ? rule.policyId : rule.gatePolicyId
+  if (policyId === null) return null
+  const configured = yield* policies.list(slug).pipe(Effect.orDie)
+  const policy = configured.policies.find(
+    (candidate) => candidate.id === policyId,
   )
-
-type PublicLabelingRulesError =
-  | ApiDuplicateLabelingRule
-  | GitHubLabelNotFound
-  | GitHubLabelValidationUnavailable
-  | ApiInvalidLabelingRule
-  | ApiLabelingRuleConflict
-  | ApiLabelingRuleNotFound
-  | LabelingRulesRevisionConflict
-  | ApiRepositoryNotConfigured
-
-const mapRuleError = (
+  if (policy === undefined)
+    return yield* Effect.die(
+      `Rule '${rule.id}' references missing policy '${policyId}'.`,
+    )
+  return policy
+})
+type PublicError =
+  | ApiError.RepositoryNotConfigured
+  | ApiError.LabelingRuleNotFound
+  | ApiError.GitHubLabelNotFound
+  | ApiError.InvalidLabelingRule
+  | ApiError.DuplicateLabelingRule
+  | ApiError.LabelingRuleConflict
+  | ApiError.LabelingRulesRevisionConflict
+  | ApiError.GitHubLabelValidationUnavailable
+  | ApiError.PullRequestNotFound
+  | ApiError.LabelingRuleTestUnavailable
+export const mapRuleError = (
   error: LabelingRulesError,
-): Effect.Effect<never, PublicLabelingRulesError> => {
+  encodeCurrent: (
+    rule: Rule.LabelingRule,
+  ) => Effect.Effect<Management.PublicLabelingRule>,
+): Effect.Effect<never, PublicError> => {
   switch (error._tag) {
     case "RepositoryNotConfigured":
       return Effect.fail(
-        new ApiRepositoryNotConfigured({
+        new ApiError.RepositoryNotConfigured({
           repository: error.repository,
-          message: `${error.repository} is not a configured SlopCop repository. Configure it before managing labeling rules.`,
+          message: `${error.repository} is not configured.`,
         }),
       )
     case "LabelingRuleNotFound":
       return Effect.fail(
-        new ApiLabelingRuleNotFound({
+        new ApiError.LabelingRuleNotFound({
           repository: error.repository,
           ruleId: error.ruleId,
-          message: `Labeling rule '${error.ruleId}' does not exist in ${error.repository}.`,
+          message: `Labeling rule '${error.ruleId}' does not exist.`,
         }),
       )
     case "GitHubLabelValidationError":
       return error.reason === "MissingLabel" && error.label !== undefined
         ? Effect.fail(
-            new GitHubLabelNotFound({
+            new ApiError.GitHubLabelNotFound({
               repository: error.repository,
               label: error.label,
-              message: `The label '${error.label}' does not exist in ${error.repository}. Select an existing GitHub label or create it in GitHub before retrying. No configuration was changed.`,
+              message: error.message,
             }),
           )
         : Effect.fail(
-            new GitHubLabelValidationUnavailable({
+            new ApiError.GitHubLabelValidationUnavailable({
               repository: error.repository,
-              message: `GitHub label validation for ${error.repository} is unavailable. Retry later. No configuration was changed.`,
+              message: error.message,
             }),
           )
     case "DuplicateLabelingRule":
       return Effect.fail(
-        new ApiDuplicateLabelingRule({
+        new ApiError.DuplicateLabelingRule({
           repository: error.repository,
           label: error.label,
-          message: `${error.repository} already has a labeling rule for '${error.label}'. Edit the existing rule instead.`,
+          message: `${error.repository} already has a binding for '${error.label}'.`,
         }),
       )
     case "InvalidLabelingRule":
-      return Effect.fail(new ApiInvalidLabelingRule({ message: error.message }))
+      return Effect.fail(
+        new ApiError.InvalidLabelingRule({ message: error.message }),
+      )
     case "LabelingRuleConflict":
-      return toPublicRule(error.currentRule).pipe(
+      return encodeCurrent(error.currentRule).pipe(
         Effect.flatMap((currentRule) =>
           Effect.fail(
-            new ApiLabelingRuleConflict({
+            new ApiError.LabelingRuleConflict({
               repository: error.repository,
               ruleId: error.ruleId,
               currentRule,
-              message: `Labeling rule '${error.ruleId}' changed after it was loaded. Refresh it and retry with version ${error.currentRule.version}.`,
+              message: `Rule '${error.ruleId}' changed. Refresh and retry.`,
             }),
           ),
         ),
       )
     case "StaleLabelingRulesRevision":
-      return Effect.fail(
-        new LabelingRulesRevisionConflict({
-          repository: error.repositoryId,
+      return Effect.gen(function* () {
+        const currentRule =
+          error.currentRule === null
+            ? null
+            : yield* encodeCurrent(error.currentRule)
+        return yield* new ApiError.LabelingRulesRevisionConflict({
+          repository: error.repository,
           expectedRevision: error.expectedRevision,
           actualRevision: error.actualRevision,
+          currentRule,
           message:
-            "The repository labeling configuration changed during this operation. Refresh the rules and retry.",
-        }),
-      )
+            "Repository labeling configuration changed. Refresh and retry.",
+        })
+      })
     default:
-      return internalFailure(error)
+      return Effect.logError("Labeling rule operation failed", error).pipe(
+        Effect.andThen(Effect.die(error)),
+      )
   }
 }
-
-const publicRule = (
-  effect: Effect.Effect<LabelingRule.LabelingRule, LabelingRulesError>,
-) => effect.pipe(Effect.catch(mapRuleError), Effect.flatMap(toPublicRule))
+const mapTestError = (
+  error: LabelingRuleTestError,
+): Effect.Effect<
+  never,
+  ApiError.PullRequestNotFound | ApiError.LabelingRuleTestUnavailable
+> =>
+  error.notFound
+    ? Effect.fail(
+        new ApiError.PullRequestNotFound({
+          repository: error.repository,
+          pullRequestNumber: error.pullRequestNumber,
+          message: `Pull request #${error.pullRequestNumber} does not exist or is inaccessible.`,
+        }),
+      )
+    : Effect.fail(
+        new ApiError.LabelingRuleTestUnavailable({
+          repository: error.repository,
+          ruleId: error.ruleId,
+          pullRequestNumber: error.pullRequestNumber,
+          retryable: error.retryable,
+          message:
+            "The rule test failed. No labels or evaluations were written.",
+        }),
+      )
+const mapRepository = (error: RepositoryNotConfigured) =>
+  Effect.fail(
+    new ApiError.RepositoryNotConfigured({
+      repository: error.repository,
+      message: `${error.repository} is not configured.`,
+    }),
+  )
+const mapCandidates = (repository: string, error: GitHubClientError) =>
+  Effect.fail(
+    new ApiError.RuleTestCandidatesUnavailable({
+      repository,
+      retryable: error.retryable,
+      message: `Recent pull requests for ${repository} are unavailable.`,
+    }),
+  )
 
 export const LabelingRulesApiHandlersLayer = HttpApiBuilder.group(
   RootApi,
   "labelingRules",
   Effect.fnUntraced(function* (handlers) {
     const rules = yield* LabelingRules
-
+    const policies = yield* Policies
+    const tester = yield* LabelingRuleTester
+    const candidates = yield* LabelingRuleTestCandidates
+    const encode = (
+      slug: { readonly owner: string; readonly repo: string },
+      rule: Rule.LabelingRule,
+    ) =>
+      policyFor(policies, slug, rule).pipe(
+        Effect.flatMap((policy) => toPublicRule(rule, policy)),
+      )
+    const catchRule =
+      (slug: { readonly owner: string; readonly repo: string }) =>
+      (error: LabelingRulesError) =>
+        mapRuleError(error, (rule) => encode(slug, rule))
     return handlers.handleAll({
       listRules: Effect.fnUntraced(function* ({ params, query }) {
         const result = yield* rules
-          .list(
-            { owner: params.owner, repo: params.repo },
-            { includeDisabled: query.includeDisabled ?? false },
-          )
-          .pipe(Effect.catch(mapRuleError))
-        const encoded = yield* Effect.forEach(result.rules, toPublicRule)
+          .list(params, { includeDisabled: query.includeDisabled ?? false })
+          .pipe(Effect.catch(catchRule(params)))
         return {
           repository: result.repository,
           revision: result.revision,
-          rules: encoded,
+          rules: yield* Effect.forEach(result.rules, (rule) =>
+            encode(params, rule),
+          ),
+          activity: result.activity,
         }
       }),
       listRuleAudit: Effect.fnUntraced(function* ({ params, query }) {
-        const cursor = yield* parseAuditCursor(query.cursor)
         const result = yield* rules
-          .listAudit(
-            { owner: params.owner, repo: params.repo },
-            {
-              ruleId: query.ruleId ?? null,
-              operation: query.operation ?? null,
-              cursor,
-              limit: query.limit ?? 50,
-            },
-          )
-          .pipe(Effect.catch(mapRuleError))
+          .listAudit(params, {
+            ruleId: query.ruleId ?? null,
+            operation: query.operation ?? null,
+            cursor: yield* parseAuditCursor(query.cursor),
+            limit: query.limit ?? 50,
+          })
+          .pipe(Effect.catch(catchRule(params)))
         return {
           entries: yield* Effect.forEach(result.entries, toPublicAuditEntry),
           nextCursor: yield* formatAuditCursor(result.nextCursor),
         }
       }),
       getRule: ({ params }) =>
-        publicRule(
-          rules.get({ owner: params.owner, repo: params.repo }, params.ruleId),
+        rules.get(params, params.ruleId).pipe(
+          Effect.catch(catchRule(params)),
+          Effect.flatMap((rule) => encode(params, rule)),
         ),
-      listGitHubLabels: Effect.fnUntraced(function* ({ params }) {
-        const available = yield* rules
-          .listAvailableLabels({ owner: params.owner, repo: params.repo })
-          .pipe(Effect.catch(mapRuleError))
-        return { labels: available }
-      }),
+      listGitHubLabels: ({ params }) =>
+        rules.listAvailableLabels(params).pipe(
+          Effect.catch(catchRule(params)),
+          Effect.map((labels) => ({ labels })),
+        ),
+      listRuleTestCandidates: ({ params, query }) =>
+        candidates.list(params, query.limit ?? 50).pipe(
+          Effect.map((candidates) => ({ candidates })),
+          Effect.catchTag("RepositoryNotConfigured", mapRepository),
+          Effect.catchTag("GitHubClientError", (error) =>
+            mapCandidates(`${params.owner}/${params.repo}`, error),
+          ),
+        ),
       validateCandidateLabel: ({ params, payload }) =>
         rules
-          .validateCandidateLabel(
-            { owner: params.owner, repo: params.repo },
-            payload.label,
-          )
-          .pipe(Effect.catch(mapRuleError)),
+          .validateCandidateLabel(params, payload.label)
+          .pipe(Effect.catch(catchRule(params))),
       createRule: ({ params, payload }) =>
         Effect.gen(function* () {
           const identity = yield* LabelingAdminIdentity
-          return yield* publicRule(
-            rules.create(
-              { owner: params.owner, repo: params.repo },
-              payload,
-              identity,
-            ),
-          )
+          const rule = yield* rules
+            .create(params, payload, identity)
+            .pipe(Effect.catch(catchRule(params)))
+          return yield* encode(params, rule)
         }),
       patchRule: ({ params, payload }) =>
         Effect.gen(function* () {
           const identity = yield* LabelingAdminIdentity
-          return yield* publicRule(
-            rules.update(
-              { owner: params.owner, repo: params.repo },
-              params.ruleId,
-              payload,
-              identity,
-            ),
-          )
+          const rule = yield* rules
+            .update(params, params.ruleId, payload, identity)
+            .pipe(Effect.catch(catchRule(params)))
+          return yield* encode(params, rule)
         }),
       validateStoredRule: ({ params }) =>
         Effect.gen(function* () {
           const identity = yield* LabelingAdminIdentity
-          return yield* publicRule(
-            rules.revalidate(
-              { owner: params.owner, repo: params.repo },
-              params.ruleId,
-              identity,
-            ),
-          )
+          const rule = yield* rules
+            .revalidate(params, params.ruleId, identity)
+            .pipe(Effect.catch(catchRule(params)))
+          return yield* encode(params, rule)
         }),
+      testRule: ({ params, payload }) =>
+        tester
+          .test(params, params.ruleId, payload.pullRequestNumber)
+          .pipe(
+            Effect.catch((error) =>
+              error._tag === "LabelingRuleTestError"
+                ? mapTestError(error)
+                : catchRule(params)(error),
+            ),
+          ),
       disableRule: ({ params, payload }) =>
         Effect.gen(function* () {
           const identity = yield* LabelingAdminIdentity
-          return yield* publicRule(
-            rules.disable(
-              { owner: params.owner, repo: params.repo },
-              params.ruleId,
-              payload.version,
-              identity,
-            ),
-          )
+          const rule = yield* rules
+            .disable(params, params.ruleId, payload.version, identity)
+            .pipe(Effect.catch(catchRule(params)))
+          return yield* encode(params, rule)
         }),
       deleteRule: ({ params, query }) =>
         Effect.gen(function* () {
           const identity = yield* LabelingAdminIdentity
           yield* rules
-            .remove(
-              { owner: params.owner, repo: params.repo },
-              params.ruleId,
-              query.version,
-              identity,
-            )
-            .pipe(Effect.catch(mapRuleError))
+            .remove(params, params.ruleId, query.version, identity)
+            .pipe(Effect.catch(catchRule(params)))
         }),
     })
   }),

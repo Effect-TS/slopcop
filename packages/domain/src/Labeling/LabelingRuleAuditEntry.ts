@@ -1,20 +1,21 @@
 import { Schema } from "effect"
 import { Model } from "effect/unstable/schema"
-import * as GitHubLabel from "../GitHub/GitHubLabel.ts"
 import { GitHubRepositoryId } from "../GitHub/GitHubRepository.ts"
 import {
-  LabelingRuleExclusiveGroup,
+  AiEvaluator,
+  AiLabelingRuleEvidence,
+  AiLabelingRuleMinimumConfidence,
+  AiLabelingRulePrompt,
+  LabelingRuleConflictGroup,
   LabelingRuleId,
-  LabelingRuleInstructions,
-  LabelingRuleKind,
-  LabelingRuleMode,
   LabelingRuleValidationStatus,
+  LabelOnMatch,
+  LabelOnNoMatch,
 } from "./LabelingRule.ts"
-
+import { LabelingPolicyId } from "./LabelingPolicy.ts"
 export const LabelingRuleAuditEntryId = Schema.String.pipe(
   Schema.brand("LabelingRuleAuditEntryId"),
 )
-
 export const LabelingRuleAuditOperation = Schema.Literals([
   "create",
   "update",
@@ -22,26 +23,63 @@ export const LabelingRuleAuditOperation = Schema.Literals([
   "disable",
   "delete",
 ])
-
-export const LabelingRuleAuditValue = Schema.Struct({
+const sharedFields = {
   id: LabelingRuleId,
   repositoryId: GitHubRepositoryId,
-  label: GitHubLabel.GitHubLabelName,
-  kind: Schema.optionalKey(LabelingRuleKind),
-  instructions: LabelingRuleInstructions,
-  mode: LabelingRuleMode,
-  exclusiveGroup: LabelingRuleExclusiveGroup,
+  label: Schema.String,
+  onMatch: LabelOnMatch,
+  onNoMatch: LabelOnNoMatch,
+  conflictGroup: LabelingRuleConflictGroup,
+  priority: Schema.Int,
   enabled: Schema.Boolean,
   validationStatus: LabelingRuleValidationStatus,
   validatedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   version: Schema.Int,
+} as const
+export const PolicyLabelingRuleAuditValue = Schema.Struct({
+  _tag: Schema.Literal("PolicyLabelingRule"),
+  ...sharedFields,
+  policyId: LabelingPolicyId,
 })
-export type LabelingRuleAuditValue = typeof LabelingRuleAuditValue.Type
-
-const AuditValueField = Model.JsonFromString(
-  Schema.NullOr(LabelingRuleAuditValue),
-)
-
+export const AiLabelingRuleAuditValue = Schema.Struct({
+  _tag: Schema.Literal("AiLabelingRule"),
+  ...sharedFields,
+  prompt: AiLabelingRulePrompt,
+  evidence: AiLabelingRuleEvidence,
+  minimumConfidence: AiLabelingRuleMinimumConfidence,
+  evaluator: AiEvaluator,
+  gatePolicyId: Schema.NullOr(LabelingPolicyId),
+})
+// Snapshots written by the first generic policy migration had no discriminant.
+export const LegacyPolicyLabelingRuleAuditValue = Schema.Struct({
+  ...sharedFields,
+  policyId: LabelingPolicyId,
+})
+export const LegacyLabelingRuleAuditValue = Schema.Struct({
+  id: LabelingRuleId,
+  repositoryId: GitHubRepositoryId,
+  name: Schema.optionalKey(Schema.String),
+  label: Schema.String,
+  kind: Schema.optionalKey(Schema.String),
+  instructions: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  confidenceThreshold: Schema.optionalKey(Schema.Finite),
+  mode: Schema.optionalKey(Schema.String),
+  exclusiveGroup: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  enabled: Schema.Boolean,
+  validationStatus: Schema.String,
+  validatedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  version: Schema.Int,
+})
+export const StoredLabelingRuleAuditValue = Schema.Union([
+  PolicyLabelingRuleAuditValue,
+  AiLabelingRuleAuditValue,
+  LegacyPolicyLabelingRuleAuditValue,
+  LegacyLabelingRuleAuditValue,
+])
+export type StoredLabelingRuleAuditValue =
+  typeof StoredLabelingRuleAuditValue.Type
+export type LabelingRuleAuditValue = StoredLabelingRuleAuditValue
+const Value = Model.JsonFromString(Schema.NullOr(StoredLabelingRuleAuditValue))
 export class LabelingRuleAuditEntry extends Model.Class<LabelingRuleAuditEntry>(
   "LabelingRuleAuditEntry",
 )({
@@ -50,7 +88,7 @@ export class LabelingRuleAuditEntry extends Model.Class<LabelingRuleAuditEntry>(
   ruleId: Model.GeneratedByApp(Schema.NullOr(LabelingRuleId)),
   actor: Model.GeneratedByApp(Schema.String),
   operation: Model.GeneratedByApp(LabelingRuleAuditOperation),
-  before: AuditValueField,
-  after: AuditValueField,
+  before: Value,
+  after: Value,
   createdAt: Model.DateTimeInsertFromNumber,
 }) {}
