@@ -1,4 +1,3 @@
-import * as GitHubEvent from "@slopcop/domain/GitHub/GitHubEvent"
 import type * as DomainRepository from "@slopcop/domain/GitHub/GitHubRepository"
 import * as GitHubWebhookEvent from "@slopcop/domain/GitHub/GitHubWebhookEvent"
 import * as Evaluation from "@slopcop/domain/Labeling/PolicyEvaluation"
@@ -31,7 +30,6 @@ import * as Context from "effect/Context"
 import * as Data from "effect/Data"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
-import * as Schema from "effect/Schema"
 import { GitHubPullRequest } from "../GitHub/GitHubPullRequest.ts"
 import { PolicyEvaluationsRepo } from "./repositories/PolicyEvaluationsRepo.ts"
 
@@ -151,7 +149,6 @@ const policyReferences = (
       return []
   }
 }
-const decodeDeliveryId = Schema.decodeUnknownEffect(GitHubEvent.GitHubEventId)
 
 export class LabelingCoordinator extends Context.Service<
   LabelingCoordinator,
@@ -434,7 +431,7 @@ export class LabelingCoordinator extends Context.Service<
           expected: summary.head.sha,
           actual: current.head.sha,
         })
-      const deliveryId = yield* decodeDeliveryId(event.id)
+      const deliveryId = event.id
       const recordedEvaluations = new Map<string, Evaluation.PolicyEvaluation>()
       yield* Effect.forEach(
         relevant,
@@ -542,7 +539,7 @@ export class LabelingCoordinator extends Context.Service<
         Evaluation.PolicyActionExecution
       >()
       yield* Effect.forEach(
-        actions,
+        actions.filter((action) => action.action !== "preserve"),
         (action) =>
           Effect.gen(function* () {
             const recorded = recordedEvaluations.get(action.ruleId)
@@ -603,7 +600,7 @@ export class LabelingCoordinator extends Context.Service<
                 }),
               )
       yield* Effect.forEach(
-        actions,
+        actions.filter((action) => action.action !== "preserve"),
         (action) => {
           const execution = recordedActions.get(action.ruleId)
           if (execution === undefined) return Effect.void

@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import { Model } from "effect/unstable/schema"
-import { GitHubEventId } from "../GitHub/GitHubEvent.ts"
+import { GitHubWebhookDeliveryId } from "../GitHub/GitHubWebhookDelivery.ts"
 import * as GitHubLabel from "../GitHub/GitHubLabel.ts"
 import { GitHubRepositoryId } from "../GitHub/GitHubRepository.ts"
 import { LabelingRuleId } from "./LabelingRule.ts"
@@ -14,7 +14,7 @@ export class LabelingDecision extends Model.Class<LabelingDecision>(
   "LabelingDecision",
 )({
   id: Model.UuidV7Insert(LabelingDecisionId),
-  deliveryId: Model.GeneratedByApp(GitHubEventId),
+  deliveryId: Model.GeneratedByApp(GitHubWebhookDeliveryId),
   repositoryId: Model.GeneratedByApp(GitHubRepositoryId),
   subjectType: Model.GeneratedByApp(LabelingSubjectType),
   subjectNumber: Model.GeneratedByApp(Schema.Int),

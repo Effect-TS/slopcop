@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema"
+import { GitHubWebhookDeliveryId } from "../GitHubWebhookDelivery.ts"
 
 export const BaseWebhookEvent = Schema.Struct({
-  id: Schema.String,
+  id: GitHubWebhookDeliveryId,
 })
 export type BaseWebhookEvent = typeof BaseWebhookEvent.Type

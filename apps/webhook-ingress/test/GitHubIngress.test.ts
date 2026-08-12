@@ -91,6 +91,53 @@ describe("GitHub webhook ingress", () => {
     },
   )
 
+  it.effect("does not enqueue redundant check lifecycle events", () => {
+    let enqueueCount = 0
+    const repository = {
+      id: 1,
+      full_name: "Effect-TS/effect",
+      private: false,
+      owner: { login: "Effect-TS" },
+      name: "effect",
+    }
+    const installation = { id: 2 }
+    const events = [
+      {
+        name: "check_suite",
+        payload: {
+          action: "completed",
+          check_suite: { head_sha: "sha" },
+          repository,
+          installation,
+        },
+      },
+      {
+        name: "check_run",
+        payload: {
+          action: "created",
+          check_run: { head_sha: "sha" },
+          repository,
+          installation,
+        },
+      },
+    ] as const
+
+    return Effect.gen(function* () {
+      for (const event of events) {
+        const result = yield* handleGitHubWebhook(
+          request({
+            body: JSON.stringify(event.payload),
+            eventName: event.name,
+          }),
+          secret,
+          () => Effect.sync(() => enqueueCount++).pipe(Effect.asVoid),
+        )
+        expect(result.status).toBe(202)
+      }
+      expect(enqueueCount).toBe(0)
+    })
+  })
+
   it.effect("rejects declared oversized bodies before enqueueing", () => {
     return Effect.gen(function* () {
       const result = yield* handleGitHubWebhook(

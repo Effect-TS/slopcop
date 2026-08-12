@@ -1,4 +1,4 @@
-import * as GitHubEvent from "@slopcop/domain/GitHub/GitHubEvent"
+import * as GitHubWebhookDelivery from "@slopcop/domain/GitHub/GitHubWebhookDelivery"
 import * as GitHubLabel from "@slopcop/domain/GitHub/GitHubLabel"
 import * as GitHubRepository from "@slopcop/domain/GitHub/GitHubRepository"
 import * as LabelingDecision from "@slopcop/domain/Labeling/LabelingDecision"
@@ -9,9 +9,9 @@ import { describe, expect, it } from "vite-plus/test"
 describe("LabelingDecision", () => {
   it("encodes D1 JSON and boolean fields", () => {
     const decision = LabelingDecision.LabelingDecision.insert.make({
-      deliveryId: Schema.decodeUnknownSync(GitHubEvent.GitHubEventId)(
-        "delivery-1",
-      ),
+      deliveryId: Schema.decodeUnknownSync(
+        GitHubWebhookDelivery.GitHubWebhookDeliveryId,
+      )("delivery-1"),
       repositoryId: Schema.decodeUnknownSync(
         GitHubRepository.GitHubRepositoryId,
       )("repository-1"),

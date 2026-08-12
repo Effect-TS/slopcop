@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema"
 import * as Model from "effect/unstable/schema/Model"
-import { GitHubEventId } from "../GitHub/GitHubEvent.ts"
+import { GitHubWebhookDeliveryId } from "../GitHub/GitHubWebhookDelivery.ts"
 import { GitHubRepositoryId } from "../GitHub/GitHubRepository.ts"
 import {
   PolicyNodeTrace,
@@ -17,7 +17,7 @@ export const PolicyEvaluationId = Schema.String.pipe(
 export const PolicyEvaluationTrace = Schema.Array(PolicyNodeTrace)
 const sharedEvaluationFields = {
   id: Model.UuidV7Insert(PolicyEvaluationId),
-  deliveryId: GitHubEventId,
+  deliveryId: GitHubWebhookDeliveryId,
   repositoryId: GitHubRepositoryId,
   ruleId: LabelingRuleId,
   ruleVersion: Schema.Int,

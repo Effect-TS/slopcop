@@ -139,6 +139,12 @@ export const handleGitHubWebhook = <R>(
     if (event === undefined) {
       return response(202, "Accepted")
     }
+    if (
+      event.name === "check_suite" ||
+      (event.name === "check_run" && event.payload.action === "created")
+    ) {
+      return response(202, "Accepted")
+    }
 
     return yield* enqueue(event).pipe(
       Effect.as(response(202, "Accepted")),

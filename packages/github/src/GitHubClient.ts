@@ -118,18 +118,17 @@ export interface PullRequestReview {
 const RequiredRules = Schema.Array(
   Schema.Struct({
     type: Schema.String,
-    parameters: Schema.optionalKey(
-      Schema.Struct({
-        required_status_checks: Schema.Array(
-          Schema.Struct({
-            context: Schema.String,
-            integration_id: Schema.optionalKey(Schema.NullOr(Schema.Finite)),
-          }),
-        ),
-      }),
-    ),
+    parameters: Schema.optionalKey(Schema.Unknown),
   }),
 )
+const RequiredStatusChecks = Schema.Struct({
+  required_status_checks: Schema.Array(
+    Schema.Struct({
+      context: Schema.String,
+      integration_id: Schema.optionalKey(Schema.NullOr(Schema.Finite)),
+    }),
+  ),
+})
 
 const CheckRunsResponse = Schema.Struct({
   check_runs: Schema.Array(
@@ -720,14 +719,21 @@ export class GitHubClient extends Context.Service<
             mapResponseDecodeError(operation, response),
           )
           return [
-            rules.flatMap((rule) =>
-              rule.type !== "required_status_checks" ||
-              rule.parameters === undefined
-                ? []
-                : rule.parameters.required_status_checks.map((check) => ({
+            yield* Effect.forEach(
+              rules.filter((rule) => rule.type === "required_status_checks"),
+              (rule) =>
+                Schema.decodeUnknownEffect(RequiredStatusChecks)(
+                  rule.parameters,
+                ).pipe(mapResponseDecodeError(operation, response)),
+            ).pipe(
+              Effect.map((parameters) =>
+                parameters.flatMap(({ required_status_checks }) =>
+                  required_status_checks.map((check) => ({
                     context: check.context,
                     integrationId: check.integration_id ?? null,
                   })),
+                ),
+              ),
             ),
             nextPage(pageNumber, response),
           ] as const
