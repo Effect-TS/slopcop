@@ -324,7 +324,6 @@ CREATE TABLE "policy_evaluations" (
   PRIMARY KEY ("id"),
   UNIQUE ("id","repository_id"),
   UNIQUE ("delivery_id","rule_id","rule_version","subject_number","subject_generation"),
-  FOREIGN KEY ("delivery_id") REFERENCES "github_events"("id") ON DELETE RESTRICT,
   FOREIGN KEY ("repository_id") REFERENCES "github_repositories"("id") ON DELETE CASCADE,
   FOREIGN KEY ("rule_id","repository_id") REFERENCES "labeling_rules"("id","repository_id") ON DELETE RESTRICT,
   FOREIGN KEY ("policy_id","repository_id") REFERENCES "labeling_policies"("id","repository_id") ON DELETE RESTRICT,

@@ -1,4 +1,3 @@
-import * as GitHubEvent from "@slopcop/domain/GitHub/GitHubEvent"
 import * as GitHubWebhookEvent from "@slopcop/domain/GitHub/GitHubWebhookEvent"
 import {
   GITHUB_EVENTS_DEAD_LETTER_QUEUE_NAME,
@@ -6,7 +5,6 @@ import {
 } from "@slopcop/infra/GitHubEventQueueResources"
 import * as Cloudflare from "alchemy/Cloudflare"
 import * as Cause from "effect/Cause"
-import * as Data from "effect/Data"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
 import * as Layer from "effect/Layer"
@@ -17,15 +15,6 @@ import {
   GitHubEventProcessors,
   isRetryableProcessorError,
 } from "./GitHubEventProcessors.ts"
-import { GitHubEventsRepo } from "./repositories/GitHubEventsRepo.ts"
-
-export class GitHubEventProcessingError extends Data.TaggedError(
-  "GitHubEventProcessingError",
-)<{
-  readonly reason: "DeliveryBusy" | "ProcessingFailed"
-  readonly event: GitHubWebhookEvent.GitHubWebhookEvent
-  readonly message: string
-}> {}
 
 export const makeGitHubEventsConsumerLayerNoDeps = (options: {
   readonly queue: typeof GitHubEventsQueue
@@ -34,55 +23,28 @@ export const makeGitHubEventsConsumerLayerNoDeps = (options: {
   Layer.effectDiscard(
     Effect.gen(function* () {
       const queueResource = yield* options.queue
-      const repo = yield* GitHubEventsRepo
       const processors = yield* GitHubEventProcessors
       const decodeWebhookEvent = Schema.decodeUnknownEffect(
         GitHubWebhookEvent.GitHubWebhookEvent,
-      )
-      const decodeEventId = Schema.decodeUnknownEffect(
-        GitHubEvent.GitHubEventId,
       )
 
       const consume = Effect.fn("GitHubEvents.consume")(function* (
         event: GitHubWebhookEvent.GitHubWebhookEvent,
       ) {
-        const id = yield* decodeEventId(event.id)
-        const claim = yield* repo.claim(
-          GitHubEvent.GitHubEvent.insert.make({ id, name: event.name }),
-        )
-
-        switch (claim._tag) {
-          case "Completed":
-            return yield* Effect.annotateLogs(
-              Effect.logInfo("Skipped completed GitHub webhook delivery"),
-              { deliveryId: id, event: event.name },
-            )
-          case "Busy":
-            return yield* new GitHubEventProcessingError({
-              event,
-              reason: "DeliveryBusy",
-              message: "The GitHub webhook delivery is already being processed",
-            })
-          case "Claimed": {
-            const exit = yield* Effect.exit(processors.dispatch(event))
-            if (Exit.isSuccess(exit)) {
-              return yield* Effect.asVoid(repo.markCompleted(claim.event.id))
-            }
-            const error = Cause.findErrorOption(exit.cause)
-            if (
-              Option.isSome(error) &&
-              !isRetryableProcessorError(error.value)
-            ) {
-              yield* Effect.logWarning(
-                "Completed non-retryable GitHub webhook delivery failure",
-                { deliveryId: id, event: event.name, error: error.value },
-              )
-              return yield* Effect.asVoid(repo.markCompleted(claim.event.id))
-            }
-            yield* repo.releaseClaim(claim.event.id, Cause.pretty(exit.cause))
-            return yield* Effect.failCause(exit.cause)
-          }
+        const exit = yield* Effect.exit(processors.dispatch(event))
+        if (Exit.isSuccess(exit)) return
+        const error = Cause.findErrorOption(exit.cause)
+        if (Option.isSome(error) && !isRetryableProcessorError(error.value)) {
+          return yield* Effect.logWarning(
+            "Discarded non-retryable GitHub webhook delivery failure",
+            {
+              deliveryId: event.id,
+              event: event.name,
+              error: error.value,
+            },
+          )
         }
+        return yield* Effect.failCause(exit.cause)
       })
 
       yield* Cloudflare.Queues.consumeQueueMessages<unknown>(
@@ -118,10 +80,7 @@ export const GitHubEventsConsumerLayerNoDeps =
 
 export const makeGitHubEventsConsumerLayer = (
   options: Parameters<typeof makeGitHubEventsConsumerLayerNoDeps>[0],
-) =>
-  makeGitHubEventsConsumerLayerNoDeps(options).pipe(
-    Layer.provide(GitHubEventsRepo.layer),
-  )
+) => makeGitHubEventsConsumerLayerNoDeps(options)
 
 export const GitHubEventsConsumerLayer = makeGitHubEventsConsumerLayer({
   queue: GitHubEventsQueue,

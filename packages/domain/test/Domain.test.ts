@@ -1,6 +1,5 @@
 import { Schema } from "effect"
 import * as GitHubAppAuth from "@slopcop/domain/GitHub/GitHubAppAuth"
-import * as GitHubEvent from "@slopcop/domain/GitHub/GitHubEvent"
 import * as GitHubLabel from "@slopcop/domain/GitHub/GitHubLabel"
 import * as GitHubWebhookEvent from "@slopcop/domain/GitHub/GitHubWebhookEvent"
 import * as RepositoryManagement from "@slopcop/domain/GitHub/RepositoryManagement"
@@ -32,21 +31,6 @@ describe("domain schemas", () => {
         iss: "12345",
       }),
     ).toBe('{"iat":100,"exp":700,"iss":"12345"}')
-  })
-
-  it("decodes an existing github_events row", () => {
-    expect(
-      decodes(GitHubEvent.GitHubEvent, {
-        id: "delivery-1",
-        name: "pull_request",
-        status: "processing",
-        attempts: 1,
-        lastError: null,
-        createdAt: Date.parse("2026-07-21T12:00:00Z"),
-        updatedAt: Date.parse("2026-07-21T12:01:00Z"),
-        deletedAt: null,
-      }),
-    ).toBe(true)
   })
 
   it("bounds labels and policy names", () => {

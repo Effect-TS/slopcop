@@ -19,9 +19,6 @@ CREATE TABLE "labeling_decisions" (
   "created_at" INTEGER DEFAULT (unixepoch() * 1000) NOT NULL,
   "updated_at" INTEGER DEFAULT (unixepoch() * 1000) NOT NULL,
   "deleted_at" INTEGER,
-  CONSTRAINT "labeling_decisions_delivery_id_github_events_id_fkey"
-    FOREIGN KEY ("delivery_id")
-    REFERENCES "github_events" ("id"),
   CONSTRAINT "labeling_decisions_repository_id_github_repositories_id_fkey"
     FOREIGN KEY ("repository_id")
     REFERENCES "github_repositories" ("id"),

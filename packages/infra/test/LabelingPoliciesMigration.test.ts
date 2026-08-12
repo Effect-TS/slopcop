@@ -49,6 +49,13 @@ describe("00012 generic policy engine migration", () => {
     expect(
       database.prepare("SELECT count(*) AS count FROM labeling_rules").get(),
     ).toEqual({ count: 0 })
+    expect(
+      database
+        .prepare(
+          "SELECT count(*) AS count FROM sqlite_master WHERE type='table' AND name='github_events'",
+        )
+        .get(),
+    ).toEqual({ count: 0 })
     expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([])
     database.close()
   })
@@ -260,8 +267,6 @@ describe("00012 generic policy engine migration", () => {
       ) VALUES
         ('ready-1','019be000-0000-7000-8000-000000000001','Ready','ready','Legacy',0.8,'reconcile',NULL,1,'valid',100,1,'ready-for-review',100,200),
         ('ready-2','019be000-0000-7000-8000-000000000001','Reviewed','reviewed','Legacy',0.8,'add-only',NULL,1,'valid',100,1,'ready-for-review',101,201);
-      INSERT INTO github_events (id,name,status,attempts,created_at,updated_at)
-      VALUES ('legacy-delivery','pull_request','completed',1,100,200);
       INSERT INTO labeling_decisions (
         id,delivery_id,repository_id,subject_type,subject_number,head_sha,
         rules_revision,selected_rule_ids,selected_labels,model,prompt_version,
@@ -469,8 +474,6 @@ describe("00012 generic policy engine migration", () => {
     ).toThrow("labeling rule audit entries are immutable")
 
     database.exec(`
-      INSERT INTO github_events (id,name,status,attempts)
-      VALUES ('evaluation-delivery','pull_request','completed',1);
        INSERT INTO policy_evaluations (
          id,delivery_id,repository_id,_tag,rule_id,rule_version,evaluator,
          target,subject_number,head_sha,automation_revision,outcome,confidence,
@@ -522,6 +525,13 @@ describe("00012 generic policy engine migration", () => {
       status: "planned",
       applied: 0,
     })
+    expect(
+      database
+        .prepare(
+          "SELECT delivery_id FROM policy_evaluations WHERE id='evaluation-1'",
+        )
+        .get(),
+    ).toEqual({ delivery_id: "evaluation-delivery" })
     expect(() =>
       database.exec(`
          INSERT INTO policy_evaluations (
