@@ -208,12 +208,19 @@ describe("GitHubClient pagination", () => {
     },
   )
 
-  it.effect("collects required checks from every effective-rules page", () => {
+  it.effect("collects required checks from mixed effective-rules pages", () => {
     const attempts: Array<number> = []
     const layer = makeLayer(
       [
         Response.json(
           [
+            {
+              type: "pull_request",
+              parameters: {
+                required_approving_review_count: 1,
+                dismiss_stale_reviews_on_push: true,
+              },
+            },
             {
               type: "required_status_checks",
               parameters: {

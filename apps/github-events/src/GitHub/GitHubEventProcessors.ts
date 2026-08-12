@@ -25,6 +25,12 @@ export class GitHubEventProcessorError extends Data.TaggedError(
   readonly cause: unknown
 }> {}
 
+export const isRetryableProcessorError = (error: unknown): boolean => {
+  if (typeof error !== "object" || error === null) return true
+  if ("retryable" in error && error.retryable === false) return false
+  return "cause" in error ? isRetryableProcessorError(error.cause) : true
+}
+
 export class GitHubEventProcessors extends Context.Service<
   GitHubEventProcessors,
   {

@@ -542,7 +542,7 @@ export class LabelingCoordinator extends Context.Service<
         Evaluation.PolicyActionExecution
       >()
       yield* Effect.forEach(
-        actions,
+        actions.filter((action) => action.action !== "preserve"),
         (action) =>
           Effect.gen(function* () {
             const recorded = recordedEvaluations.get(action.ruleId)
@@ -603,7 +603,7 @@ export class LabelingCoordinator extends Context.Service<
                 }),
               )
       yield* Effect.forEach(
-        actions,
+        actions.filter((action) => action.action !== "preserve"),
         (action) => {
           const execution = recordedActions.get(action.ruleId)
           if (execution === undefined) return Effect.void

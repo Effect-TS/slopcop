@@ -505,17 +505,16 @@ describe("LabelingCoordinator", () => {
     },
   )
   it.effect(
-    "attributes a selected rule when its label is already present",
+    "does not journal an action when the selected label is already present",
     () => {
       const value = state()
       value.labels.add("managed")
       return Effect.gen(function* () {
         yield* run(value)
         expect(value.applies).toBe(0)
-        expect(value.actions).toMatchObject([
-          { action: "preserve", selected: true, status: "planned" },
-        ])
-        expect(value.completions).toEqual([false])
+        expect(value.actions).toEqual([])
+        expect(value.completions).toEqual([])
+        expect(value.operations).toEqual([])
       })
     },
   )
@@ -688,7 +687,7 @@ describe("LabelingCoordinator", () => {
           gateTrace: [{ outcome: "NoMatch" }],
         },
       ])
-      expect(value.actions).toMatchObject([{ action: "preserve" }])
+      expect(value.actions).toEqual([])
     })
   })
 })

@@ -134,7 +134,8 @@ describe("PolicyCompiler", () => {
       )
       expect(compiled.triggers).toContain("pull_request:unlabeled")
       expect(compiled.triggers).toContain("check_run:rerequested")
-      expect(compiled.triggers).toContain("check_suite:requested")
+      expect(compiled.triggers).toContain("check_run:completed")
+      expect(compiled.triggers).not.toContain("check_suite:requested")
     }),
   )
 

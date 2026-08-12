@@ -10,9 +10,13 @@ import * as Data from "effect/Data"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
 import * as Layer from "effect/Layer"
+import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
 import * as Stream from "effect/Stream"
-import { GitHubEventProcessors } from "./GitHubEventProcessors.ts"
+import {
+  GitHubEventProcessors,
+  isRetryableProcessorError,
+} from "./GitHubEventProcessors.ts"
 import { GitHubEventsRepo } from "./repositories/GitHubEventsRepo.ts"
 
 export class GitHubEventProcessingError extends Data.TaggedError(
@@ -62,6 +66,17 @@ export const makeGitHubEventsConsumerLayerNoDeps = (options: {
           case "Claimed": {
             const exit = yield* Effect.exit(processors.dispatch(event))
             if (Exit.isSuccess(exit)) {
+              return yield* Effect.asVoid(repo.markCompleted(claim.event.id))
+            }
+            const error = Cause.findErrorOption(exit.cause)
+            if (
+              Option.isSome(error) &&
+              !isRetryableProcessorError(error.value)
+            ) {
+              yield* Effect.logWarning(
+                "Completed non-retryable GitHub webhook delivery failure",
+                { deliveryId: id, event: event.name, error: error.value },
+              )
               return yield* Effect.asVoid(repo.markCompleted(claim.event.id))
             }
             yield* repo.releaseClaim(claim.event.id, Cause.pretty(exit.cause))

@@ -58,6 +58,17 @@ export class PolicyEvaluationsRepo extends Context.Service<
           trace=excluded.trace,
           gate_trace=excluded.gate_trace,
           automation_revision=excluded.automation_revision
+        WHERE policy_evaluations.policy_id IS NOT excluded.policy_id
+          OR policy_evaluations.policy_version_id IS NOT excluded.policy_version_id
+          OR policy_evaluations.evaluator IS NOT excluded.evaluator
+          OR policy_evaluations.gate_policy_id IS NOT excluded.gate_policy_id
+          OR policy_evaluations.gate_policy_version_id IS NOT excluded.gate_policy_version_id
+          OR policy_evaluations.outcome IS NOT excluded.outcome
+          OR policy_evaluations.confidence IS NOT excluded.confidence
+          OR policy_evaluations.rationale IS NOT excluded.rationale
+          OR policy_evaluations.trace IS NOT excluded.trace
+          OR policy_evaluations.gate_trace IS NOT excluded.gate_trace
+          OR policy_evaluations.automation_revision IS NOT excluded.automation_revision
         RETURNING *`,
     })
     const insertAction = SqlSchema.findOneOption({
@@ -72,7 +83,30 @@ export class PolicyEvaluationsRepo extends Context.Service<
           selected=excluded.selected,
           status='planned',
           applied=0
+        WHERE policy_action_executions.action IS NOT excluded.action
+          OR policy_action_executions.label IS NOT excluded.label
+          OR policy_action_executions.selected IS NOT excluded.selected
+          OR policy_action_executions.status IS NOT 'planned'
+          OR policy_action_executions.applied IS NOT 0
         RETURNING *`,
+    })
+    const findEvaluation = SqlSchema.findOneOption({
+      Request: Evaluation.PolicyEvaluation.insert,
+      Result: Evaluation.PolicyEvaluation,
+      execute: (input) => sql`
+        SELECT * FROM policy_evaluations
+        WHERE delivery_id=${input.deliveryId}
+          AND rule_id=${input.ruleId}
+          AND rule_version=${input.ruleVersion}
+          AND subject_number=${input.subjectNumber}
+          AND subject_generation=coalesce(${input.headSha},'')`,
+    })
+    const findAction = SqlSchema.findOneOption({
+      Request: Evaluation.PolicyActionExecution.insert,
+      Result: Evaluation.PolicyActionExecution,
+      execute: (input) => sql`
+        SELECT * FROM policy_action_executions
+        WHERE evaluation_id=${input.evaluationId} AND rule_id=${input.ruleId}`,
     })
     const completeAction = SqlSchema.findOneOption({
       Request: Schema.Struct({
@@ -106,11 +140,23 @@ export class PolicyEvaluationsRepo extends Context.Service<
     return {
       recordEvaluation: (input) =>
         insertEvaluation(input).pipe(
+          Effect.flatMap(
+            Option.match({
+              onNone: () => findEvaluation(input),
+              onSome: (row) => Effect.succeed(Option.some(row)),
+            }),
+          ),
           Effect.mapError(mapError("RecordEvaluation")),
           Effect.flatMap((row) => requireOne("RecordEvaluation", row)),
         ),
       recordAction: (input) =>
         insertAction(input).pipe(
+          Effect.flatMap(
+            Option.match({
+              onNone: () => findAction(input),
+              onSome: (row) => Effect.succeed(Option.some(row)),
+            }),
+          ),
           Effect.mapError(mapError("RecordAction")),
           Effect.flatMap((row) => requireOne("RecordAction", row)),
         ),

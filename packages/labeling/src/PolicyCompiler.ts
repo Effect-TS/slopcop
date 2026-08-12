@@ -29,12 +29,8 @@ export const FACT_TRIGGERS: Readonly<
   "pull_request.changed_files": RECONCILIATION_TRIGGERS,
   "pull_request.required_checks": [
     ...RECONCILIATION_TRIGGERS,
-    "check_run:created",
     "check_run:rerequested",
     "check_run:completed",
-    "check_suite:requested",
-    "check_suite:rerequested",
-    "check_suite:completed",
     "status:*",
   ],
   "pull_request.latest_reviews": [
