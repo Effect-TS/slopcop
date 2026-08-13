@@ -83,7 +83,13 @@ export interface RequiredCheck {
 
 export interface CheckRun {
   readonly name: string
-  readonly status: "queued" | "in_progress" | "completed"
+  readonly status:
+    | "queued"
+    | "in_progress"
+    | "completed"
+    | "waiting"
+    | "requested"
+    | "pending"
   readonly conclusion:
     | "action_required"
     | "cancelled"
@@ -134,7 +140,14 @@ const CheckRunsResponse = Schema.Struct({
   check_runs: Schema.Array(
     Schema.Struct({
       name: Schema.String,
-      status: Schema.Literals(["queued", "in_progress", "completed"]),
+      status: Schema.Literals([
+        "queued",
+        "in_progress",
+        "completed",
+        "waiting",
+        "requested",
+        "pending",
+      ]),
       conclusion: Schema.NullOr(
         Schema.Literals([
           "action_required",

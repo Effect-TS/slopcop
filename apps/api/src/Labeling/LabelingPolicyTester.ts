@@ -113,6 +113,21 @@ export class LabelingPolicyTester extends Context.Service<
     return {
       test: (slug, policyId, pullRequestNumber) =>
         test(slug, policyId, pullRequestNumber).pipe(
+          Effect.tapError((cause) =>
+            cause._tag === "GitHubClientError"
+              ? Effect.logError("GitHub policy fact loading failed").pipe(
+                  Effect.annotateLogs({
+                    repository: `${slug.owner}/${slug.repo}`,
+                    policyId,
+                    pullRequestNumber,
+                    operation: cause.operation,
+                    status: cause.status ?? null,
+                    retryable: cause.retryable,
+                    githubMessage: cause.message,
+                  }),
+                )
+              : Effect.void,
+          ),
           Effect.mapError((cause) => {
             switch (cause._tag) {
               case "LabelingPolicyTestError":

@@ -254,25 +254,31 @@ const mapTestError = (
 ): Effect.Effect<
   never,
   ApiError.PullRequestNotFound | ApiError.LabelingRuleTestUnavailable
-> =>
-  error.notFound
-    ? Effect.fail(
-        new ApiError.PullRequestNotFound({
-          repository: error.repository,
-          pullRequestNumber: error.pullRequestNumber,
-          message: `Pull request #${error.pullRequestNumber} does not exist or is inaccessible.`,
-        }),
-      )
-    : Effect.fail(
-        new ApiError.LabelingRuleTestUnavailable({
-          repository: error.repository,
-          ruleId: error.ruleId,
-          pullRequestNumber: error.pullRequestNumber,
-          retryable: error.retryable,
-          message:
-            "The rule test failed. No labels or evaluations were written.",
-        }),
-      )
+> => {
+  const response = error.notFound
+    ? new ApiError.PullRequestNotFound({
+        repository: error.repository,
+        pullRequestNumber: error.pullRequestNumber,
+        message: `Pull request #${error.pullRequestNumber} does not exist or is inaccessible.`,
+      })
+    : new ApiError.LabelingRuleTestUnavailable({
+        repository: error.repository,
+        ruleId: error.ruleId,
+        pullRequestNumber: error.pullRequestNumber,
+        retryable: error.retryable,
+        message: "The rule test failed. No labels or evaluations were written.",
+      })
+  return Effect.logError("Labeling rule test failed", error.cause).pipe(
+    Effect.annotateLogs({
+      repository: error.repository,
+      ruleId: error.ruleId,
+      pullRequestNumber: error.pullRequestNumber,
+      retryable: error.retryable,
+      notFound: error.notFound,
+    }),
+    Effect.andThen(Effect.fail(response)),
+  )
+}
 const mapRepository = (error: RepositoryNotConfigured) =>
   Effect.fail(
     new ApiError.RepositoryNotConfigured({

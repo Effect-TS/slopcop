@@ -130,6 +130,42 @@ describe("GitHubClient retries", () => {
 
 describe("GitHubClient pagination", () => {
   it.effect(
+    "accepts GitHub check runs waiting for protected environments",
+    () => {
+      const attempts: Array<number> = []
+      const layer = makeLayer(
+        [
+          Response.json({
+            check_runs: [
+              {
+                name: "approval-gate",
+                status: "waiting",
+                conclusion: null,
+                app: { id: 15368, slug: "github-actions" },
+              },
+            ],
+          }),
+        ],
+        attempts,
+      )
+
+      return Effect.gen(function* () {
+        const client = yield* GitHubClient
+        const runs = yield* client.listCheckRuns(repository, "head-sha")
+        expect(runs).toEqual([
+          {
+            name: "approval-gate",
+            status: "waiting",
+            conclusion: null,
+            appId: 15368,
+            producer: "github-actions",
+          },
+        ])
+      }).pipe(Effect.provide(layer))
+    },
+  )
+
+  it.effect(
     "lists only the requested recent open pull request summaries",
     () => {
       const attempts: Array<number> = []
