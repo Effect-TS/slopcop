@@ -1,0 +1,22 @@
+{
+  "name": "@slopcop/github-data-sync",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "vp check",
+    "test": "vp test --run --passWithNoTests"
+  },
+  "dependencies": {
+    "@slopcop/domain": "workspace:*",
+    "@slopcop/github": "workspace:*",
+    "@slopcop/infra": "workspace:*",
+    "alchemy": "catalog:",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "typescript": "catalog:",
+    "vite": "npm:@voidzero-dev/vite-plus-core@0.2.4",
+    "vite-plus": "catalog:"
+  }
+}

@@ -46,6 +46,7 @@ const sceneView = Scene.withViewInputs(AppSidebar.view, {
 
 describe("AppSidebar", () => {
   it("renders configured navigation with current-page semantics", () => {
+    const sidebar = Scene.selector("aside")
     const navigation = Scene.selector('nav[aria-label="Patrol"]')
     const autoLabelingLink = Scene.selector('a[href="/auto-labeling"]')
     const policiesLink = Scene.selector('a[href="/policies"]')
@@ -53,6 +54,8 @@ describe("AppSidebar", () => {
     Scene.scene(
       { update: AppSidebar.update, view: sceneView() },
       Scene.given(model),
+      Scene.expect(sidebar).toHaveClass("text-sidebar-foreground"),
+      Scene.expect(sidebar).not.toHaveClass("text-white"),
       Scene.expect(navigation).toContainText("Auto-Labeling"),
       Scene.expect(navigation).toContainText("Policies"),
       Scene.expect(autoLabelingLink).toHaveAttr("aria-current", "page"),
@@ -114,6 +117,18 @@ describe("AppSidebar", () => {
       Scene.expect(Scene.selector("header")).toContainText(
         "No repository selected",
       ),
+    )
+  })
+
+  it("renders GitHub sync next to the theme control", () => {
+    const sync = Scene.role("button", { name: "Synchronize GitHub data" })
+    const theme = Scene.role("button", { name: "Theme" })
+
+    Scene.scene(
+      { update: AppSidebar.update, view: sceneView() },
+      Scene.given(model),
+      Scene.expect(sync).not.toBeDisabled(),
+      Scene.expect(theme).toBeVisible(),
     )
   })
 })

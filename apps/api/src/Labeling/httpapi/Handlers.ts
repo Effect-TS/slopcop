@@ -7,6 +7,8 @@ import type * as Rule from "@slopcop/domain/Labeling/LabelingRule"
 import type * as Audit from "@slopcop/domain/Labeling/LabelingRuleAuditEntry"
 import { RepositoryNotConfigured } from "@slopcop/github/Errors"
 import { GitHubClientError } from "@slopcop/github/GitHubClient"
+import { GitHubRepositoriesRepo } from "@slopcop/github/repositories/GitHubRepositoriesRepo"
+import { GitHubRepositoryLabelsRepo } from "@slopcop/github/repositories/GitHubRepositoryLabelsRepo"
 import {
   LabelingRules,
   type LabelingRulesError,
@@ -15,6 +17,7 @@ import { Policies } from "@slopcop/labeling/Policies"
 import type { PoliciesError } from "@slopcop/labeling/Policies"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
+import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder"
 import { LabelingRuleTestCandidates } from "../LabelingRuleTestCandidates.ts"
@@ -300,6 +303,8 @@ export const LabelingRulesApiHandlersLayer = HttpApiBuilder.group(
   "labelingRules",
   Effect.fnUntraced(function* (handlers) {
     const rules = yield* LabelingRules
+    const repositories = yield* GitHubRepositoriesRepo
+    const cachedLabels = yield* GitHubRepositoryLabelsRepo
     const policies = yield* Policies
     const tester = yield* LabelingRuleTester
     const candidates = yield* LabelingRuleTestCandidates
@@ -348,10 +353,37 @@ export const LabelingRulesApiHandlersLayer = HttpApiBuilder.group(
           Effect.flatMap((rule) => encode(params, rule)),
         ),
       listGitHubLabels: ({ params }) =>
-        rules.listAvailableLabels(params).pipe(
-          Effect.catch(catchRule(params)),
-          Effect.map((labels) => ({ labels })),
-        ),
+        Effect.gen(function* () {
+          const found = yield* repositories
+            .findBySlug(params)
+            .pipe(
+              Effect.catchTag("GitHubRepositoriesRepoError", (error) =>
+                Effect.logError("GitHub repository lookup failed", error).pipe(
+                  Effect.andThen(Effect.die(error)),
+                ),
+              ),
+            )
+          const repository = yield* Option.match(found, {
+            onNone: () =>
+              Effect.fail(
+                new RepositoryNotConfigured({
+                  repository: `${params.owner}/${params.repo}`,
+                }),
+              ),
+            onSome: Effect.succeed,
+          })
+          const labels = yield* cachedLabels
+            .list(repository.id)
+            .pipe(
+              Effect.catchTag("GitHubRepositoryLabelsRepoError", (error) =>
+                Effect.logError(
+                  "Cached GitHub label lookup failed",
+                  error,
+                ).pipe(Effect.andThen(Effect.die(error))),
+              ),
+            )
+          return { labels }
+        }).pipe(Effect.catchTag("RepositoryNotConfigured", mapRepository)),
       listRuleTestCandidates: ({ params, query }) =>
         candidates.list(params, query.limit ?? 50).pipe(
           Effect.map((candidates) => ({ candidates })),

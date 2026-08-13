@@ -4,6 +4,7 @@
   "references": [{ "path": "tsconfig.packages.json" }],
   "include": [
     "./alchemy.run.ts",
+    "./apps/github-data-sync/src/**/*.ts",
     "**/vitest.*.ts", // All vitest config files across all packages
     "./apps/*/worker.ts",
     "./apps/*/test/**/*.ts",

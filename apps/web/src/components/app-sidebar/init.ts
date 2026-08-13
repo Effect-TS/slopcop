@@ -5,6 +5,7 @@ import type { Command } from "./command"
 import type { Flags } from "./flags"
 import { Model } from "./model"
 import { mapRepositorySelectorCommands, mapThemeCommands } from "./update"
+import * as GitHubSync from "../../features/github-sync"
 
 export const init = (
   flags: Flags,
@@ -20,7 +21,15 @@ export const init = (
   const [theme, themeCommands] = Theme.init(flags.theme)
 
   return [
-    Model.make({ repositorySelector, sidebar, theme }, { disableChecks: true }),
+    Model.make(
+      {
+        repositorySelector,
+        sidebar,
+        theme,
+        githubSync: GitHubSync.init(),
+      },
+      { disableChecks: true },
+    ),
     [
       ...mapRepositorySelectorCommands(repositorySelectorCommands),
       ...mapThemeCommands(themeCommands),

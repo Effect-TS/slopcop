@@ -1,5 +1,6 @@
 import * as GitHubRepository from "@slopcop/domain/GitHub/GitHubRepository"
-import { GitHubClient } from "@slopcop/github/GitHubClient"
+import * as GitHubPullRequest from "@slopcop/domain/GitHub/GitHubPullRequest"
+import { GitHubPullRequestsRepo } from "@slopcop/github/repositories/GitHubPullRequestsRepo"
 import { GitHubRepositoriesRepo } from "@slopcop/github/repositories/GitHubRepositoriesRepo"
 import { describe, expect, it } from "@effect/vitest"
 import * as DateTime from "effect/DateTime"
@@ -7,7 +8,6 @@ import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
-import * as Stream from "effect/Stream"
 import { LabelingRuleTestCandidates } from "../../src/Labeling/LabelingRuleTestCandidates.ts"
 const now = DateTime.fromDateUnsafe(new Date("2026-08-08T12:00:00Z"))
 const repository = new GitHubRepository.GitHubRepository({
@@ -28,7 +28,6 @@ const repository = new GitHubRepository.GitHubRepository({
   deletedAt: Option.none(),
 })
 const unavailable = Effect.die("Unexpected test service call")
-const unavailableStream = Stream.die("Unexpected test stream call")
 const layer = (configured: boolean, calls: Array<number>) =>
   LabelingRuleTestCandidates.layerNoDeps.pipe(
     Layer.provide([
@@ -43,33 +42,32 @@ const layer = (configured: boolean, calls: Array<number>) =>
         updateEnabled: () => unavailable,
         replaceInstallationRepositories: () => unavailable,
       }),
-      Layer.succeed(GitHubClient, {
-        getRepositoryLabel: () => unavailable,
-        listRepositoryLabels: () => unavailableStream,
-        listPullRequestFiles: () => unavailableStream,
-        listOpenPullRequests: (_repository, limit) =>
+      Layer.succeed(GitHubPullRequestsRepo, {
+        listOpen: (_repository, limit) =>
           Effect.sync(() => {
             calls.push(limit)
             return [
-              {
+              new GitHubPullRequest.GitHubPullRequestRecord({
+                repositoryId: repository.id,
                 number: 42,
+                state: "open",
                 title: "Fix",
+                body: null,
                 draft: false,
                 author: "octocat",
-                updatedAt: now,
-              },
+                baseRef: "main",
+                headSha: "abc",
+                githubCreatedAt: now,
+                githubUpdatedAt: now,
+                generation: 1,
+              }),
             ]
           }),
-        getPullRequest: () => unavailable,
-        listItemLabels: () => unavailableStream,
-        addItemLabels: () => unavailable,
-        removeItemLabel: () => unavailable,
-        listPullRequestsForCommit: () => unavailable,
-        listPullRequestReviews: () => unavailable,
-        getFileContent: () => unavailable,
-        listRequiredChecks: () => unavailable,
-        listCheckRuns: () => unavailable,
-        listCommitStatuses: () => unavailable,
+        findSync: () => unavailable,
+        markRefreshing: () => unavailable,
+        publishOpen: () => unavailable,
+        markNotModified: () => unavailable,
+        markFailed: () => unavailable,
       }),
     ]),
   )

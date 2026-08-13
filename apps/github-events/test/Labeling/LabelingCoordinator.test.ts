@@ -205,6 +205,7 @@ const layer = (
           listRepositoryLabels: () => unavailableStream,
           listPullRequestFiles: () => unavailableStream,
           listOpenPullRequests: () => unavailable,
+          listOpenPullRequestSnapshot: () => unavailable,
           getPullRequest: () =>
             Effect.succeed({ ...summary, title: value.currentTitle }),
           listItemLabels: () => unavailableStream,

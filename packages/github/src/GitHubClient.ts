@@ -68,6 +68,21 @@ const OpenPullRequest = Schema.Struct({
   updated_at: Schema.optionalKey(Schema.NullOr(Schema.DateTimeUtcFromString)),
 })
 
+const OpenPullRequestSnapshotResponse = Schema.Struct({
+  number: Schema.Int.check(Schema.isGreaterThan(0)),
+  state: GitHubPullRequest.GitHubPullRequestState,
+  title: Schema.String,
+  body: Schema.NullOr(Schema.String),
+  draft: Schema.Boolean,
+  head: Schema.Struct({ sha: Schema.String }),
+  base: Schema.Struct({ ref: Schema.String }),
+  user: Schema.optionalKey(
+    Schema.NullOr(Schema.Struct({ login: Schema.String })),
+  ),
+  created_at: Schema.DateTimeUtcFromString,
+  updated_at: Schema.DateTimeUtcFromString,
+})
+
 export interface PullRequestCandidate {
   readonly number: number
   readonly title: string
@@ -75,6 +90,28 @@ export interface PullRequestCandidate {
   readonly author: string | null
   readonly updatedAt: typeof Schema.DateTimeUtcFromString.Type | null
 }
+
+export interface OpenPullRequestSnapshot {
+  readonly number: number
+  readonly state: GitHubPullRequest.GitHubPullRequestState
+  readonly title: string
+  readonly body: string | null
+  readonly draft: boolean
+  readonly author: string | null
+  readonly baseRef: string
+  readonly headSha: string
+  readonly createdAt: typeof Schema.DateTimeUtcFromString.Type
+  readonly updatedAt: typeof Schema.DateTimeUtcFromString.Type
+}
+
+export type ConditionalSnapshot<A> =
+  | { readonly _tag: "NotModified" }
+  | {
+      readonly _tag: "Modified"
+      readonly value: ReadonlyArray<A>
+      readonly etag: string | null
+      readonly lastModified: string | null
+    }
 
 export interface RequiredCheck {
   readonly context: string
@@ -224,6 +261,13 @@ export class GitHubClient extends Context.Service<
       repository: GitHubRepository.GitHubRepository,
       limit: number,
     ) => Effect.Effect<ReadonlyArray<PullRequestCandidate>, GitHubClientError>
+    readonly listOpenPullRequestSnapshot: (
+      repository: GitHubRepository.GitHubRepository,
+      etag: string | null,
+    ) => Effect.Effect<
+      ConditionalSnapshot<OpenPullRequestSnapshot>,
+      GitHubClientError
+    >
     readonly getPullRequest: (
       repository: GitHubRepository.GitHubRepository,
       number: number,
@@ -296,6 +340,9 @@ export class GitHubClient extends Context.Service<
     )
     const decodeOpenPullRequests = HttpClientResponse.schemaBodyJson(
       Schema.Array(OpenPullRequest),
+    )
+    const decodeOpenPullRequestSnapshot = HttpClientResponse.schemaBodyJson(
+      Schema.Array(OpenPullRequestSnapshotResponse),
     )
     const decodePullRequestSummaries = HttpClientResponse.schemaBodyJson(
       Schema.Array(PullRequestSummary),
@@ -514,6 +561,57 @@ export class GitHubClient extends Context.Service<
         ).pipe(Stream.runCollect)
       },
     )
+
+    const listOpenPullRequestSnapshot = Effect.fn(
+      "GitHubClient.listOpenPullRequests",
+    )(function* (
+      repository: GitHubRepository.GitHubRepository,
+      etag: string | null,
+    ) {
+      let request = HttpClientRequest.get(
+        `${GITHUB_API_URL}${repositoryPath(repository)}/pulls`,
+      ).pipe(
+        HttpClientRequest.setUrlParams({
+          state: "open",
+          sort: "updated",
+          direction: "desc",
+          per_page: PAGE_SIZE,
+          page: 1,
+        }),
+      )
+      if (etag !== null) {
+        request = HttpClientRequest.setHeader(request, "if-none-match", etag)
+      }
+      const response = yield* execute(
+        repository,
+        "GitHubClient.listOpenPullRequests",
+        request,
+      )
+      if (response.status === 304) {
+        return { _tag: "NotModified" } as const
+      }
+      yield* requireStatus("GitHubClient.listOpenPullRequests", response, 200)
+      const pulls = yield* decodeOpenPullRequestSnapshot(response).pipe(
+        mapResponseDecodeError("GitHubClient.listOpenPullRequests", response),
+      )
+      return {
+        _tag: "Modified",
+        value: pulls.map((pull) => ({
+          number: pull.number,
+          state: pull.state,
+          title: pull.title,
+          body: pull.body,
+          draft: pull.draft,
+          author: pull.user?.login ?? null,
+          baseRef: pull.base.ref,
+          headSha: pull.head.sha,
+          createdAt: pull.created_at,
+          updatedAt: pull.updated_at,
+        })),
+        etag: response.headers.etag ?? null,
+        lastModified: response.headers["last-modified"] ?? null,
+      } as const
+    })
 
     const getPullRequest = Effect.fn("GitHubClient.getPullRequest")(function* (
       repository: GitHubRepository.GitHubRepository,
@@ -828,6 +926,7 @@ export class GitHubClient extends Context.Service<
       listRepositoryLabels,
       listPullRequestFiles,
       listOpenPullRequests,
+      listOpenPullRequestSnapshot,
       getPullRequest,
       listItemLabels,
       addItemLabels,

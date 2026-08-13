@@ -144,6 +144,7 @@ const layer = (
           listRepositoryLabels: () => unavailableStream,
           listPullRequestFiles: () => unavailableStream,
           listOpenPullRequests: () => unavailable,
+          listOpenPullRequestSnapshot: () => unavailable,
           getPullRequest: () =>
             notFound
               ? Effect.fail(
