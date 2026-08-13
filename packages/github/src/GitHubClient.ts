@@ -19,6 +19,7 @@ import { GitHubAppAuth, GitHubAppAuthError } from "./GitHubAppAuth.ts"
 const GITHUB_API_URL = "https://api.github.com"
 const PAGE_SIZE = 100
 const MAX_ATTEMPTS = 3
+const REQUEST_TIMEOUT = "30 seconds"
 
 const GitHubClientOperation = Schema.Literals([
   "GitHubClient.getRepositoryLabel",
@@ -338,7 +339,7 @@ export class GitHubClient extends Context.Service<
       const authenticated = HttpClientRequest.bearerToken(request, token)
 
       const requestOnce = httpClient.execute(authenticated).pipe(
-        Effect.timeout("10 seconds"),
+        Effect.timeout(REQUEST_TIMEOUT),
         Effect.mapError(
           () =>
             new RetryableGitHubRequest({
@@ -680,6 +681,15 @@ export class GitHubClient extends Context.Service<
       ref: string,
     ) {
       const operation = "GitHubClient.getFileContent"
+      const withPath = Effect.mapError(
+        (error: GitHubClientError) =>
+          new GitHubClientError({
+            operation: error.operation,
+            ...(error.status === undefined ? {} : { status: error.status }),
+            retryable: error.retryable,
+            message: `${error.message} File: '${path}'.`,
+          }),
+      )
       const response = yield* execute(
         repository,
         operation,
@@ -689,10 +699,11 @@ export class GitHubClient extends Context.Service<
             .map(encodeURIComponent)
             .join("/")}`,
         ).pipe(HttpClientRequest.setUrlParam("ref", ref)),
-      )
-      yield* requireStatus(operation, response, 200)
+      ).pipe(withPath)
+      yield* requireStatus(operation, response, 200).pipe(withPath)
       const file = yield* decodeFileContent(response).pipe(
         mapResponseDecodeError(operation, response),
+        withPath,
       )
       return yield* decodeFileContentText(file.content.replace(/\s/g, "")).pipe(
         Effect.mapError(

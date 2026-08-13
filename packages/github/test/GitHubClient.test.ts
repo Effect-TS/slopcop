@@ -126,6 +126,22 @@ describe("GitHubClient retries", () => {
       expect(attempts).toHaveLength(3)
     }).pipe(Effect.provide(layer))
   })
+
+  it.effect("includes the file path when content loading fails", () => {
+    const attempts: Array<number> = []
+    const layer = makeLayer([new Response(null, { status: 404 })], attempts)
+
+    return Effect.gen(function* () {
+      const client = yield* GitHubClient
+      const error = yield* Effect.flip(
+        client.getFileContent(repository, "src/example.ts", "head-sha"),
+      )
+      expect(error.operation).toBe("GitHubClient.getFileContent")
+      expect(error.status).toBe(404)
+      expect(error.message).toContain("File: 'src/example.ts'.")
+      expect(attempts).toHaveLength(1)
+    }).pipe(Effect.provide(layer))
+  })
 })
 
 describe("GitHubClient pagination", () => {
