@@ -9,10 +9,12 @@ import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
 import { makeWorker } from "./apps/api/src/Worker.ts"
 import { makeGitHubEventsWorker } from "./apps/github-events/src/Worker.ts"
+import { makeGitHubDataSyncWorker } from "./apps/github-data-sync/src/Worker.ts"
 import { WebhookWorker } from "./apps/webhook-ingress/src/Worker.ts"
 import { makeD1Database } from "./packages/infra/src/Sql.ts"
 import * as CloudflareResourceNames from "./packages/infra/src/CloudflareResourceNames.ts"
 import { makeGitHubEventQueueResources } from "./packages/infra/src/GitHubEventQueueResources.ts"
+import { makeGitHubDataSyncQueueResources } from "./packages/infra/src/GitHubDataSyncQueueResources.ts"
 
 const State = Cloudflare.state()
 const CLOUDFLARE_ACCESS_ISSUER = "https://effectful.cloudflareaccess.com"
@@ -86,6 +88,10 @@ export default Alchemy.Stack(
     const queueResources = makeGitHubEventQueueResources(resourceNames)
     const queue = yield* queueResources.queue
     const deadLetterQueue = yield* queueResources.deadLetterQueue
+    const dataSyncQueueResources =
+      makeGitHubDataSyncQueueResources(resourceNames)
+    yield* dataSyncQueueResources.queue
+    yield* dataSyncQueueResources.deadLetterQueue
 
     const devWebhookTunnelHostname = yield* dev
       ? Effect.gen(function* () {
@@ -130,12 +136,22 @@ export default Alchemy.Stack(
         })
       : Effect.succeed(Option.none<string>())
 
-    const worker = yield* makeWorker({ resourceNames, database })
+    const worker = yield* makeWorker({
+      resourceNames,
+      database,
+      dataSyncQueue: dataSyncQueueResources.queue,
+    })
     yield* makeGitHubEventsWorker({
       resourceNames,
       database,
       queue: queueResources.queue,
       deadLetterQueueName: queueResources.deadLetterQueueName,
+    })
+    yield* makeGitHubDataSyncWorker({
+      resourceNames,
+      database,
+      queue: dataSyncQueueResources.queue,
+      deadLetterQueueName: dataSyncQueueResources.deadLetterQueueName,
     })
     const webhook = yield* WebhookWorker(
       Option.match(webhookHostname, {

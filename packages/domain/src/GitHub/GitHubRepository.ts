@@ -62,6 +62,7 @@ export const GitHubInstallationIdFromJson = Schema.Union([
 export const GitHubRepositoryId = Schema.NonEmptyString.pipe(
   Schema.brand("GitHubRepositoryId"),
 )
+export type GitHubRepositoryId = typeof GitHubRepositoryId.Type
 
 export class GitHubRepository extends Model.Class<GitHubRepository>(
   "GitHubRepository",

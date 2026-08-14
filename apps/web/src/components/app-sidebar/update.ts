@@ -4,12 +4,14 @@ import * as FoldkitCommand from "foldkit/command"
 import { evo } from "foldkit/struct"
 import * as RepositorySelector from "../repository-selector"
 import * as Theme from "../../features/theme"
+import * as GitHubSync from "../../features/github-sync"
 import type { Command } from "./command"
 import {
   type Message,
   GotRepositorySelectorMessage,
   GotSidebarMessage,
   GotThemeMessage,
+  GotGitHubSyncMessage,
 } from "./message"
 import type { Model } from "./model"
 
@@ -34,6 +36,13 @@ export const mapSidebarCommands = (
 ): ReadonlyArray<Command> =>
   FoldkitCommand.mapMessages(commands, (message) =>
     GotSidebarMessage({ message }),
+  )
+
+const mapGitHubSyncCommands = (
+  commands: ReadonlyArray<GitHubSync.Command>,
+): ReadonlyArray<Command> =>
+  FoldkitCommand.mapMessages(commands, (message) =>
+    GotGitHubSyncMessage({ message }),
   )
 
 export const update = (model: Model, message: Message): UpdateReturn =>
@@ -62,6 +71,16 @@ export const update = (model: Model, message: Message): UpdateReturn =>
         return [
           evo(model, { theme: () => nextTheme }),
           mapThemeCommands(commands),
+        ]
+      },
+      GotGitHubSyncMessage: ({ message }) => {
+        const [githubSync, commands] = GitHubSync.update(
+          model.githubSync,
+          message,
+        )
+        return [
+          evo(model, { githubSync: () => githubSync }),
+          mapGitHubSyncCommands(commands),
         ]
       },
     }),

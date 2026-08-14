@@ -1,10 +1,8 @@
 import * as GitHubRepository from "@slopcop/domain/GitHub/GitHubRepository"
 import * as Management from "@slopcop/domain/Labeling/LabelingRuleManagement"
 import { RepositoryNotConfigured } from "@slopcop/github/Errors"
-import {
-  GitHubClient,
-  type GitHubClientError,
-} from "@slopcop/github/GitHubClient"
+import { type GitHubClientError } from "@slopcop/github/GitHubClient"
+import { GitHubPullRequestsRepo } from "@slopcop/github/repositories/GitHubPullRequestsRepo"
 import { GitHubRepositoriesRepo } from "@slopcop/github/repositories/GitHubRepositoriesRepo"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
@@ -24,7 +22,7 @@ export class LabelingRuleTestCandidates extends Context.Service<
 >()("@slopcop/api/Labeling/LabelingRuleTestCandidates", {
   make: Effect.gen(function* () {
     const repositories = yield* GitHubRepositoriesRepo
-    const github = yield* GitHubClient
+    const pullRequests = yield* GitHubPullRequestsRepo
     return {
       list: Effect.fn("LabelingRuleTestCandidates.list")(
         function* (slug, limit) {
@@ -47,7 +45,22 @@ export class LabelingRuleTestCandidates extends Context.Service<
               ),
             onSome: Effect.succeed,
           })
-          return yield* github.listOpenPullRequests(repository, limit)
+          return yield* pullRequests.listOpen(repository.id, limit).pipe(
+            Effect.map((items) =>
+              items.map((pullRequest) => ({
+                number: pullRequest.number,
+                title: pullRequest.title,
+                draft: pullRequest.draft,
+                author: pullRequest.author,
+                updatedAt: pullRequest.githubUpdatedAt,
+              })),
+            ),
+            Effect.catchTag("GitHubPullRequestsRepoError", (error) =>
+              Effect.logError("Cached pull request lookup failed", error).pipe(
+                Effect.andThen(Effect.die(error)),
+              ),
+            ),
+          )
         },
       ),
     }
@@ -55,6 +68,6 @@ export class LabelingRuleTestCandidates extends Context.Service<
 }) {
   static readonly layerNoDeps = Layer.effect(this, this.make)
   static readonly layer = this.layerNoDeps.pipe(
-    Layer.provide([GitHubRepositoriesRepo.layer, GitHubClient.layer]),
+    Layer.provide([GitHubRepositoriesRepo.layer, GitHubPullRequestsRepo.layer]),
   )
 }

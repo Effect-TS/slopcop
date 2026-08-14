@@ -15,9 +15,11 @@ import {
   GotRepositorySelectorMessage,
   GotSidebarMessage,
   GotThemeMessage,
+  GotGitHubSyncMessage,
 } from "./message"
 import type { Model } from "./model"
 import type * as Router from "../../router"
+import * as GitHubSync from "../../features/github-sync"
 
 export interface RenderInfo {
   readonly trigger: ReadonlyArray<ChildAttribute>
@@ -118,7 +120,7 @@ const desktopSidebar = (
           ...panel,
           ...(isCollapsed ? [h.DataAttribute("collapsed", "")] : []),
           h.Class(
-            `group/sidebar sticky top-0 shrink-0 flex flex-col h-svh bg-sidebar border-r border-sidebar-border text-white overflow-hidden transition-[width] duration-200 ${isCollapsed ? "w-18" : "w-64"}`,
+            `group/sidebar sticky top-0 shrink-0 flex flex-col h-svh bg-sidebar border-r border-sidebar-border text-sidebar-foreground overflow-hidden transition-[width] duration-200 ${isCollapsed ? "w-18" : "w-64"}`,
           ),
         ],
         [aside],
@@ -463,12 +465,23 @@ const mainHeader = (
           ),
         ],
       ),
-      h.submodel({
-        slotId: "theme-switcher",
-        model: model.theme,
-        view: Theme.view,
-        toParentMessage: (message) => GotThemeMessage({ message }),
-      }),
+      h.div(
+        [h.Class("flex items-center gap-2")],
+        [
+          h.submodel({
+            slotId: "github-sync",
+            model: model.githubSync,
+            view: GitHubSync.view,
+            toParentMessage: (message) => GotGitHubSyncMessage({ message }),
+          }),
+          h.submodel({
+            slotId: "theme-switcher",
+            model: model.theme,
+            view: Theme.view,
+            toParentMessage: (message) => GotThemeMessage({ message }),
+          }),
+        ],
+      ),
     ],
   )
 }

@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema"
+import * as Model from "effect/unstable/schema/Model"
 import * as GitHubRepository from "./GitHubRepository.ts"
 
 export const MAX_FILES = 100
@@ -56,3 +57,23 @@ export const GitHubPullRequest = Schema.Struct({
   headSha: Schema.String,
 })
 export type GitHubPullRequest = typeof GitHubPullRequest.Type
+
+export const GitHubPullRequestState = Schema.Literals(["open", "closed"])
+export type GitHubPullRequestState = typeof GitHubPullRequestState.Type
+
+export class GitHubPullRequestRecord extends Model.Class<GitHubPullRequestRecord>(
+  "GitHubPullRequestRecord",
+)({
+  repositoryId: GitHubRepository.GitHubRepositoryId,
+  number: Schema.Int.check(Schema.isGreaterThan(0)),
+  state: GitHubPullRequestState,
+  title: Schema.String,
+  body: Schema.NullOr(Schema.String),
+  draft: Model.BooleanSqlite,
+  author: Schema.NullOr(Schema.String),
+  baseRef: Schema.String,
+  headSha: Schema.String,
+  githubCreatedAt: Schema.DateTimeUtcFromMillis,
+  githubUpdatedAt: Schema.DateTimeUtcFromMillis,
+  generation: Schema.Int,
+}) {}

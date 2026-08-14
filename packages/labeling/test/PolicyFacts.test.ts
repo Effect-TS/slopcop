@@ -52,6 +52,7 @@ const layer = (options: { readonly contentCalls: Array<string> }) =>
             })),
           ),
         listOpenPullRequests: () => unavailable,
+        listOpenPullRequestSnapshot: () => unavailable,
         getPullRequest: () => unavailable,
         listItemLabels: () => unavailableStream,
         addItemLabels: () => unavailable,

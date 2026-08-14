@@ -11,6 +11,7 @@ import type { WorkerProps } from "alchemy/Cloudflare"
 import { LabelingRules } from "@slopcop/labeling/LabelingRules"
 import { GitHubSetup } from "@slopcop/github/GitHubSetup"
 import { D1Database, makeDatabaseLayer } from "@slopcop/infra/Sql"
+import { GitHubDataSyncQueue as GitHubDataSyncQueueResource } from "@slopcop/infra/GitHubDataSyncQueueResources"
 import * as CloudflareResourceNames from "@slopcop/infra/CloudflareResourceNames"
 import { Repositories } from "./GitHub/Repositories.ts"
 import { Policies } from "@slopcop/labeling/Policies"
@@ -22,6 +23,9 @@ import { PoliciesRepo } from "@slopcop/labeling/repositories/PoliciesRepo"
 import { OptionalPolicyAiLayer } from "@slopcop/labeling/Ai"
 import { LabelingRuleTester } from "./Labeling/LabelingRuleTester.ts"
 import { LabelingRuleTestCandidates } from "./Labeling/LabelingRuleTestCandidates.ts"
+import { GitHubDataSyncQueue } from "./GitHub/GitHubDataSyncQueue.ts"
+import { GitHubRepositoryLabelsRepo } from "@slopcop/github/repositories/GitHubRepositoryLabelsRepo"
+import { GitHubPullRequestsRepo } from "@slopcop/github/repositories/GitHubPullRequestsRepo"
 
 const PolicyTesterLayer = LabelingPolicyTester.layerNoDeps.pipe(
   Layer.provide(PolicyFacts.layer),
@@ -43,6 +47,7 @@ const RuleTesterLayer = LabelingRuleTester.layerNoDeps.pipe(
 export const makeWorker = (options: {
   readonly resourceNames: CloudflareResourceNames.ResourceNames
   readonly database: typeof D1Database
+  readonly dataSyncQueue: typeof GitHubDataSyncQueueResource
   readonly worker?: Partial<WorkerProps>
 }) =>
   Cloudflare.Worker(
@@ -71,8 +76,11 @@ export const makeWorker = (options: {
         Layer.provide(PoliciesRepo.layer),
         Layer.provide(GitHubClient.layer),
         Layer.provide(GitHubRepositoriesRepo.layer),
+        Layer.provide(GitHubRepositoryLabelsRepo.layer),
+        Layer.provide(GitHubPullRequestsRepo.layer),
         Layer.provide(Repositories.layer),
         Layer.provide(GitHubSetup.layer),
+        Layer.provide(GitHubDataSyncQueue.layerWith(options.dataSyncQueue)),
         Layer.provide([Etag.layer, HttpPlatformStubLayer, Path.layer]),
       )
 
@@ -84,10 +92,16 @@ export const makeWorker = (options: {
       const handler = yield* HttpRouter.toHttpEffect(MainLayer)
 
       return { fetch: handler }
-    }).pipe(Effect.provide([Cloudflare.D1.QueryDatabaseBinding])),
+    }).pipe(
+      Effect.provide([
+        Cloudflare.D1.QueryDatabaseBinding,
+        Cloudflare.Queues.WriteQueueBinding,
+      ]),
+    ),
   )
 
 export default makeWorker({
   resourceNames: CloudflareResourceNames.production,
   database: D1Database,
+  dataSyncQueue: GitHubDataSyncQueueResource,
 })

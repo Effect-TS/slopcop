@@ -145,6 +145,7 @@ describe("LabelingRules validation", () => {
           listRepositoryLabels: () => Stream.empty,
           listPullRequestFiles: () => unavailableStream,
           listOpenPullRequests: () => unavailable,
+          listOpenPullRequestSnapshot: () => unavailable,
           getPullRequest: () => unavailable,
           listItemLabels: () => unavailableStream,
           addItemLabels: () => unavailable,
