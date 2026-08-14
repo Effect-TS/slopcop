@@ -12,11 +12,7 @@ import { GitHubRepositoriesRepo } from "@slopcop/github/repositories/GitHubRepos
 import { OptionalPolicyAiLayer } from "@slopcop/labeling/Ai"
 import { evaluateAiLabelingRule } from "@slopcop/labeling/AiLabelingRuleEvaluator"
 import { planLabelActions } from "@slopcop/labeling/LabelActions"
-import {
-  PolicyAi,
-  type PolicyAiError,
-  type PolicyAiUnavailableError,
-} from "@slopcop/labeling/PolicyAi"
+import { PolicyAi } from "@slopcop/labeling/PolicyAi"
 import {
   compilePolicyProgram,
   triggersForPullRequestFacts,
@@ -30,6 +26,7 @@ import * as Context from "effect/Context"
 import * as Data from "effect/Data"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
+import * as Option from "effect/Option"
 import { GitHubPullRequest } from "../GitHub/GitHubPullRequest.ts"
 import { PolicyEvaluationsRepo } from "./repositories/PolicyEvaluationsRepo.ts"
 
@@ -325,75 +322,59 @@ export class LabelingCoordinator extends Context.Service<
         baseRef: summary.base.ref,
         headSha: summary.head.sha,
       })
-      const requiredFacts = new Set<string>(
-        relevant.flatMap(
-          (runtime): ReadonlyArray<string> =>
-            runtime._tag === "Policy"
-              ? runtime.compiled.requiresChangedFileContent
-                ? [
-                    ...runtime.compiled.facts,
-                    "pull_request.changed_files.content",
-                  ]
-                : runtime.compiled.facts
-              : [
-                  ...runtime.rule.evidence,
-                  ...(runtime.gate === null
-                    ? []
-                    : runtime.gate.compiled.requiresChangedFileContent
-                      ? [
-                          ...runtime.gate.compiled.facts,
-                          "pull_request.changed_files.content",
-                        ]
-                      : runtime.gate.compiled.facts),
-                ],
-        ),
-      )
-      const policyFacts = yield* facts.load(
-        repository,
-        summary,
-        requiredFacts,
-        currentLabels,
-      )
       const decisions = new Map<string, Program.PolicyEvaluationResult>()
       const failures = new Map<string, { readonly message: string }>()
       const gateDecisions = new Map<string, Program.PolicyEvaluationResult>()
       for (const runtime of relevant) {
-        const evaluation: Effect.Effect<
-          Program.PolicyEvaluationResult,
-          | import("@slopcop/labeling/PolicyEngine").PolicyOperationalError
-          | PolicyAiError
-          | PolicyAiUnavailableError
-        > =
-          runtime._tag === "Policy"
-            ? evaluatePolicyProgram({
-                program: runtime.version.program,
-                repositoryId: repository.id,
-                facts: policyFacts,
-                resolver,
-              })
-            : Effect.gen(function* () {
-                if (runtime.gate !== null) {
-                  const gate = yield* evaluatePolicyProgram({
-                    program: runtime.gate.version.program,
-                    repositoryId: repository.id,
-                    facts: policyFacts,
-                    resolver,
-                  })
-                  gateDecisions.set(runtime.rule.id, gate)
-                  if (gate.outcome !== "Match")
-                    return {
-                      outcome: "Abstain",
-                      confidence: gate.confidence,
-                      rationale: `AI gate ${gate.outcome === "NoMatch" ? "did not match" : "abstained"}.`,
-                      trace: [],
-                    } satisfies Program.PolicyEvaluationResult
-                }
-                return yield* evaluateAiLabelingRule({
-                  rule: runtime.rule,
-                  facts: policyFacts,
-                  ai,
-                })
-              })
+        const evaluation = Effect.gen(function* () {
+          const policyFacts = yield* facts.load(
+            repository,
+            summary,
+            {
+              facts: new Set(
+                runtime._tag === "Policy"
+                  ? runtime.compiled.facts
+                  : [
+                      ...runtime.rule.evidence,
+                      ...(runtime.gate?.compiled.facts ?? []),
+                    ],
+              ),
+              changedFileContentSelectors:
+                runtime._tag === "Policy"
+                  ? runtime.compiled.changedFileContentSelectors
+                  : (runtime.gate?.compiled.changedFileContentSelectors ?? []),
+            },
+            currentLabels,
+          )
+          if (runtime._tag === "Policy")
+            return yield* evaluatePolicyProgram({
+              program: runtime.version.program,
+              repositoryId: repository.id,
+              facts: policyFacts,
+              resolver,
+            })
+          if (runtime.gate !== null) {
+            const gate = yield* evaluatePolicyProgram({
+              program: runtime.gate.version.program,
+              repositoryId: repository.id,
+              facts: policyFacts,
+              resolver,
+            })
+            gateDecisions.set(runtime.rule.id, gate)
+            if (gate.outcome !== "Match")
+              return {
+                outcome: "Abstain",
+                confidence: gate.confidence,
+                rationale: `AI gate ${gate.outcome === "NoMatch" ? "did not match" : "abstained"}.`,
+                trace: [],
+              } satisfies Program.PolicyEvaluationResult
+          }
+          return yield* evaluateAiLabelingRule({
+            rule: runtime.rule,
+            facts: policyFacts,
+            ai,
+          })
+        })
         const evaluated = yield* evaluation.pipe(
           Effect.match({
             onFailure: (error) => ({ _tag: "Failure" as const, error }),
@@ -592,11 +573,24 @@ export class LabelingCoordinator extends Context.Service<
                       candidate.label.toLowerCase() ===
                       error.label?.toLowerCase(),
                   )
-                  return rule === undefined
-                    ? Effect.fail(error)
-                    : rules
-                        .markMissing(repository.id, rule.id, rule.version)
-                        .pipe(Effect.andThen(Effect.fail(error)))
+                  if (rule === undefined) return Effect.fail(error)
+                  return github
+                    .getRepositoryLabel(repository, error.label)
+                    .pipe(
+                      Effect.matchEffect({
+                        onFailure: () => Effect.void,
+                        onSuccess: Option.match({
+                          onNone: () =>
+                            rules.markMissing(
+                              repository.id,
+                              rule.id,
+                              rule.version,
+                            ),
+                          onSome: () => Effect.void,
+                        }),
+                      }),
+                      Effect.andThen(Effect.fail(error)),
+                    )
                 }),
               )
       yield* Effect.forEach(
@@ -619,9 +613,28 @@ export class LabelingCoordinator extends Context.Service<
     const run = Effect.fn("LabelingCoordinator.process")(function* (
       event: GitHubWebhookEvent.GitHubWebhookEvent,
     ) {
-      const eventSource = source(event)
       const trigger = eventTrigger(event)
-      if (eventSource === null || trigger === null) return
+      if (trigger === null) return
+      if (event.name === "pull_request") {
+        const repository = yield* pullRequests
+          .resolveRepository(
+            event.payload.repository,
+            event.payload.installation,
+          )
+          .pipe(
+            Effect.catchTag("RepositoryNotConfigured", () =>
+              Effect.succeed(null),
+            ),
+          )
+        if (repository === null) return
+        const summary = yield* github.getPullRequest(
+          repository,
+          event.payload.number,
+        )
+        return yield* processPullRequest(event, repository, summary, trigger)
+      }
+      const eventSource = source(event)
+      if (eventSource === null) return
       const repository = yield* pullRequests
         .resolveRepository(eventSource.repository, eventSource.installation)
         .pipe(

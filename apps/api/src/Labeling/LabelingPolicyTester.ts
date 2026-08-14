@@ -89,12 +89,10 @@ export class LabelingPolicyTester extends Context.Service<
       const snapshot = yield* facts.load(
         repository.value,
         summary,
-        new Set([
-          ...compiled.facts,
-          ...(compiled.requiresChangedFileContent
-            ? ["pull_request.changed_files.content"]
-            : []),
-        ]),
+        {
+          facts: new Set(compiled.facts),
+          changedFileContentSelectors: compiled.changedFileContentSelectors,
+        },
         labels,
       )
       const decision = yield* evaluatePolicyProgram({
@@ -124,6 +122,7 @@ export class LabelingPolicyTester extends Context.Service<
                     status: cause.status ?? null,
                     retryable: cause.retryable,
                     githubMessage: cause.message,
+                    parseDiagnostic: cause.parseDiagnostic ?? null,
                   }),
                 )
               : Effect.void,
