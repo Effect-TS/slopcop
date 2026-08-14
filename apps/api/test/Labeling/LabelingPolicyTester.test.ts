@@ -104,6 +104,7 @@ const layer = (
                   nodeCount: 1,
                   expandedNodeCount: 1,
                   requiresChangedFileContent: false,
+                  changedFileContentSelectors: [],
                 })
               : Effect.fail(validationError),
           listVersions: () => unavailable,

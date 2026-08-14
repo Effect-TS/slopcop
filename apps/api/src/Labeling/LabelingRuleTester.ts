@@ -91,7 +91,10 @@ export class LabelingRuleTester extends Context.Service<
               const snapshot = yield* facts.load(
                 repository.value,
                 summary,
-                new Set(rule.evidence),
+                {
+                  facts: new Set(rule.evidence),
+                  changedFileContentSelectors: [],
+                },
                 labels,
               )
               return yield* evaluateAiLabelingRule({

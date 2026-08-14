@@ -20,6 +20,21 @@ const GITHUB_API_URL = "https://api.github.com"
 const PAGE_SIZE = 100
 const MAX_ATTEMPTS = 3
 const REQUEST_TIMEOUT = "30 seconds"
+const MAX_PARSE_DIAGNOSTIC_LENGTH = 2_000
+const safeParseDiagnostic = (error: unknown) => {
+  if (!Schema.isSchemaError(error)) return undefined
+  const lines = error.message.split("\n").flatMap((line) => {
+    const trimmed = line.trimStart()
+    if (trimmed.startsWith("at [")) return [trimmed]
+    if (trimmed === "Missing key") return [trimmed]
+    if (!trimmed.startsWith("Expected ")) return []
+    const inputIndex = trimmed.indexOf(", got ")
+    return [inputIndex === -1 ? trimmed : trimmed.slice(0, inputIndex)]
+  })
+  return lines.length === 0
+    ? undefined
+    : lines.join("\n").slice(0, MAX_PARSE_DIAGNOSTIC_LENGTH)
+}
 
 const GitHubClientOperation = Schema.Literals([
   "GitHubClient.getRepositoryLabel",
@@ -46,6 +61,7 @@ export class GitHubClientError extends Schema.TaggedErrorClass<GitHubClientError
     status: Schema.optionalKey(Schema.Int),
     retryable: Schema.Boolean,
     message: Schema.String,
+    parseDiagnostic: Schema.optionalKey(Schema.String),
   },
 ) {}
 
@@ -202,7 +218,7 @@ const CheckRunsResponse = Schema.Struct({
       app: Schema.NullOr(
         Schema.Struct({
           id: Schema.Finite,
-          slug: Schema.optionalKey(Schema.String),
+          slug: Schema.optionalKey(Schema.NullOr(Schema.String)),
         }),
       ),
     }),
@@ -218,11 +234,18 @@ const CombinedStatusResponse = Schema.Struct({
   ),
 })
 
-const FileContentResponse = Schema.Struct({
-  type: Schema.Literal("file"),
-  encoding: Schema.Literal("base64"),
-  content: Schema.String,
-})
+const FileContentResponse = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("file"),
+    encoding: Schema.Literal("base64"),
+    content: Schema.String,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("file"),
+    encoding: Schema.Literal("none"),
+    content: Schema.String,
+  }),
+])
 
 const PullRequestReviewsResponse = Schema.Array(
   Schema.Struct({
@@ -786,6 +809,9 @@ export class GitHubClient extends Context.Service<
             ...(error.status === undefined ? {} : { status: error.status }),
             retryable: error.retryable,
             message: `${error.message} File: '${path}'.`,
+            ...(error.parseDiagnostic === undefined
+              ? {}
+              : { parseDiagnostic: error.parseDiagnostic }),
           }),
       )
       const response = yield* execute(
@@ -803,6 +829,13 @@ export class GitHubClient extends Context.Service<
         mapResponseDecodeError(operation, response),
         withPath,
       )
+      if (file.encoding === "none")
+        return yield* new GitHubClientError({
+          operation,
+          status: response.status,
+          retryable: false,
+          message: `GitHub did not include inline content for '${path}' in ${repository.slug}. The file may exceed the Contents API inline-content limit.`,
+        })
       return yield* decodeFileContentText(file.content.replace(/\s/g, "")).pipe(
         Effect.mapError(
           () =>
@@ -1038,15 +1071,16 @@ const mapResponseDecodeError = (
   operation: GitHubClientOperation,
   response: HttpClientResponse.HttpClientResponse,
 ) =>
-  Effect.mapError(
-    () =>
-      new GitHubClientError({
-        operation,
-        status: response.status,
-        retryable: false,
-        message: `GitHub ${operation} returned a response that did not match the expected schema.`,
-      }),
-  )
+  Effect.mapError((error: unknown) => {
+    const parseDiagnostic = safeParseDiagnostic(error)
+    return new GitHubClientError({
+      operation,
+      status: response.status,
+      retryable: false,
+      message: `GitHub ${operation} returned a response that did not match the expected schema.${parseDiagnostic === undefined ? "" : ` ${parseDiagnostic}`}`,
+      ...(parseDiagnostic === undefined ? {} : { parseDiagnostic }),
+    })
+  })
 
 const nextPage = (
   page: number,

@@ -84,7 +84,16 @@ export interface CompiledPolicyProgram {
   readonly nodeCount: number
   readonly expandedNodeCount: number
   readonly requiresChangedFileContent: boolean
+  readonly changedFileContentSelectors: ReadonlyArray<ChangedFileContentSelector>
 }
+
+export type ChangedFileContentSelector = Extract<
+  Program.Condition,
+  {
+    readonly _tag: "CollectionPredicate"
+    readonly fact: "pull_request.changed_files"
+  }
+>
 
 type ItemPredicate =
   | Program.ChangedFileItemPredicate
@@ -108,7 +117,21 @@ export const compilePolicyProgram = Effect.fn("PolicyCompiler.compile")(
     const references = new Set<Program.PolicyId>()
     let localNodes = 0
     let expandedNodes = 0
-    let requiresChangedFileContent = false
+    const changedFileContentSelectors: Array<ChangedFileContentSelector> = []
+
+    const itemRequiresContent = (
+      item: Program.ChangedFileItemPredicate,
+    ): boolean => {
+      switch (item._tag) {
+        case "All":
+        case "Any":
+          return item.predicates.some(itemRequiresContent)
+        case "Not":
+          return itemRequiresContent(item.predicate)
+        case "Predicate":
+          return item.field === "content"
+      }
+    }
 
     const count = (
       depth: number,
@@ -157,7 +180,6 @@ export const compilePolicyProgram = Effect.fn("PolicyCompiler.compile")(
           case "Not":
             return yield* visitItem(item.predicate, depth + 1, local, location)
           case "Predicate":
-            if (item.field === "content") requiresChangedFileContent = true
             return
         }
       })
@@ -220,6 +242,11 @@ export const compilePolicyProgram = Effect.fn("PolicyCompiler.compile")(
                 return
               case "CollectionPredicate":
                 facts.add(condition.fact)
+                if (
+                  condition.fact === "pull_request.changed_files" &&
+                  itemRequiresContent(condition.item)
+                )
+                  changedFileContentSelectors.push(condition)
                 return yield* visitItem(
                   condition.item,
                   nodeDepth + 1,
@@ -331,7 +358,8 @@ export const compilePolicyProgram = Effect.fn("PolicyCompiler.compile")(
       ),
       nodeCount: localNodes,
       expandedNodeCount: expandedNodes,
-      requiresChangedFileContent,
+      requiresChangedFileContent: changedFileContentSelectors.length > 0,
+      changedFileContentSelectors,
     } satisfies CompiledPolicyProgram
   },
 )

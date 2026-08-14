@@ -139,6 +139,39 @@ describe("PolicyCompiler", () => {
     }),
   )
 
+  it.effect("retains changed-file selectors that require content", () =>
+    Effect.gen(function* () {
+      const selector: Program.Condition = {
+        _tag: "CollectionPredicate",
+        fact: "pull_request.changed_files",
+        quantifier: "Any",
+        item: {
+          _tag: "All",
+          predicates: [
+            {
+              _tag: "Predicate",
+              field: "path",
+              operator: "MatchesGlob",
+              value: ".changeset/*.md",
+            },
+            {
+              _tag: "Predicate",
+              field: "content",
+              operator: "ValidChangesetDocument",
+            },
+          ],
+        },
+      }
+      const compiled = yield* compilePolicyProgram(
+        program(selector),
+        missingResolver,
+        context,
+      )
+      expect(compiled.requiresChangedFileContent).toBe(true)
+      expect(compiled.changedFileContentSelectors).toEqual([selector])
+    }),
+  )
+
   it.effect("counts recursive item predicates toward depth limits", () =>
     Effect.gen(function* () {
       let item: Program.ChangedFileItemPredicate = {

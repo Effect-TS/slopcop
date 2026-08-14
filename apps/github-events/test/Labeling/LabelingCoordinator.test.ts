@@ -6,7 +6,7 @@ import * as Rule from "@slopcop/domain/Labeling/LabelingRule"
 import * as Program from "@slopcop/domain/Policy/PolicyProgram"
 import { RepositoryNotConfigured } from "@slopcop/github/Errors"
 import { UnexpectedRowCount } from "@slopcop/infra/Sql/RepositoryError"
-import { GitHubClient } from "@slopcop/github/GitHubClient"
+import { GitHubClient, GitHubClientError } from "@slopcop/github/GitHubClient"
 import { GitHubRepositoriesRepo } from "@slopcop/github/repositories/GitHubRepositoriesRepo"
 import { LabelingRules } from "@slopcop/labeling/LabelingRules"
 import { OptionalPolicyAiLayer } from "@slopcop/labeling/Ai"
@@ -22,7 +22,10 @@ import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
 import * as Stream from "effect/Stream"
-import { GitHubPullRequest } from "../../src/GitHub/GitHubPullRequest.ts"
+import {
+  GitHubPullRequest,
+  GitHubPullRequestLabelsError,
+} from "../../src/GitHub/GitHubPullRequest.ts"
 import {
   LabelingCoordinator,
   triggerMatches,
@@ -105,12 +108,18 @@ const rule = new Rule.PolicyLabelingRule({
   updatedAt: now,
   deletedAt: Option.none(),
 })
-const aiRule = (gatePolicyId: Policy.LabelingPolicy["id"] | null = null) =>
+const aiRule = (
+  gatePolicyId: Policy.LabelingPolicy["id"] | null = null,
+  options?: {
+    readonly id?: Rule.LabelingRule["id"]
+    readonly label?: string
+  },
+) =>
   new Rule.AiLabelingRule({
     _tag: "AiLabelingRule",
-    id: ruleId,
+    id: options?.id ?? ruleId,
     repositoryId: repository.id,
-    label: "managed",
+    label: options?.label ?? "managed",
     onMatch: "ensure-present",
     onNoMatch: "ensure-absent",
     conflictGroup: null,
@@ -164,9 +173,13 @@ interface State {
   currentTitle: string
   aiFails: boolean
   aiCalls: number
+  factLoads: number
+  factLoadingFailureAt: number | null
   labels: Set<string>
   applies: number
   markedMissing: number
+  labelMutationFails: boolean
+  repositoryLabelExists: boolean
   failActionPersistence: boolean
   operations: Array<string>
   completions: Array<boolean>
@@ -179,9 +192,13 @@ const state = (): State => ({
   currentTitle: "Fix",
   aiFails: false,
   aiCalls: 0,
+  factLoads: 0,
+  factLoadingFailureAt: null,
   labels: new Set(["unmanaged"]),
   applies: 0,
   markedMissing: 0,
+  labelMutationFails: false,
+  repositoryLabelExists: true,
   failActionPersistence: false,
   operations: [],
   completions: [],
@@ -201,7 +218,16 @@ const layer = (
     Layer.provide(
       Layer.mergeAll(
         Layer.succeed(GitHubClient, {
-          getRepositoryLabel: () => unavailable,
+          getRepositoryLabel: () =>
+            Effect.succeed(
+              value.repositoryLabelExists
+                ? Option.some({
+                    name: "managed",
+                    description: null,
+                    color: "ffffff",
+                  })
+                : Option.none(),
+            ),
           listRepositoryLabels: () => unavailableStream,
           listPullRequestFiles: () => unavailableStream,
           listOpenPullRequests: () => unavailable,
@@ -211,7 +237,7 @@ const layer = (
           listItemLabels: () => unavailableStream,
           addItemLabels: () => unavailable,
           removeItemLabel: () => unavailable,
-          listPullRequestsForCommit: () => Effect.succeed([summary]),
+          listPullRequestsForCommit: () => unavailable,
           listPullRequestReviews: () => unavailable,
           getFileContent: () => unavailable,
           listRequiredChecks: () => unavailable,
@@ -229,19 +255,31 @@ const layer = (
           getEvidence: () => unavailable,
           getLabels: () => Effect.succeed(new Set(value.labels)),
           applyLabels: (_pullRequest, changes) =>
-            Effect.sync(() => {
-              value.operations.push("github")
-              value.applies++
-              const added = changes.add.filter(
-                (label) => !value.labels.has(label),
-              )
-              const removed = changes.remove.filter((label) =>
-                value.labels.has(label),
-              )
-              added.forEach((label) => value.labels.add(label))
-              removed.forEach((label) => value.labels.delete(label))
-              return { added, removed }
-            }),
+            value.labelMutationFails
+              ? Effect.fail(
+                  new GitHubPullRequestLabelsError({
+                    operation: "add",
+                    repository: repository.slug,
+                    number: 42,
+                    label: "managed",
+                    status: 422,
+                    retryable: false,
+                    message: "GitHub rejected the label mutation.",
+                  }),
+                )
+              : Effect.sync(() => {
+                  value.operations.push("github")
+                  value.applies++
+                  const added = changes.add.filter(
+                    (label) => !value.labels.has(label),
+                  )
+                  const removed = changes.remove.filter((label) =>
+                    value.labels.has(label),
+                  )
+                  added.forEach((label) => value.labels.add(label))
+                  removed.forEach((label) => value.labels.delete(label))
+                  return { added, removed }
+                }),
         }),
         Layer.succeed(GitHubRepositoriesRepo, {
           list: () => unavailable,
@@ -323,17 +361,28 @@ const layer = (
         }),
         Layer.succeed(PolicyFacts, {
           load: () =>
-            Effect.succeed({
-              draft: false,
-              title: "Fix",
-              body: null,
-              baseRef: "main",
-              headSha: "sha",
-              currentLabels: [...value.labels],
-              changedFiles: null,
-              changedFilesComplete: null,
-              requiredChecks: null,
-              latestReviews: null,
+            Effect.suspend(() => {
+              value.factLoads++
+              if (value.factLoadingFailureAt === value.factLoads)
+                return Effect.fail(
+                  new GitHubClientError({
+                    operation: "GitHubClient.getFileContent",
+                    retryable: true,
+                    message: "Content unavailable.",
+                  }),
+                )
+              return Effect.succeed({
+                draft: false,
+                title: "Fix",
+                body: null,
+                baseRef: "main",
+                headSha: "sha",
+                currentLabels: [...value.labels],
+                changedFiles: null,
+                changedFilesComplete: null,
+                requiredChecks: null,
+                latestReviews: null,
+              })
             }),
         }),
         Layer.succeed(PolicyAi, {
@@ -598,6 +647,7 @@ describe("LabelingCoordinator", () => {
         })
         expect([...value.labels].sort()).toEqual(["managed", "unmanaged"])
         expect(value.evaluations).toHaveLength(2)
+        expect(value.factLoads).toBe(2)
         expect(value.actions).toMatchObject([
           { label: "managed", selected: true, action: "add" },
           { label: "sibling", selected: false, action: "remove" },
@@ -625,17 +675,38 @@ describe("LabelingCoordinator", () => {
       expect(value.applies).toBe(0)
     })
   })
-  it.effect("rejects changed pull request state before mutation", () => {
-    const value = state()
-    value.currentTitle = "Changed"
-    return Effect.gen(function* () {
-      const error = yield* Effect.flip(run(value))
-      expect(error.cause).toMatchObject({
-        _tag: "LabelingCoordinatorHeadChanged",
+  it.effect(
+    "evaluates the current pull request state for stale redeliveries",
+    () => {
+      const value = state()
+      value.currentTitle = "Changed"
+      return Effect.gen(function* () {
+        yield* run(value)
+        expect(value.applies).toBe(1)
+        expect([...value.labels].sort()).toEqual(["managed", "unmanaged"])
       })
-      expect(value.applies).toBe(0)
+    },
+  )
+  it.effect("keeps a rule enabled when its label still exists", () => {
+    const value = state()
+    value.labelMutationFails = true
+    return Effect.gen(function* () {
+      yield* Effect.flip(run(value))
+      expect(value.markedMissing).toBe(0)
     })
   })
+  it.effect(
+    "marks a rule missing when GitHub confirms its label is absent",
+    () => {
+      const value = state()
+      value.labelMutationFails = true
+      value.repositoryLabelExists = false
+      return Effect.gen(function* () {
+        yield* Effect.flip(run(value))
+        expect(value.markedMissing).toBe(1)
+      })
+    },
+  )
   it.effect("persists AI operational failures without mutating labels", () => {
     const value = state()
     value.aiFails = true
@@ -658,6 +729,41 @@ describe("LabelingCoordinator", () => {
       ])
       expect(value.actions).toEqual([])
       expect([...value.labels]).toEqual(["unmanaged"])
+    })
+  })
+  it.effect(
+    "records fact-loading failures without failing the delivery",
+    () => {
+      const value = state()
+      value.factLoadingFailureAt = 1
+      return Effect.gen(function* () {
+        yield* run(value)
+        expect(value.evaluations).toMatchObject([
+          { outcome: "Error", rationale: "Content unavailable." },
+        ])
+        expect(value.applies).toBe(0)
+      })
+    },
+  )
+  it.effect("continues with other rules when one fact load fails", () => {
+    const value = state()
+    value.factLoadingFailureAt = 1
+    const secondRule = aiRule(null, {
+      id: Schema.decodeUnknownSync(Rule.LabelingRuleId)("second-rule"),
+      label: "second",
+    })
+    return Effect.gen(function* () {
+      yield* run(value, deterministicProgram, {
+        policies: [],
+        versions: [],
+        rules: [aiRule(), secondRule],
+      })
+      expect(value.evaluations).toMatchObject([
+        { outcome: "Error" },
+        { outcome: "Match", ruleId: secondRule.id },
+      ])
+      expect([...value.labels].sort()).toEqual(["second", "unmanaged"])
+      expect(value.applies).toBe(1)
     })
   })
   it.effect("skips AI when its deterministic gate does not match", () => {

@@ -1,4 +1,5 @@
 import type * as GitHubRepository from "@slopcop/domain/GitHub/GitHubRepository"
+import type * as Program from "@slopcop/domain/Policy/PolicyProgram"
 import {
   GitHubClient,
   type PullRequestSummary,
@@ -9,7 +10,102 @@ import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Schema from "effect/Schema"
 import * as Stream from "effect/Stream"
-import type { PullRequestFacts } from "./PolicyEngine.ts"
+import type { ChangedFileContentSelector } from "./PolicyCompiler.ts"
+import {
+  matchesPolicyPredicate,
+  type PullRequestFacts,
+} from "./PolicyEngine.ts"
+
+export interface PolicyFactRequirements {
+  readonly facts: ReadonlySet<Program.PullRequestFact>
+  readonly changedFileContentSelectors: ReadonlyArray<ChangedFileContentSelector>
+}
+
+type PartialMatch = "Match" | "NoMatch" | "Unknown"
+type ChangedFileWithoutContent = {
+  readonly path: string
+  readonly status: string
+}
+
+const partialChangedFileMatch = (
+  item: Program.ChangedFileItemPredicate,
+  file: ChangedFileWithoutContent,
+): PartialMatch => {
+  switch (item._tag) {
+    case "All": {
+      const results = item.predicates.map((child) =>
+        partialChangedFileMatch(child, file),
+      )
+      return results.includes("NoMatch")
+        ? "NoMatch"
+        : results.every((result) => result === "Match")
+          ? "Match"
+          : "Unknown"
+    }
+    case "Any": {
+      const results = item.predicates.map((child) =>
+        partialChangedFileMatch(child, file),
+      )
+      return results.includes("Match")
+        ? "Match"
+        : results.every((result) => result === "NoMatch")
+          ? "NoMatch"
+          : "Unknown"
+    }
+    case "Not": {
+      const result = partialChangedFileMatch(item.predicate, file)
+      return result === "Match"
+        ? "NoMatch"
+        : result === "NoMatch"
+          ? "Match"
+          : "Unknown"
+    }
+    case "Predicate": {
+      if (item.field === "content" && file.status !== "removed")
+        return "Unknown"
+      const actual =
+        item.field === "path"
+          ? file.path
+          : item.field === "status"
+            ? file.status
+            : null
+      return matchesPolicyPredicate(
+        actual,
+        item.operator,
+        "value" in item ? item.value : undefined,
+      )
+        ? "Match"
+        : "NoMatch"
+    }
+  }
+}
+
+const contentCandidatePaths = (
+  selectors: ReadonlyArray<ChangedFileContentSelector>,
+  files: ReadonlyArray<ChangedFileWithoutContent>,
+  complete: boolean,
+) => {
+  const paths = new Set<string>()
+  for (const selector of selectors) {
+    const results = files.map((file) => ({
+      file,
+      result: partialChangedFileMatch(selector.item, file),
+    }))
+    const decided =
+      selector.quantifier === "Any"
+        ? results.some(({ result }) => result === "Match")
+        : !complete ||
+          (selector.quantifier === "All"
+            ? results.some(({ result }) => result === "NoMatch")
+            : results.some(({ result }) => result === "Match"))
+    if (decided) continue
+    results.forEach(({ file, result }) => {
+      if (result === "Unknown" && file.status !== "removed")
+        paths.add(file.path)
+    })
+  }
+  return paths
+}
 
 export class PolicyFacts extends Context.Service<
   PolicyFacts,
@@ -17,7 +113,7 @@ export class PolicyFacts extends Context.Service<
     readonly load: (
       repository: GitHubRepository.GitHubRepository,
       summary: PullRequestSummary,
-      requiredFacts: ReadonlySet<string>,
+      requirements: PolicyFactRequirements,
       currentLabels: ReadonlySet<string>,
     ) => Effect.Effect<
       PullRequestFacts,
@@ -33,30 +129,36 @@ export class PolicyFacts extends Context.Service<
     const load = Effect.fn("PolicyFacts.load")(function* (
       repository: GitHubRepository.GitHubRepository,
       summary: PullRequestSummary,
-      requiredFacts: ReadonlySet<string>,
+      requirements: PolicyFactRequirements,
       currentLabels: ReadonlySet<string>,
     ) {
-      const changedFileResult = requiredFacts.has("pull_request.changed_files")
+      const changedFileResult = requirements.facts.has(
+        "pull_request.changed_files",
+      )
         ? yield* github.listPullRequestFiles(repository, summary.number).pipe(
             Stream.take(101),
             Stream.runCollect,
             Effect.flatMap((files) => {
               const bounded = files.slice(0, 100)
+              const contentPaths = contentCandidatePaths(
+                requirements.changedFileContentSelectors,
+                bounded.map((file) => ({
+                  path: file.filename,
+                  status: file.status,
+                })),
+                files.length <= 100,
+              )
               return Effect.forEach(bounded, (file) =>
                 Effect.gen(function* () {
-                  const content =
-                    file.status === "removed" ||
-                    !requiredFacts.has("pull_request.changed_files.content")
-                      ? null
-                      : yield* github
-                          .getFileContent(
-                            repository,
-                            file.filename,
-                            summary.head.sha,
-                          )
-                          .pipe(
-                            Effect.map((content) => content.slice(0, 4_000)),
-                          )
+                  const content = !contentPaths.has(file.filename)
+                    ? null
+                    : yield* github
+                        .getFileContent(
+                          repository,
+                          file.filename,
+                          summary.head.sha,
+                        )
+                        .pipe(Effect.map((content) => content.slice(0, 4_000)))
                   return {
                     path: file.filename,
                     status: file.status,
@@ -73,7 +175,9 @@ export class PolicyFacts extends Context.Service<
             }),
           )
         : null
-      const requiredChecks = requiredFacts.has("pull_request.required_checks")
+      const requiredChecks = requirements.facts.has(
+        "pull_request.required_checks",
+      )
         ? yield* Effect.gen(function* () {
             const [required, runs, statuses] = yield* Effect.all([
               github.listRequiredChecks(repository, summary.base.ref),
@@ -107,7 +211,9 @@ export class PolicyFacts extends Context.Service<
             })
           })
         : null
-      const latestReviews = requiredFacts.has("pull_request.latest_reviews")
+      const latestReviews = requirements.facts.has(
+        "pull_request.latest_reviews",
+      )
         ? yield* github.listPullRequestReviews(repository, summary.number).pipe(
             Effect.map((reviews) => {
               const latest = new Map<string, (typeof reviews)[number]>()

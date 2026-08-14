@@ -142,6 +142,52 @@ describe("GitHubClient retries", () => {
       expect(attempts).toHaveLength(1)
     }).pipe(Effect.provide(layer))
   })
+  it.effect("reports files whose content is not available inline", () => {
+    const attempts: Array<number> = []
+    const layer = makeLayer(
+      [
+        Response.json({
+          type: "file",
+          encoding: "none",
+          content: "",
+        }),
+      ],
+      attempts,
+    )
+
+    return Effect.gen(function* () {
+      const client = yield* GitHubClient
+      const error = yield* Effect.flip(
+        client.getFileContent(repository, "large.bin", "head-sha"),
+      )
+      expect(error.status).toBe(200)
+      expect(error.retryable).toBe(false)
+      expect(error.message).toContain("did not include inline content")
+    }).pipe(Effect.provide(layer))
+  })
+  it.effect("retains safe response parse diagnostics", () => {
+    const attempts: Array<number> = []
+    const layer = makeLayer(
+      [
+        Response.json({
+          type: "file",
+          encoding: "private-invalid-value",
+          content: "private-response-content",
+        }),
+      ],
+      attempts,
+    )
+
+    return Effect.gen(function* () {
+      const client = yield* GitHubClient
+      const error = yield* Effect.flip(
+        client.getFileContent(repository, "invalid.txt", "head-sha"),
+      )
+      expect(error.parseDiagnostic).toContain("encoding")
+      expect(error.parseDiagnostic).not.toContain("private-invalid-value")
+      expect(JSON.stringify(error)).not.toContain("private-response-content")
+    }).pipe(Effect.provide(layer))
+  })
 })
 
 describe("GitHubClient pagination", () => {
@@ -180,6 +226,38 @@ describe("GitHubClient pagination", () => {
       }).pipe(Effect.provide(layer))
     },
   )
+  it.effect("accepts check runs whose app slug is null", () => {
+    const attempts: Array<number> = []
+    const layer = makeLayer(
+      [
+        Response.json({
+          check_runs: [
+            {
+              name: "legacy-check",
+              status: "completed",
+              conclusion: "success",
+              app: { id: 7, slug: null },
+            },
+          ],
+        }),
+      ],
+      attempts,
+    )
+
+    return Effect.gen(function* () {
+      const client = yield* GitHubClient
+      const runs = yield* client.listCheckRuns(repository, "head-sha")
+      expect(runs).toEqual([
+        {
+          name: "legacy-check",
+          status: "completed",
+          conclusion: "success",
+          appId: 7,
+          producer: "7",
+        },
+      ])
+    }).pipe(Effect.provide(layer))
+  })
 
   it.effect(
     "lists only the requested recent open pull request summaries",

@@ -124,7 +124,7 @@ type ItemOperator =
   | "IsEmpty"
   | "NotEmpty"
   | "ValidChangesetDocument"
-const compare = (
+export const matchesPolicyPredicate = (
   actual: unknown,
   operator: ItemOperator,
   expected?: string | boolean | ReadonlyArray<string>,
@@ -190,7 +190,7 @@ const itemMatches = (item: unknown, predicate: ItemPredicate): boolean => {
     case "Not":
       return !itemMatches(item, predicate.predicate)
     case "Predicate":
-      return compare(
+      return matchesPolicyPredicate(
         itemValue(item, predicate.field),
         predicate.operator,
         "value" in predicate ? predicate.value : undefined,
@@ -270,7 +270,7 @@ export const evaluatePolicyProgram = Effect.fn("PolicyEngine.evaluate")(
             const actual = fact(input.facts, node.fact)
             value = evaluated(
               result(
-                compare(
+                matchesPolicyPredicate(
                   actual,
                   node.operator,
                   "value" in node ? node.value : undefined,
