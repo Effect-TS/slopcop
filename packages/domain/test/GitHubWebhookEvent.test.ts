@@ -110,6 +110,36 @@ describe("GitHubWebhookEvent", () => {
     ).toBe(true)
   })
 
+  it.each(["check_run", "check_suite"] as const)(
+    "retains pull request references for %s events",
+    (name) => {
+      const check = {
+        head_sha: "abc123",
+        pull_requests: [{ number: 42 }],
+      }
+      const event = Schema.decodeUnknownSync(
+        GitHubWebhookEvent.GitHubWebhookEvent,
+      )({
+        id: "delivery-1",
+        name,
+        payload: {
+          action: "completed",
+          [name]: check,
+          repository: { id: 2, full_name: "Effect-TS/effect" },
+          installation: { id: 3 },
+        },
+      })
+
+      if (event.name === "check_run")
+        expect(event.payload.check_run.pull_requests).toEqual([{ number: 42 }])
+      else if (event.name === "check_suite")
+        expect(event.payload.check_suite.pull_requests).toEqual([
+          { number: 42 },
+        ])
+      else throw new Error(`Expected ${name}`)
+    },
+  )
+
   it("normalizes GitHub repository and installation IDs to strings", () => {
     const event = Schema.decodeUnknownSync(
       GitHubWebhookEvent.GitHubWebhookEvent,
