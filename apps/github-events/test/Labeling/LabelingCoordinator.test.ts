@@ -266,6 +266,7 @@ const openPullRequest = (
   updatedAt: now,
 })
 interface State {
+  activeSnapshotReads: number
   configured: boolean
   revision: number
   currentHeadSha: string
@@ -302,6 +303,7 @@ interface State {
   actions: Array<typeof Evaluation.PolicyActionExecution.insert.Type>
 }
 const state = (): State => ({
+  activeSnapshotReads: 0,
   configured: true,
   revision: 7,
   currentHeadSha: "sha",
@@ -584,11 +586,14 @@ const layer = (
           disable: () => unavailable,
           remove: () => unavailable,
           getActiveSnapshot: () =>
-            Effect.succeed({
-              repositoryId: repository.id,
-              repository: repository.slug,
-              revision: 7,
-              rules: scenario?.rules ?? [rule],
+            Effect.sync(() => {
+              value.activeSnapshotReads++
+              return {
+                repositoryId: repository.id,
+                repository: repository.slug,
+                revision: 7,
+                rules: scenario?.rules ?? [rule],
+              }
             }),
           assertRevision: () => unavailable,
           listAvailableLabels: () => unavailable,
@@ -802,6 +807,7 @@ describe("LabelingCoordinator", () => {
     return Effect.gen(function* () {
       yield* runRequiredChecks(value, checkRunWithPullRequestsEvent)
       expect(value.applies).toBe(1)
+      expect(value.activeSnapshotReads).toBe(1)
       expect(value.requestedPullRequests).toEqual([42, 42])
       expect(value.openPullRequestSnapshotCalls).toEqual([])
     })
@@ -843,6 +849,67 @@ describe("LabelingCoordinator", () => {
       )
       expect(value.openPullRequestSnapshotCalls).toEqual([])
       expect(value.requestedPullRequests).toEqual([])
+    })
+  })
+  it.effect("uses compiled triggers when a referenced policy changes", () => {
+    const referencedPolicyId = Schema.decodeUnknownSync(
+      Policy.LabelingPolicyId,
+    )("referenced-policy")
+    const referencedVersionId = Schema.decodeUnknownSync(
+      Program.PolicyVersionId,
+    )("referenced-version")
+    const referencedPolicy = new Policy.LabelingPolicy({
+      id: referencedPolicyId,
+      repositoryId: policy.repositoryId,
+      name: "Referenced policy",
+      target: policy.target,
+      publishedVersionId: referencedVersionId,
+      version: policy.version,
+      createdAt: policy.createdAt,
+      updatedAt: policy.updatedAt,
+      deletedAt: policy.deletedAt,
+    })
+    const referenceProgram: Program.PolicyProgram = {
+      target: "pull_request",
+      appliesWhen: null,
+      matchesWhen: {
+        _tag: "PolicyReference",
+        policyId: referencedPolicyId,
+      },
+    }
+    const referencedVersion = new Policy.LabelingPolicyVersion({
+      id: referencedVersionId,
+      policyId: referencedPolicyId,
+      repositoryId: repository.id,
+      revision: 1,
+      program: requiredChecksProgram,
+      contentHash: "referenced-hash",
+      registryManifest: ["pull_request.required_checks"],
+      triggerManifest: ["check_run:completed"],
+      publicationStatus: "published",
+      createdAt: now,
+    })
+    const value = requiredChecksState()
+    value.currentHeadSha = "fork-sha"
+    value.openPullRequests = [openPullRequest(42, "fork-sha")]
+    return Effect.gen(function* () {
+      yield* run(
+        value,
+        referenceProgram,
+        {
+          policies: [policy, referencedPolicy],
+          versions: [
+            version(referenceProgram, ["pull_request:unlabeled"]),
+            referencedVersion,
+          ],
+          rules: [rule],
+        },
+        forkCheckRunEvent,
+      )
+      expect(value.applies).toBe(1)
+      expect(value.openPullRequestSnapshotCalls).toEqual([
+        { etag: null, page: 1 },
+      ])
     })
   })
   it.effect("resolves a fork pull request by its head sha", () => {

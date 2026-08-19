@@ -393,6 +393,22 @@ describe("GitHubClient pagination", () => {
     }).pipe(Effect.provide(layer))
   })
 
+  it.effect("rejects an unexpected 304 on a live snapshot request", () => {
+    const attempts: Array<number> = []
+    const layer = makeLayer([new Response(null, { status: 304 })], attempts)
+
+    return Effect.gen(function* () {
+      const client = yield* GitHubClient
+      const error = yield* Effect.flip(
+        client.listOpenPullRequestSnapshot(repository, null, 1),
+      )
+
+      expect(error.status).toBe(304)
+      expect(error.retryable).toBe(false)
+      expect(attempts).toHaveLength(1)
+    }).pipe(Effect.provide(layer))
+  })
+
   it.effect("collects required checks from mixed effective-rules pages", () => {
     const attempts: Array<number> = []
     const layer = makeLayer(
