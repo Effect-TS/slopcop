@@ -35,8 +35,8 @@ export const makeGitHubEventsConsumerLayerNoDeps = (options: {
         if (Exit.isSuccess(exit)) return
         const error = Cause.findErrorOption(exit.cause)
         if (Option.isSome(error) && !isRetryableProcessorError(error.value)) {
-          return yield* Effect.logWarning(
-            "Discarded non-retryable GitHub webhook delivery failure",
+          yield* Effect.logWarning(
+            "Retained non-retryable GitHub webhook delivery for dead-letter handling",
             {
               deliveryId: event.id,
               event: event.name,
