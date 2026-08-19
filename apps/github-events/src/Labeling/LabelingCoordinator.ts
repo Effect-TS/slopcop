@@ -8,6 +8,7 @@ import {
   GitHubClient,
   type PullRequestSummary,
 } from "@slopcop/github/GitHubClient"
+import { GitHubPullRequestsRepo } from "@slopcop/github/repositories/GitHubPullRequestsRepo"
 import { GitHubRepositoriesRepo } from "@slopcop/github/repositories/GitHubRepositoriesRepo"
 import { OptionalPolicyAiLayer } from "@slopcop/labeling/Ai"
 import { evaluateAiLabelingRule } from "@slopcop/labeling/AiLabelingRuleEvaluator"
@@ -51,6 +52,27 @@ export class LabelingCoordinatorHeadChanged extends Data.TaggedError(
 export class LabelingCoordinatorLimitExceeded extends Data.TaggedError(
   "LabelingCoordinatorLimitExceeded",
 )<{ readonly repository: string; readonly limit: number }> {}
+
+const OPEN_PULL_REQUEST_FALLBACK_PAGE_SIZE = 100
+const OPEN_PULL_REQUEST_FALLBACK_MAX_PAGES = 5
+const OPEN_PULL_REQUEST_FALLBACK_LIMIT =
+  OPEN_PULL_REQUEST_FALLBACK_PAGE_SIZE * OPEN_PULL_REQUEST_FALLBACK_MAX_PAGES
+
+const snapshotPullRequestSummary = (pullRequest: {
+  readonly number: number
+  readonly title: string
+  readonly body: string | null
+  readonly draft: boolean
+  readonly headSha: string
+  readonly baseRef: string
+}): PullRequestSummary => ({
+  number: pullRequest.number,
+  title: pullRequest.title,
+  body: pullRequest.body,
+  draft: pullRequest.draft,
+  head: { sha: pullRequest.headSha },
+  base: { ref: pullRequest.baseRef },
+})
 
 type RuntimeRule =
   | {
@@ -167,6 +189,7 @@ export class LabelingCoordinator extends Context.Service<
   make: Effect.gen(function* () {
     const github = yield* GitHubClient
     const pullRequests = yield* GitHubPullRequest
+    const pullRequestSnapshots = yield* GitHubPullRequestsRepo
     const repositories = yield* GitHubRepositoriesRepo
     const policies = yield* PoliciesRepo
     const rules = yield* LabelingRules
@@ -197,6 +220,68 @@ export class LabelingCoordinator extends Context.Service<
           ),
         ),
       )
+    const findOpenPullRequestsByHeadSha = Effect.fn(
+      "LabelingCoordinator.findOpenPullRequestsByHeadSha",
+    )(function* (
+      event: GitHubWebhookEvent.GitHubWebhookEvent,
+      repository: DomainRepository.GitHubRepository,
+      headSha: string,
+    ) {
+      const sync = yield* pullRequestSnapshots.findSync(repository.id)
+      const etag = Option.match(sync, {
+        onNone: () => null,
+        onSome: (value) => value.etag,
+      })
+
+      for (let page = 1; page <= OPEN_PULL_REQUEST_FALLBACK_MAX_PAGES; page++) {
+        const snapshot = yield* github
+          .listOpenPullRequestSnapshot(
+            repository,
+            page === 1 ? etag : null,
+            page,
+          )
+          .pipe(
+            Effect.catchTag("GitHubClientError", (error) =>
+              error.retryable
+                ? Effect.fail(error)
+                : Effect.logWarning("Open pull request snapshot unavailable", {
+                    deliveryId: event.id,
+                    repository: repository.slug,
+                    page,
+                    status: error.status,
+                  }).pipe(Effect.as(null)),
+            ),
+          )
+        if (snapshot === null) return []
+
+        const open =
+          snapshot._tag === "Modified"
+            ? snapshot.value
+            : yield* pullRequestSnapshots.listOpen(
+                repository.id,
+                OPEN_PULL_REQUEST_FALLBACK_PAGE_SIZE,
+              )
+        const matches = open
+          .filter((pullRequest) => pullRequest.headSha === headSha)
+          .map(snapshotPullRequestSummary)
+        if (matches.length > 0) return matches
+
+        const hasNextPage =
+          snapshot._tag === "Modified"
+            ? (snapshot.hasNextPage ??
+              snapshot.value.length === OPEN_PULL_REQUEST_FALLBACK_PAGE_SIZE)
+            : open.length === OPEN_PULL_REQUEST_FALLBACK_PAGE_SIZE
+        if (!hasNextPage) return []
+      }
+
+      yield* Effect.logWarning("Open pull request fallback bound reached", {
+        deliveryId: event.id,
+        repository: repository.slug,
+        headSha,
+        limit: OPEN_PULL_REQUEST_FALLBACK_LIMIT,
+      })
+      return []
+    })
     const processPullRequest = Effect.fn(
       "LabelingCoordinator.processPullRequest",
     )(function* (
@@ -676,13 +761,13 @@ export class LabelingCoordinator extends Context.Service<
           ),
         )
       if (repository === null) return
-      let candidates = yield* eventSource.pullRequestNumbers.length > 0
+      const resolved = yield* eventSource.pullRequestNumbers.length > 0
         ? resolvePullRequestNumbers(repository, eventSource.pullRequestNumbers)
         : github.listPullRequestsForCommit(repository, eventSource.sha).pipe(
             Effect.catchTag("GitHubClientError", (error) =>
               error.status === 422
                 ? Effect.logWarning(
-                    "Commit did not resolve to a pull request",
+                    "Commit lookup returned 422, falling back to open pull request snapshot",
                     {
                       deliveryId: event.id,
                       repository: repository.slug,
@@ -692,19 +777,14 @@ export class LabelingCoordinator extends Context.Service<
                 : Effect.fail(error),
             ),
           )
-      if (candidates.length === 0) {
-        const snapshot = yield* github.listOpenPullRequestSnapshot(
-          repository,
-          null,
-        )
-        if (snapshot._tag === "Modified")
-          candidates = yield* resolvePullRequestNumbers(
-            repository,
-            snapshot.value
-              .filter((pullRequest) => pullRequest.headSha === eventSource.sha)
-              .map((pullRequest) => pullRequest.number),
-          )
-      }
+      const candidates =
+        resolved.length > 0
+          ? resolved
+          : yield* findOpenPullRequestsByHeadSha(
+              event,
+              repository,
+              eventSource.sha,
+            )
       const current = candidates.filter(
         (candidate) =>
           candidate.head.sha === eventSource.sha &&
@@ -735,6 +815,7 @@ export const LabelingCoordinatorLayer = LabelingCoordinator.layerNoDeps.pipe(
   Layer.provide([
     GitHubClient.layer,
     GitHubPullRequest.layer,
+    GitHubPullRequestsRepo.layer,
     GitHubRepositoriesRepo.layer,
     PoliciesRepo.layer,
     LabelingRules.layer,

@@ -37,6 +37,7 @@ const label = Schema.decodeUnknownSync(GitHubLabel.GitHubLabelName)("bug")
 const makeLayer = (
   responses: ReadonlyArray<Response>,
   attempts: Array<number>,
+  requestUrls?: Array<string>,
 ) =>
   GitHubClient.layerNoDeps.pipe(
     Layer.provide([
@@ -50,6 +51,12 @@ const makeLayer = (
         HttpClient.make((request) =>
           Effect.sync(() => {
             attempts.push(attempts.length + 1)
+            if (requestUrls !== undefined) {
+              const url = new URL(request.url)
+              for (const [key, value] of request.urlParams)
+                url.searchParams.append(key, value)
+              requestUrls.push(url.toString())
+            }
             const response = responses[attempts.length - 1]
             if (response === undefined) {
               throw new Error("Missing test response")
@@ -337,6 +344,54 @@ describe("GitHubClient pagination", () => {
       }).pipe(Effect.provide(layer))
     },
   )
+
+  it.effect("requests a specific open pull request snapshot page", () => {
+    const attempts: Array<number> = []
+    const requestUrls: Array<string> = []
+    const layer = makeLayer(
+      [
+        Response.json(
+          [
+            {
+              number: 42,
+              state: "open",
+              title: "Fork pull request",
+              body: null,
+              draft: false,
+              head: { sha: "fork-sha" },
+              base: { ref: "main" },
+              user: { login: "octocat" },
+              created_at: "2026-07-23T12:00:00Z",
+              updated_at: "2026-07-23T12:00:00Z",
+            },
+          ],
+          {
+            headers: {
+              link: '<https://api.github.com/repos/effect-ts/effect/pulls?page=3>; rel="next"',
+            },
+          },
+        ),
+      ],
+      attempts,
+      requestUrls,
+    )
+
+    return Effect.gen(function* () {
+      const client = yield* GitHubClient
+      const result = yield* client.listOpenPullRequestSnapshot(
+        repository,
+        null,
+        2,
+      )
+
+      expect(result).toMatchObject({
+        _tag: "Modified",
+        hasNextPage: true,
+        value: [{ number: 42, headSha: "fork-sha" }],
+      })
+      expect(new URL(requestUrls[0]!).searchParams.get("page")).toBe("2")
+    }).pipe(Effect.provide(layer))
+  })
 
   it.effect("collects required checks from mixed effective-rules pages", () => {
     const attempts: Array<number> = []

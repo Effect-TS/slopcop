@@ -1,4 +1,6 @@
 import * as GitHubRepository from "@slopcop/domain/GitHub/GitHubRepository"
+import * as GitHubDatasetSync from "@slopcop/domain/GitHub/GitHubDatasetSync"
+import * as DomainPullRequest from "@slopcop/domain/GitHub/GitHubPullRequest"
 import * as Webhook from "@slopcop/domain/GitHub/GitHubWebhookEvent"
 import * as Policy from "@slopcop/domain/Labeling/LabelingPolicy"
 import * as Evaluation from "@slopcop/domain/Labeling/PolicyEvaluation"
@@ -9,9 +11,12 @@ import { UnexpectedRowCount } from "@slopcop/infra/Sql/RepositoryError"
 import {
   GitHubClient,
   GitHubClientError,
+  type ConditionalSnapshot,
   type OpenPullRequestSnapshot,
+  type PullRequestSummary,
 } from "@slopcop/github/GitHubClient"
 import { GitHubRepositoriesRepo } from "@slopcop/github/repositories/GitHubRepositoriesRepo"
+import { GitHubPullRequestsRepo } from "@slopcop/github/repositories/GitHubPullRequestsRepo"
 import { LabelingRules } from "@slopcop/labeling/LabelingRules"
 import { OptionalPolicyAiLayer } from "@slopcop/labeling/Ai"
 import { PolicyAi, PolicyAiError } from "@slopcop/labeling/PolicyAi"
@@ -245,6 +250,21 @@ const summary = {
 }
 const unavailable = Effect.die("Unexpected call")
 const unavailableStream = Stream.die("Unexpected stream call")
+const openPullRequest = (
+  number: number,
+  headSha: string,
+): OpenPullRequestSnapshot => ({
+  number,
+  state: "open",
+  title: "Fix",
+  body: null,
+  draft: false,
+  author: "octocat",
+  baseRef: "main",
+  headSha,
+  createdAt: now,
+  updatedAt: now,
+})
 interface State {
   configured: boolean
   revision: number
@@ -252,12 +272,21 @@ interface State {
   currentTitle: string
   aiFails: boolean
   aiCalls: number
+  commitPullRequests: ReadonlyArray<PullRequestSummary>
   commitLookupStatus: number | null
   factLoads: number
   factLoadingFailureAt: number | null
   labels: Set<string>
   openPullRequests: ReadonlyArray<OpenPullRequestSnapshot>
+  openPullRequestPages: Map<number, ReadonlyArray<OpenPullRequestSnapshot>>
+  cachedOpenPullRequests: ReadonlyArray<OpenPullRequestSnapshot>
+  openPullRequestSnapshotCalls: Array<{
+    readonly etag: string | null
+    readonly page: number
+  }>
+  openPullRequestSnapshotNotModified: boolean
   openPullRequestSnapshotStatus: number | null
+  pullRequestSyncEtag: string | null
   pullRequestStatuses: Map<number, number>
   requestedPullRequests: Array<number>
   requiredChecks: ReadonlyArray<CheckObservation> | null
@@ -278,12 +307,18 @@ const state = (): State => ({
   currentTitle: "Fix",
   aiFails: false,
   aiCalls: 0,
+  commitPullRequests: [],
   commitLookupStatus: null,
   factLoads: 0,
   factLoadingFailureAt: null,
   labels: new Set(["unmanaged"]),
   openPullRequests: [],
+  openPullRequestPages: new Map(),
+  cachedOpenPullRequests: [],
+  openPullRequestSnapshotCalls: [],
+  openPullRequestSnapshotNotModified: false,
   openPullRequestSnapshotStatus: null,
+  pullRequestSyncEtag: null,
   pullRequestStatuses: new Map(),
   requestedPullRequests: [],
   requiredChecks: null,
@@ -323,22 +358,38 @@ const layer = (
           listRepositoryLabels: () => unavailableStream,
           listPullRequestFiles: () => unavailableStream,
           listOpenPullRequests: () => unavailable,
-          listOpenPullRequestSnapshot: () =>
-            value.openPullRequestSnapshotStatus === null
-              ? Effect.succeed({
-                  _tag: "Modified" as const,
-                  value: value.openPullRequests,
-                  etag: null,
-                  lastModified: null,
-                })
-              : Effect.fail(
+          listOpenPullRequestSnapshot: (
+            _repository,
+            etag,
+            page = 1,
+          ): Effect.Effect<
+            ConditionalSnapshot<OpenPullRequestSnapshot>,
+            GitHubClientError
+          > =>
+            Effect.gen(function* () {
+              value.openPullRequestSnapshotCalls.push({ etag, page })
+              if (value.openPullRequestSnapshotStatus !== null)
+                return yield* Effect.fail(
                   new GitHubClientError({
                     operation: "GitHubClient.listOpenPullRequests",
                     status: value.openPullRequestSnapshotStatus,
                     retryable: value.openPullRequestSnapshotStatus >= 500,
                     message: "Pull request snapshot unavailable.",
                   }),
-                ),
+                )
+              if (page === 1 && value.openPullRequestSnapshotNotModified)
+                return { _tag: "NotModified" as const }
+              const pullRequests =
+                value.openPullRequestPages.get(page) ??
+                (page === 1 ? value.openPullRequests : [])
+              return {
+                _tag: "Modified" as const,
+                value: pullRequests,
+                etag: null,
+                lastModified: null,
+                hasNextPage: pullRequests.length === 100,
+              }
+            }),
           getPullRequest: (_repository, number) =>
             Effect.suspend(() => {
               value.requestedPullRequests.push(number)
@@ -364,7 +415,7 @@ const layer = (
           removeItemLabel: () => unavailable,
           listPullRequestsForCommit: () =>
             value.commitLookupStatus === null
-              ? Effect.succeed([])
+              ? Effect.succeed(value.commitPullRequests)
               : Effect.fail(
                   new GitHubClientError({
                     operation: "GitHubClient.listPullRequestsForCommit",
@@ -425,6 +476,50 @@ const layer = (
           incrementRulesRevision: () => unavailable,
           updateEnabled: () => unavailable,
           replaceInstallationRepositories: () => unavailable,
+        }),
+        Layer.succeed(GitHubPullRequestsRepo, {
+          listOpen: () =>
+            Effect.succeed(
+              value.cachedOpenPullRequests.map(
+                (pullRequest) =>
+                  new DomainPullRequest.GitHubPullRequestRecord({
+                    repositoryId: repository.id,
+                    number: pullRequest.number,
+                    state: pullRequest.state,
+                    title: pullRequest.title,
+                    body: pullRequest.body,
+                    draft: pullRequest.draft,
+                    author: pullRequest.author,
+                    baseRef: pullRequest.baseRef,
+                    headSha: pullRequest.headSha,
+                    githubCreatedAt: pullRequest.createdAt,
+                    githubUpdatedAt: pullRequest.updatedAt,
+                    generation: 1,
+                  }),
+              ),
+            ),
+          findSync: () =>
+            Effect.succeed(
+              value.pullRequestSyncEtag === null
+                ? Option.none()
+                : Option.some(
+                    new GitHubDatasetSync.GitHubPullRequestSync({
+                      repositoryId: repository.id,
+                      status: "ready",
+                      etag: value.pullRequestSyncEtag,
+                      lastModified: null,
+                      lastAttemptAt: now,
+                      lastSuccessAt: now,
+                      nextRefreshAt: now,
+                      consecutiveFailures: 0,
+                      lastError: null,
+                    }),
+                  ),
+            ),
+          markRefreshing: () => unavailable,
+          publishOpen: () => unavailable,
+          markNotModified: () => unavailable,
+          markFailed: () => unavailable,
         }),
         Layer.succeed(PoliciesRepo, {
           list: () => Effect.succeed(scenario?.policies ?? [policy]),
@@ -697,28 +792,85 @@ describe("LabelingCoordinator", () => {
       yield* runRequiredChecks(value, checkRunWithPullRequestsEvent)
       expect(value.applies).toBe(1)
       expect(value.requestedPullRequests).toEqual([42, 42])
+      expect(value.openPullRequestSnapshotCalls).toEqual([])
     })
   })
+  it.effect(
+    "skips the snapshot when commit lookup resolves the pull request",
+    () => {
+      const value = requiredChecksState()
+      value.currentHeadSha = "unknown-sha"
+      value.commitPullRequests = [{ ...summary, head: { sha: "unknown-sha" } }]
+      return Effect.gen(function* () {
+        yield* runRequiredChecks(value, checkRunWithoutPullRequestsEvent)
+        expect(value.applies).toBe(1)
+        expect(value.openPullRequestSnapshotCalls).toEqual([])
+        expect(value.requestedPullRequests).toEqual([42])
+      })
+    },
+  )
   it.effect("resolves a fork pull request by its head sha", () => {
     const value = requiredChecksState()
     value.currentHeadSha = "fork-sha"
-    value.openPullRequests = [
-      {
-        number: 42,
-        state: "open",
-        title: "Fix",
-        body: null,
-        draft: false,
-        author: "octocat",
-        baseRef: "main",
-        headSha: "fork-sha",
-        createdAt: now,
-        updatedAt: now,
-      },
-    ]
+    value.openPullRequests = [openPullRequest(42, "fork-sha")]
     return Effect.gen(function* () {
       yield* runRequiredChecks(value, forkCheckRunEvent)
       expect(value.applies).toBe(1)
+      expect(value.requestedPullRequests).toEqual([42])
+    })
+  })
+  it.effect(
+    "resolves a fork pull request from the second snapshot page",
+    () => {
+      const value = requiredChecksState()
+      value.currentHeadSha = "fork-sha"
+      value.openPullRequestPages.set(
+        1,
+        Array.from({ length: 100 }, (_, index) =>
+          openPullRequest(1_000 + index, `other-${index}`),
+        ),
+      )
+      value.openPullRequestPages.set(2, [openPullRequest(42, "fork-sha")])
+      return Effect.gen(function* () {
+        yield* runRequiredChecks(value, forkCheckRunEvent)
+        expect(value.applies).toBe(1)
+        expect(
+          value.openPullRequestSnapshotCalls.map(({ page }) => page),
+        ).toEqual([1, 2])
+        expect(value.requestedPullRequests).toEqual([42])
+      })
+    },
+  )
+  it.effect("reuses the synchronized snapshot after a 304", () => {
+    const value = requiredChecksState()
+    value.currentHeadSha = "fork-sha"
+    value.pullRequestSyncEtag = '"pulls-etag"'
+    value.openPullRequestSnapshotNotModified = true
+    value.cachedOpenPullRequests = [openPullRequest(42, "fork-sha")]
+    return Effect.gen(function* () {
+      yield* runRequiredChecks(value, forkCheckRunEvent)
+      expect(value.applies).toBe(1)
+      expect(value.openPullRequestSnapshotCalls).toEqual([
+        { etag: '"pulls-etag"', page: 1 },
+      ])
+      expect(value.requestedPullRequests).toEqual([42])
+    })
+  })
+  it.effect("bounds an unmatched snapshot search at five pages", () => {
+    const value = requiredChecksState()
+    for (let page = 1; page <= 5; page++)
+      value.openPullRequestPages.set(
+        page,
+        Array.from({ length: 100 }, (_, index) =>
+          openPullRequest(page * 1_000 + index, `other-${page}-${index}`),
+        ),
+      )
+    return Effect.gen(function* () {
+      yield* runRequiredChecks(value, forkCheckRunEvent)
+      expect(value.applies).toBe(0)
+      expect(
+        value.openPullRequestSnapshotCalls.map(({ page }) => page),
+      ).toEqual([1, 2, 3, 4, 5])
     })
   })
   it.effect("continues when one payload pull request no longer exists", () => {
@@ -773,30 +925,29 @@ describe("LabelingCoordinator", () => {
       })
     })
   })
+  it.effect(
+    "continues without evaluation when the snapshot failure is non-retryable",
+    () => {
+      const value = requiredChecksState()
+      value.openPullRequestSnapshotStatus = 403
+      return Effect.gen(function* () {
+        yield* runRequiredChecks(value, checkRunWithoutPullRequestsEvent)
+        expect(value.applies).toBe(0)
+        expect(value.evaluations).toEqual([])
+      })
+    },
+  )
   it.effect("warns and resolves a fork when commit lookup returns 422", () => {
     const value = requiredChecksState()
     const messages: Array<unknown> = []
     value.commitLookupStatus = 422
     value.currentHeadSha = "unknown-sha"
-    value.openPullRequests = [
-      {
-        number: 42,
-        state: "open",
-        title: "Fix",
-        body: null,
-        draft: false,
-        author: "octocat",
-        baseRef: "main",
-        headSha: "unknown-sha",
-        createdAt: now,
-        updatedAt: now,
-      },
-    ]
+    value.openPullRequests = [openPullRequest(42, "unknown-sha")]
     return Effect.gen(function* () {
       yield* runRequiredChecks(value, checkRunWithoutPullRequestsEvent)
       expect(value.applies).toBe(1)
       expect(messages).toContainEqual([
-        "Commit did not resolve to a pull request",
+        "Commit lookup returned 422, falling back to open pull request snapshot",
         expect.objectContaining({
           deliveryId: "unmatched-check-run",
           repository: "Effect-TS/effect",

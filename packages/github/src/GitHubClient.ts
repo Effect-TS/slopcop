@@ -128,6 +128,7 @@ export type ConditionalSnapshot<A> =
       readonly value: ReadonlyArray<A>
       readonly etag: string | null
       readonly lastModified: string | null
+      readonly hasNextPage?: boolean
     }
 
 export interface RequiredCheck {
@@ -288,6 +289,7 @@ export class GitHubClient extends Context.Service<
     readonly listOpenPullRequestSnapshot: (
       repository: GitHubRepository.GitHubRepository,
       etag: string | null,
+      page?: number,
     ) => Effect.Effect<
       ConditionalSnapshot<OpenPullRequestSnapshot>,
       GitHubClientError
@@ -591,6 +593,7 @@ export class GitHubClient extends Context.Service<
     )(function* (
       repository: GitHubRepository.GitHubRepository,
       etag: string | null,
+      page = 1,
     ) {
       let request = HttpClientRequest.get(
         `${GITHUB_API_URL}${repositoryPath(repository)}/pulls`,
@@ -600,7 +603,7 @@ export class GitHubClient extends Context.Service<
           sort: "updated",
           direction: "desc",
           per_page: PAGE_SIZE,
-          page: 1,
+          page,
         }),
       )
       if (etag !== null) {
@@ -634,6 +637,7 @@ export class GitHubClient extends Context.Service<
         })),
         etag: response.headers.etag ?? null,
         lastModified: response.headers["last-modified"] ?? null,
+        hasNextPage: Option.isSome(nextPage(page, response)),
       } as const
     })
 
