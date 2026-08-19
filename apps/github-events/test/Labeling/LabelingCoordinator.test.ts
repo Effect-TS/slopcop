@@ -6,12 +6,19 @@ import * as Rule from "@slopcop/domain/Labeling/LabelingRule"
 import * as Program from "@slopcop/domain/Policy/PolicyProgram"
 import { RepositoryNotConfigured } from "@slopcop/github/Errors"
 import { UnexpectedRowCount } from "@slopcop/infra/Sql/RepositoryError"
-import { GitHubClient, GitHubClientError } from "@slopcop/github/GitHubClient"
+import {
+  GitHubClient,
+  GitHubClientError,
+  type OpenPullRequestSnapshot,
+} from "@slopcop/github/GitHubClient"
 import { GitHubRepositoriesRepo } from "@slopcop/github/repositories/GitHubRepositoriesRepo"
 import { LabelingRules } from "@slopcop/labeling/LabelingRules"
 import { OptionalPolicyAiLayer } from "@slopcop/labeling/Ai"
 import { PolicyAi, PolicyAiError } from "@slopcop/labeling/PolicyAi"
-import { evaluatePolicyProgram } from "@slopcop/labeling/PolicyEngine"
+import {
+  evaluatePolicyProgram,
+  type CheckObservation,
+} from "@slopcop/labeling/PolicyEngine"
 import { PolicyFacts } from "@slopcop/labeling/PolicyFacts"
 import { PoliciesRepo } from "@slopcop/labeling/repositories/PoliciesRepo"
 import { describe, expect, it } from "@effect/vitest"
@@ -19,6 +26,7 @@ import * as DateTime from "effect/DateTime"
 import * as ConfigProvider from "effect/ConfigProvider"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
+import * as Logger from "effect/Logger"
 import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
 import * as Stream from "effect/Stream"
@@ -175,7 +183,9 @@ const event = Schema.decodeUnknownSync(Webhook.GitHubWebhookEvent)({
     installation: { id: 3 },
   },
 })
-const forkCheckRunEvent = Schema.decodeUnknownSync(Webhook.GitHubWebhookEvent)({
+const checkRunWithPullRequestsEvent = Schema.decodeUnknownSync(
+  Webhook.GitHubWebhookEvent,
+)({
   id: "fork-check-run",
   name: "check_run",
   payload: {
@@ -188,7 +198,32 @@ const forkCheckRunEvent = Schema.decodeUnknownSync(Webhook.GitHubWebhookEvent)({
     installation: { id: 3 },
   },
 })
-const unmatchedCheckRunEvent = Schema.decodeUnknownSync(
+const forkCheckRunEvent = Schema.decodeUnknownSync(Webhook.GitHubWebhookEvent)({
+  id: "fork-check-run",
+  name: "check_run",
+  payload: {
+    action: "completed",
+    check_run: { head_sha: "fork-sha", pull_requests: [] },
+    repository: { id: 2, full_name: "Effect-TS/effect" },
+    installation: { id: 3 },
+  },
+})
+const checkRunWithMultiplePullRequestsEvent = Schema.decodeUnknownSync(
+  Webhook.GitHubWebhookEvent,
+)({
+  id: "multiple-check-run",
+  name: "check_run",
+  payload: {
+    action: "completed",
+    check_run: {
+      head_sha: "sha",
+      pull_requests: [{ number: 41 }, { number: 42 }],
+    },
+    repository: { id: 2, full_name: "Effect-TS/effect" },
+    installation: { id: 3 },
+  },
+})
+const checkRunWithoutPullRequestsEvent = Schema.decodeUnknownSync(
   Webhook.GitHubWebhookEvent,
 )({
   id: "unmatched-check-run",
@@ -213,6 +248,7 @@ const unavailableStream = Stream.die("Unexpected stream call")
 interface State {
   configured: boolean
   revision: number
+  currentHeadSha: string
   currentTitle: string
   aiFails: boolean
   aiCalls: number
@@ -220,6 +256,11 @@ interface State {
   factLoads: number
   factLoadingFailureAt: number | null
   labels: Set<string>
+  openPullRequests: ReadonlyArray<OpenPullRequestSnapshot>
+  openPullRequestSnapshotStatus: number | null
+  pullRequestStatuses: Map<number, number>
+  requestedPullRequests: Array<number>
+  requiredChecks: ReadonlyArray<CheckObservation> | null
   applies: number
   markedMissing: number
   labelMutationFails: boolean
@@ -233,6 +274,7 @@ interface State {
 const state = (): State => ({
   configured: true,
   revision: 7,
+  currentHeadSha: "sha",
   currentTitle: "Fix",
   aiFails: false,
   aiCalls: 0,
@@ -240,6 +282,11 @@ const state = (): State => ({
   factLoads: 0,
   factLoadingFailureAt: null,
   labels: new Set(["unmanaged"]),
+  openPullRequests: [],
+  openPullRequestSnapshotStatus: null,
+  pullRequestStatuses: new Map(),
+  requestedPullRequests: [],
+  requiredChecks: null,
   applies: 0,
   markedMissing: 0,
   labelMutationFails: false,
@@ -276,9 +323,42 @@ const layer = (
           listRepositoryLabels: () => unavailableStream,
           listPullRequestFiles: () => unavailableStream,
           listOpenPullRequests: () => unavailable,
-          listOpenPullRequestSnapshot: () => unavailable,
-          getPullRequest: () =>
-            Effect.succeed({ ...summary, title: value.currentTitle }),
+          listOpenPullRequestSnapshot: () =>
+            value.openPullRequestSnapshotStatus === null
+              ? Effect.succeed({
+                  _tag: "Modified" as const,
+                  value: value.openPullRequests,
+                  etag: null,
+                  lastModified: null,
+                })
+              : Effect.fail(
+                  new GitHubClientError({
+                    operation: "GitHubClient.listOpenPullRequests",
+                    status: value.openPullRequestSnapshotStatus,
+                    retryable: value.openPullRequestSnapshotStatus >= 500,
+                    message: "Pull request snapshot unavailable.",
+                  }),
+                ),
+          getPullRequest: (_repository, number) =>
+            Effect.suspend(() => {
+              value.requestedPullRequests.push(number)
+              const status = value.pullRequestStatuses.get(number)
+              return status === undefined
+                ? Effect.succeed({
+                    ...summary,
+                    number,
+                    title: value.currentTitle,
+                    head: { sha: value.currentHeadSha },
+                  })
+                : Effect.fail(
+                    new GitHubClientError({
+                      operation: "GitHubClient.getPullRequest",
+                      status,
+                      retryable: status >= 500,
+                      message: "Pull request unavailable.",
+                    }),
+                  )
+            }),
           listItemLabels: () => unavailableStream,
           addItemLabels: () => unavailable,
           removeItemLabel: () => unavailable,
@@ -431,13 +511,11 @@ const layer = (
                 title: "Fix",
                 body: null,
                 baseRef: "main",
-                headSha: "sha",
+                headSha: value.currentHeadSha,
                 currentLabels: [...value.labels],
                 changedFiles: null,
                 changedFilesComplete: null,
-                requiredChecks: [
-                  { producer: "ci", name: "test", state: "success" },
-                ],
+                requiredChecks: value.requiredChecks,
                 latestReviews: null,
               })
             }),
@@ -532,6 +610,25 @@ const run = (
   Effect.gen(function* () {
     yield* (yield* LabelingCoordinator).process(inputEvent)
   }).pipe(Effect.provide(layer(value, program, scenario)))
+const requiredChecksState = () => {
+  const value = state()
+  value.requiredChecks = [{ producer: "ci", name: "test", state: "success" }]
+  return value
+}
+const runRequiredChecks = (
+  value: State,
+  inputEvent: Webhook.GitHubWebhookEvent,
+) =>
+  run(
+    value,
+    requiredChecksProgram,
+    {
+      policies: [policy],
+      versions: [version(requiredChecksProgram, ["check_run:completed"])],
+      rules: [rule],
+    },
+    inputEvent,
+  )
 
 describe("LabelingCoordinator", () => {
   it.effect("runs deterministic evaluation without OPENAI_API_KEY", () =>
@@ -594,39 +691,127 @@ describe("LabelingCoordinator", () => {
       })
     },
   )
-  it.effect("resolves a fork pull request from a check run payload", () => {
-    const value = state()
+  it.effect("resolves a pull request listed in a check run payload", () => {
+    const value = requiredChecksState()
     return Effect.gen(function* () {
-      yield* run(
-        value,
-        requiredChecksProgram,
-        {
-          policies: [policy],
-          versions: [version(requiredChecksProgram, ["check_run:completed"])],
-          rules: [rule],
-        },
-        forkCheckRunEvent,
-      )
+      yield* runRequiredChecks(value, checkRunWithPullRequestsEvent)
+      expect(value.applies).toBe(1)
+      expect(value.requestedPullRequests).toEqual([42, 42])
+    })
+  })
+  it.effect("resolves a fork pull request by its head sha", () => {
+    const value = requiredChecksState()
+    value.currentHeadSha = "fork-sha"
+    value.openPullRequests = [
+      {
+        number: 42,
+        state: "open",
+        title: "Fix",
+        body: null,
+        draft: false,
+        author: "octocat",
+        baseRef: "main",
+        headSha: "fork-sha",
+        createdAt: now,
+        updatedAt: now,
+      },
+    ]
+    return Effect.gen(function* () {
+      yield* runRequiredChecks(value, forkCheckRunEvent)
       expect(value.applies).toBe(1)
     })
   })
-  it.effect("treats an unknown commit as having no pull requests", () => {
-    const value = state()
-    value.commitLookupStatus = 422
+  it.effect("continues when one payload pull request no longer exists", () => {
+    const value = requiredChecksState()
+    value.pullRequestStatuses.set(41, 404)
     return Effect.gen(function* () {
-      yield* run(
-        value,
-        requiredChecksProgram,
-        {
-          policies: [policy],
-          versions: [version(requiredChecksProgram, ["check_run:completed"])],
-          rules: [rule],
-        },
-        unmatchedCheckRunEvent,
-      )
-      expect(value.applies).toBe(0)
-      expect(value.evaluations).toEqual([])
+      yield* runRequiredChecks(value, checkRunWithMultiplePullRequestsEvent)
+      expect(value.applies).toBe(1)
+      expect(value.requestedPullRequests).toContain(41)
+      expect(value.requestedPullRequests).toContain(42)
     })
+  })
+  it.effect(
+    "fails when a payload pull request lookup has a server error",
+    () => {
+      const value = state()
+      value.pullRequestStatuses.set(42, 500)
+      return Effect.gen(function* () {
+        const error = yield* Effect.flip(
+          runRequiredChecks(value, checkRunWithPullRequestsEvent),
+        )
+        expect(error).toMatchObject({
+          _tag: "LabelingCoordinatorError",
+          cause: { _tag: "GitHubClientError", status: 500 },
+        })
+      })
+    },
+  )
+  it.effect("fails when the commit lookup has a server error", () => {
+    const value = state()
+    value.commitLookupStatus = 500
+    return Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        runRequiredChecks(value, checkRunWithoutPullRequestsEvent),
+      )
+      expect(error).toMatchObject({
+        _tag: "LabelingCoordinatorError",
+        cause: { _tag: "GitHubClientError", status: 500 },
+      })
+    })
+  })
+  it.effect("fails when the open pull request snapshot is unavailable", () => {
+    const value = state()
+    value.openPullRequestSnapshotStatus = 500
+    return Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        runRequiredChecks(value, checkRunWithoutPullRequestsEvent),
+      )
+      expect(error).toMatchObject({
+        _tag: "LabelingCoordinatorError",
+        cause: { _tag: "GitHubClientError", status: 500 },
+      })
+    })
+  })
+  it.effect("warns and resolves a fork when commit lookup returns 422", () => {
+    const value = requiredChecksState()
+    const messages: Array<unknown> = []
+    value.commitLookupStatus = 422
+    value.currentHeadSha = "unknown-sha"
+    value.openPullRequests = [
+      {
+        number: 42,
+        state: "open",
+        title: "Fix",
+        body: null,
+        draft: false,
+        author: "octocat",
+        baseRef: "main",
+        headSha: "unknown-sha",
+        createdAt: now,
+        updatedAt: now,
+      },
+    ]
+    return Effect.gen(function* () {
+      yield* runRequiredChecks(value, checkRunWithoutPullRequestsEvent)
+      expect(value.applies).toBe(1)
+      expect(messages).toContainEqual([
+        "Commit did not resolve to a pull request",
+        expect.objectContaining({
+          deliveryId: "unmatched-check-run",
+          repository: "Effect-TS/effect",
+          sha: "unknown-sha",
+        }),
+      ])
+    }).pipe(
+      Effect.provide(
+        Logger.layer([
+          Logger.make(({ message }) => {
+            messages.push(message)
+          }),
+        ]),
+      ),
+    )
   })
   it.effect(
     "persists attribution before mutation and recovers on retry",
