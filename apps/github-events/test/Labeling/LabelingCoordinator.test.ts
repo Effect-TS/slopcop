@@ -379,7 +379,11 @@ const layer = (
                     message: "Pull request snapshot unavailable.",
                   }),
                 )
-              if (page === 1 && value.openPullRequestSnapshotNotModified)
+              if (
+                page === 1 &&
+                etag !== null &&
+                value.openPullRequestSnapshotNotModified
+              )
                 return { _tag: "NotModified" as const }
               const pullRequests =
                 value.openPullRequestPages.get(page) ??
@@ -816,6 +820,31 @@ describe("LabelingCoordinator", () => {
       })
     },
   )
+  it.effect("skips CI candidate resolution without a matching trigger", () => {
+    const value = requiredChecksState()
+    return Effect.gen(function* () {
+      yield* run(value, deterministicProgram, undefined, forkCheckRunEvent)
+      expect(value.openPullRequestSnapshotCalls).toEqual([])
+      expect(value.requestedPullRequests).toEqual([])
+    })
+  })
+  it.effect("skips CI candidate resolution without active rules", () => {
+    const value = requiredChecksState()
+    return Effect.gen(function* () {
+      yield* run(
+        value,
+        requiredChecksProgram,
+        {
+          policies: [policy],
+          versions: [version(requiredChecksProgram, ["check_run:completed"])],
+          rules: [],
+        },
+        forkCheckRunEvent,
+      )
+      expect(value.openPullRequestSnapshotCalls).toEqual([])
+      expect(value.requestedPullRequests).toEqual([])
+    })
+  })
   it.effect("resolves a fork pull request by its head sha", () => {
     const value = requiredChecksState()
     value.currentHeadSha = "fork-sha"
@@ -861,6 +890,39 @@ describe("LabelingCoordinator", () => {
         { etag: '"pulls-etag"', page: 1 },
       ])
       expect(value.requestedPullRequests).toEqual([42])
+    })
+  })
+  it.effect("continues from a full cached page after a 304", () => {
+    const value = requiredChecksState()
+    value.currentHeadSha = "fork-sha"
+    value.pullRequestSyncEtag = '"pulls-etag"'
+    value.openPullRequestSnapshotNotModified = true
+    value.cachedOpenPullRequests = Array.from({ length: 100 }, (_, index) =>
+      openPullRequest(1_000 + index, `other-${index}`),
+    )
+    value.openPullRequestPages.set(2, [openPullRequest(42, "fork-sha")])
+    return Effect.gen(function* () {
+      yield* runRequiredChecks(value, forkCheckRunEvent)
+      expect(value.applies).toBe(1)
+      expect(value.openPullRequestSnapshotCalls).toEqual([
+        { etag: '"pulls-etag"', page: 1 },
+        { etag: null, page: 2 },
+      ])
+    })
+  })
+  it.effect("retries page one live when a 304 has an empty cache", () => {
+    const value = requiredChecksState()
+    value.currentHeadSha = "fork-sha"
+    value.pullRequestSyncEtag = '"pulls-etag"'
+    value.openPullRequestSnapshotNotModified = true
+    value.openPullRequests = [openPullRequest(42, "fork-sha")]
+    return Effect.gen(function* () {
+      yield* runRequiredChecks(value, forkCheckRunEvent)
+      expect(value.applies).toBe(1)
+      expect(value.openPullRequestSnapshotCalls).toEqual([
+        { etag: '"pulls-etag"', page: 1 },
+        { etag: null, page: 1 },
+      ])
     })
   })
   it.effect("bounds an unmatched snapshot search at five pages", () => {

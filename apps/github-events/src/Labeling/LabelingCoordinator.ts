@@ -5,6 +5,7 @@ import type * as Rule from "@slopcop/domain/Labeling/LabelingRule"
 import type * as Policy from "@slopcop/domain/Labeling/LabelingPolicy"
 import type * as Program from "@slopcop/domain/Policy/PolicyProgram"
 import {
+  GITHUB_PAGE_SIZE,
   GitHubClient,
   type PullRequestSummary,
 } from "@slopcop/github/GitHubClient"
@@ -53,10 +54,9 @@ export class LabelingCoordinatorLimitExceeded extends Data.TaggedError(
   "LabelingCoordinatorLimitExceeded",
 )<{ readonly repository: string; readonly limit: number }> {}
 
-const OPEN_PULL_REQUEST_FALLBACK_PAGE_SIZE = 100
 const OPEN_PULL_REQUEST_FALLBACK_MAX_PAGES = 5
 const OPEN_PULL_REQUEST_FALLBACK_LIMIT =
-  OPEN_PULL_REQUEST_FALLBACK_PAGE_SIZE * OPEN_PULL_REQUEST_FALLBACK_MAX_PAGES
+  GITHUB_PAGE_SIZE * OPEN_PULL_REQUEST_FALLBACK_MAX_PAGES
 
 const snapshotPullRequestSummary = (pullRequest: {
   readonly number: number
@@ -196,6 +196,56 @@ export class LabelingCoordinator extends Context.Service<
     const ai = yield* PolicyAi
     const facts = yield* PolicyFacts
     const evaluations = yield* PolicyEvaluationsRepo
+    const hasMatchingActiveTrigger = Effect.fn(
+      "LabelingCoordinator.hasMatchingActiveTrigger",
+    )(function* (
+      repository: DomainRepository.GitHubRepository,
+      trigger: string,
+    ) {
+      const ruleRows = (yield* rules.getActiveSnapshot(repository.id)).rules
+      if (ruleRows.length === 0) return false
+
+      const policyRows = yield* policies.list(repository.id)
+      const activeVersions = new Map<
+        Program.PolicyId,
+        Policy.LabelingPolicyVersion
+      >()
+      yield* Effect.forEach(
+        policyRows,
+        (policy) =>
+          policy.publishedVersionId === null
+            ? Effect.void
+            : policies.findVersion(policy.publishedVersionId).pipe(
+                Effect.tap(
+                  Option.match({
+                    onNone: () => Effect.void,
+                    onSome: (version) =>
+                      Effect.sync(() => activeVersions.set(policy.id, version)),
+                  }),
+                ),
+              ),
+        { discard: true },
+      )
+
+      return ruleRows.some((rule) => {
+        if (rule._tag === "PolicyLabelingRule") {
+          const version = activeVersions.get(rule.policyId)
+          return (
+            version !== undefined &&
+            triggerMatches(version.triggerManifest, trigger)
+          )
+        }
+        return triggerMatches(
+          [
+            ...triggersForPullRequestFacts(rule.evidence),
+            ...(rule.gatePolicyId === null
+              ? []
+              : (activeVersions.get(rule.gatePolicyId)?.triggerManifest ?? [])),
+          ],
+          trigger,
+        )
+      })
+    })
     const resolvePullRequestNumbers = (
       repository: DomainRepository.GitHubRepository,
       numbers: ReadonlyArray<number>,
@@ -232,35 +282,37 @@ export class LabelingCoordinator extends Context.Service<
         onNone: () => null,
         onSome: (value) => value.etag,
       })
+      const requestSnapshot = (etag: string | null, page: number) =>
+        github.listOpenPullRequestSnapshot(repository, etag, page).pipe(
+          Effect.catchTag("GitHubClientError", (error) =>
+            error.retryable
+              ? Effect.fail(error)
+              : Effect.logWarning("Open pull request snapshot unavailable", {
+                  deliveryId: event.id,
+                  repository: repository.slug,
+                  page,
+                  status: error.status,
+                }).pipe(Effect.as(null)),
+          ),
+        )
 
       for (let page = 1; page <= OPEN_PULL_REQUEST_FALLBACK_MAX_PAGES; page++) {
-        const snapshot = yield* github
-          .listOpenPullRequestSnapshot(
-            repository,
-            page === 1 ? etag : null,
-            page,
-          )
-          .pipe(
-            Effect.catchTag("GitHubClientError", (error) =>
-              error.retryable
-                ? Effect.fail(error)
-                : Effect.logWarning("Open pull request snapshot unavailable", {
-                    deliveryId: event.id,
-                    repository: repository.slug,
-                    page,
-                    status: error.status,
-                  }).pipe(Effect.as(null)),
-            ),
-          )
+        let snapshot = yield* requestSnapshot(page === 1 ? etag : null, page)
         if (snapshot === null) return []
 
-        const open =
+        let open =
           snapshot._tag === "Modified"
             ? snapshot.value
             : yield* pullRequestSnapshots.listOpen(
                 repository.id,
-                OPEN_PULL_REQUEST_FALLBACK_PAGE_SIZE,
+                GITHUB_PAGE_SIZE,
               )
+        if (snapshot._tag === "NotModified" && open.length === 0) {
+          snapshot = yield* requestSnapshot(null, 1)
+          if (snapshot === null) return []
+          if (snapshot._tag === "NotModified") return []
+          open = snapshot.value
+        }
         const matches = open
           .filter((pullRequest) => pullRequest.headSha === headSha)
           .map(snapshotPullRequestSummary)
@@ -268,9 +320,8 @@ export class LabelingCoordinator extends Context.Service<
 
         const hasNextPage =
           snapshot._tag === "Modified"
-            ? (snapshot.hasNextPage ??
-              snapshot.value.length === OPEN_PULL_REQUEST_FALLBACK_PAGE_SIZE)
-            : open.length === OPEN_PULL_REQUEST_FALLBACK_PAGE_SIZE
+            ? snapshot.hasNextPage
+            : open.length === GITHUB_PAGE_SIZE
         if (!hasNextPage) return []
       }
 
@@ -775,6 +826,7 @@ export class LabelingCoordinator extends Context.Service<
           ),
         )
       if (repository === null) return
+      if (!(yield* hasMatchingActiveTrigger(repository, trigger))) return
       const resolved = yield* eventSource.pullRequestNumbers.length > 0
         ? resolvePullRequestNumbers(repository, eventSource.pullRequestNumbers)
         : github.listPullRequestsForCommit(repository, eventSource.sha).pipe(

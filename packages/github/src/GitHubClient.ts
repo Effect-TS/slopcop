@@ -17,7 +17,7 @@ import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse"
 import { GitHubAppAuth, GitHubAppAuthError } from "./GitHubAppAuth.ts"
 
 const GITHUB_API_URL = "https://api.github.com"
-const PAGE_SIZE = 100
+export const GITHUB_PAGE_SIZE = 100
 const MAX_ATTEMPTS = 3
 const REQUEST_TIMEOUT = "30 seconds"
 const MAX_PARSE_DIAGNOSTIC_LENGTH = 2_000
@@ -128,7 +128,7 @@ export type ConditionalSnapshot<A> =
       readonly value: ReadonlyArray<A>
       readonly etag: string | null
       readonly lastModified: string | null
-      readonly hasNextPage?: boolean
+      readonly hasNextPage: boolean
     }
 
 export interface RequiredCheck {
@@ -481,7 +481,7 @@ export class GitHubClient extends Context.Service<
             `${GITHUB_API_URL}${repositoryPath(repository)}/labels`,
           ).pipe(
             HttpClientRequest.setUrlParams({
-              per_page: PAGE_SIZE,
+              per_page: GITHUB_PAGE_SIZE,
               page: pageNumber,
             }),
           )
@@ -510,7 +510,7 @@ export class GitHubClient extends Context.Service<
             `${GITHUB_API_URL}${repositoryPath(repository)}/pulls/${number}/files`,
           ).pipe(
             HttpClientRequest.setUrlParams({
-              per_page: PAGE_SIZE,
+              per_page: GITHUB_PAGE_SIZE,
               page: pageNumber,
             }),
           )
@@ -534,7 +534,7 @@ export class GitHubClient extends Context.Service<
       ) {
         const limit = Math.min(
           Math.max(Math.floor(requestedLimit), 0),
-          PAGE_SIZE,
+          GITHUB_PAGE_SIZE,
         )
         if (limit === 0) return []
 
@@ -553,7 +553,7 @@ export class GitHubClient extends Context.Service<
                     state: "open",
                     sort: "updated",
                     direction: "desc",
-                    per_page: Math.min(PAGE_SIZE, remaining),
+                    per_page: Math.min(GITHUB_PAGE_SIZE, remaining),
                     page,
                   }),
                 ),
@@ -602,7 +602,7 @@ export class GitHubClient extends Context.Service<
           state: "open",
           sort: "updated",
           direction: "desc",
-          per_page: PAGE_SIZE,
+          per_page: GITHUB_PAGE_SIZE,
           page,
         }),
       )
@@ -671,7 +671,7 @@ export class GitHubClient extends Context.Service<
             `${GITHUB_API_URL}${repositoryPath(repository)}/issues/${number}/labels`,
           ).pipe(
             HttpClientRequest.setUrlParams({
-              per_page: PAGE_SIZE,
+              per_page: GITHUB_PAGE_SIZE,
               page: pageNumber,
             }),
           )
@@ -753,7 +753,7 @@ export class GitHubClient extends Context.Service<
         HttpClientRequest.get(
           `${GITHUB_API_URL}${repositoryPath(repository)}/commits/${encodeURIComponent(sha)}/pulls`,
         ).pipe(
-          HttpClientRequest.setUrlParams({ per_page: PAGE_SIZE }),
+          HttpClientRequest.setUrlParams({ per_page: GITHUB_PAGE_SIZE }),
           HttpClientRequest.setHeader("accept", "application/vnd.github+json"),
         ),
       )
@@ -779,7 +779,7 @@ export class GitHubClient extends Context.Service<
               `${GITHUB_API_URL}${repositoryPath(repository)}/pulls/${number}/reviews`,
             ).pipe(
               HttpClientRequest.setUrlParams({
-                per_page: PAGE_SIZE,
+                per_page: GITHUB_PAGE_SIZE,
                 page: pageNumber,
               }),
             ),
@@ -868,7 +868,7 @@ export class GitHubClient extends Context.Service<
               `${GITHUB_API_URL}${repositoryPath(repository)}/rules/branches/${encodeURIComponent(branch)}`,
             ).pipe(
               HttpClientRequest.setUrlParams({
-                per_page: PAGE_SIZE,
+                per_page: GITHUB_PAGE_SIZE,
                 page: pageNumber,
               }),
             ),
@@ -916,7 +916,7 @@ export class GitHubClient extends Context.Service<
               `${GITHUB_API_URL}${repositoryPath(repository)}/commits/${encodeURIComponent(sha)}/check-runs`,
             ).pipe(
               HttpClientRequest.setUrlParams({
-                per_page: PAGE_SIZE,
+                per_page: GITHUB_PAGE_SIZE,
                 page: pageNumber,
                 filter: "latest",
               }),
@@ -954,7 +954,7 @@ export class GitHubClient extends Context.Service<
                 `${GITHUB_API_URL}${repositoryPath(repository)}/commits/${encodeURIComponent(sha)}/status`,
               ).pipe(
                 HttpClientRequest.setUrlParams({
-                  per_page: PAGE_SIZE,
+                  per_page: GITHUB_PAGE_SIZE,
                   page: pageNumber,
                 }),
               ),
