@@ -20,7 +20,7 @@ SlopCop discovers repositories from the GitHub App installation for one organiza
 - `GITHUB_APP_PRIVATE_KEY_BASE64`: the App private key encoded as base64.
 - `GITHUB_WEBHOOK_SECRET`: the secret configured on the GitHub App.
 
-Configure the GitHub App setup URL to return to the SlopCop application, for example `https://slopcop.example.com/repositories?setup=complete`. Subscribe the App to pull request events; GitHub sends installation lifecycle events automatically. The callback query string is not trusted: SlopCop confirms installations through signed webhooks and GitHub App-authenticated reconciliation.
+Configure the GitHub App setup URL to return to the SlopCop application, for example `https://slopcop.example.com/repositories?setup=complete`. Subscribe the App to pull request, pull request review, check run, check suite, and status events. Required-check policies depend on the check run, check suite, and status subscriptions to re-evaluate after CI completes. GitHub sends installation lifecycle events automatically. The callback query string is not trusted: SlopCop confirms installations through signed webhooks and GitHub App-authenticated reconciliation.
 
 ## Local development
 

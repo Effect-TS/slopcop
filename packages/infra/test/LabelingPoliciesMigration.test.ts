@@ -40,6 +40,7 @@ describe("00012 generic policy engine migration", () => {
     database.exec("PRAGMA foreign_keys=ON")
     apply(database, migrations)
     expect(migrations).toContain("00012_add_generic_policy_engine.sql")
+    expect(migrations).toContain("00014_reconcile_required_check_triggers.sql")
     expect(migrations).not.toContain("00006_seed_effect_labeling.sql")
     expect(
       database
@@ -255,7 +256,9 @@ describe("00012 generic policy engine migration", () => {
     database.exec("PRAGMA foreign_keys=ON")
     apply(
       database,
-      migrations.filter((name) => !name.startsWith("00012_")),
+      migrations.filter(
+        (name) => !name.startsWith("00012_") && !name.startsWith("00014_"),
+      ),
     )
     insertRepository(database)
     insertLegacyAiRule(database)
@@ -285,7 +288,10 @@ describe("00012 generic policy engine migration", () => {
         NULL,100,200
       );
     `)
-    apply(database, ["00012_add_generic_policy_engine.sql"])
+    apply(database, [
+      "00012_add_generic_policy_engine.sql",
+      "00014_reconcile_required_check_triggers.sql",
+    ])
 
     expect(
       database
@@ -372,6 +378,35 @@ describe("00012 generic policy engine migration", () => {
         )
         .get(),
     ).toEqual({ tag: "All" })
+    const readyTriggers = database
+      .prepare(
+        `SELECT version.id,version.revision,version.trigger_manifest
+         FROM labeling_policies AS policy
+         INNER JOIN labeling_policy_versions AS version
+           ON version.id=policy.published_version_id
+         WHERE policy.id='policy:ready:019be000-0000-7000-8000-000000000001'`,
+      )
+      .get() as { id: string; revision: number; trigger_manifest: string }
+    expect(readyTriggers.id).toBe(
+      "policy-version:ready-check-suite:019be000-0000-7000-8000-000000000001",
+    )
+    expect(readyTriggers.revision).toBe(2)
+    expect(JSON.parse(readyTriggers.trigger_manifest)).toEqual([
+      "pull_request:opened",
+      "pull_request:reopened",
+      "pull_request:synchronize",
+      "pull_request:edited",
+      "pull_request:ready_for_review",
+      "pull_request:converted_to_draft",
+      "pull_request:labeled",
+      "pull_request:unlabeled",
+      "check_run:rerequested",
+      "check_run:completed",
+      "check_suite:completed",
+      "status:*",
+      "pull_request_review:submitted",
+      "pull_request_review:dismissed",
+    ])
     expect(
       database
         .prepare(

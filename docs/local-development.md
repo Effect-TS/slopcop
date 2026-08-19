@@ -59,6 +59,9 @@ Webhook secret: same value as GITHUB_WEBHOOK_SECRET in .env.dev
 Repository permissions:
 
 ```text
+Administration: Read-only
+Checks: Read-only
+Commit statuses: Read-only
 Contents: Read-only
 Issues: Read and write
 Metadata: Read-only
@@ -68,8 +71,17 @@ Pull requests: Read-only
 Subscribe to events:
 
 ```text
+Check run
+Check suite
 Pull request
+Pull request review
+Status
 ```
+
+The three CI subscriptions are all intentional. A required-check policy is
+re-evaluated when a check run or check suite completes, or when a commit status
+changes. Missing subscriptions leave the policy stale until another supported
+pull request event arrives.
 
 Install the app only on sandbox repositories.
 
