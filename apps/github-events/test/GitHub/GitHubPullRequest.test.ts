@@ -7,7 +7,7 @@ import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
 import * as Stream from "effect/Stream"
-import { GitHubClient } from "@slopcop/github/GitHubClient"
+import { GitHubClient, GitHubClientError } from "@slopcop/github/GitHubClient"
 import { GitHubPullRequest } from "../../src/GitHub/GitHubPullRequest.ts"
 import { GitHubRepositoriesRepo } from "@slopcop/github/repositories/GitHubRepositoriesRepo"
 
@@ -159,5 +159,123 @@ describe("GitHubPullRequest.resolveWebhook", () => {
         actual: { owner: "effect-ts", repo: "renamed" },
       })
     }).pipe(Effect.provide(makeLayer(Option.some(repository)))),
+  )
+})
+
+describe("GitHubPullRequest.applyLabels", () => {
+  it.effect(
+    "attempts every planned mutation when label additions and removals fail",
+    () => {
+      const attempts: Array<string> = []
+      const layer = GitHubPullRequest.layerNoDeps.pipe(
+        Layer.provide([
+          Layer.succeed(GitHubRepositoriesRepo, {
+            list: () => Effect.die("Unexpected repository listing"),
+            findBySlug: () => Effect.die("Unexpected repository lookup"),
+            findByGitHubId: () => Effect.die("Unexpected repository lookup"),
+            findById: () => Effect.die("Unexpected repository lookup"),
+            getRulesRevision: () => Effect.die("Unexpected revision lookup"),
+            incrementRulesRevision: () =>
+              Effect.die("Unexpected revision increment"),
+            updateEnabled: () => Effect.die("Unexpected repository update"),
+            replaceInstallationRepositories: () =>
+              Effect.die("Unexpected repository replacement"),
+          }),
+          Layer.succeed(GitHubClient, {
+            getRepositoryLabel: () => unavailable,
+            listRepositoryLabels: () => unavailableStream,
+            listPullRequestFiles: () => unavailableStream,
+            listOpenPullRequests: () => unavailable,
+            listOpenPullRequestSnapshot: () => unavailable,
+            getPullRequest: () => unavailable,
+            listItemLabels: () =>
+              Stream.fromIterable([
+                { name: "remove-one", description: null, color: "ffffff" },
+                { name: "remove-two", description: null, color: "ffffff" },
+              ]),
+            addItemLabels: (_repository, _number, labels) =>
+              Effect.suspend(() => {
+                const label = labels[0]!
+                attempts.push(`add:${label}`)
+                return label === "broken"
+                  ? Effect.fail(
+                      new GitHubClientError({
+                        operation: "GitHubClient.addItemLabels",
+                        status: 422,
+                        retryable: false,
+                        message: "Label does not exist.",
+                      }),
+                    )
+                  : Effect.succeed([])
+              }),
+            removeItemLabel: (_repository, _number, label) =>
+              Effect.suspend(() => {
+                attempts.push(`remove:${label}`)
+                return label === "remove-one"
+                  ? Effect.fail(
+                      new GitHubClientError({
+                        operation: "GitHubClient.removeItemLabel",
+                        status: 403,
+                        retryable: false,
+                        message: "Label cannot be removed.",
+                      }),
+                    )
+                  : Effect.succeed(true)
+              }),
+            listPullRequestsForCommit: () => unavailable,
+            listPullRequestReviews: () => unavailable,
+            getFileContent: () => unavailable,
+            listRequiredChecks: () => unavailable,
+            listCheckRuns: () => unavailable,
+            listCommitStatuses: () => unavailable,
+          }),
+        ]),
+      )
+
+      return Effect.gen(function* () {
+        const pullRequests = yield* GitHubPullRequest
+        const result = yield* pullRequests.applyLabels(
+          {
+            deliveryId: "delivery-1",
+            repository,
+            number: 42,
+            title: "Fix behavior",
+            body: null,
+            baseRef: "main",
+            headSha: "abc123",
+          },
+          {
+            add: ["first", "broken", "last"],
+            remove: ["remove-one", "remove-two"],
+          },
+        )
+
+        expect(attempts).toEqual([
+          "add:first",
+          "add:broken",
+          "add:last",
+          "remove:remove-one",
+          "remove:remove-two",
+        ])
+        expect(result).toMatchObject({
+          added: ["first", "last"],
+          removed: ["remove-two"],
+          failures: [
+            {
+              operation: "add",
+              label: "broken",
+              status: 422,
+              retryable: false,
+            },
+            {
+              operation: "remove",
+              label: "remove-one",
+              status: 403,
+              retryable: false,
+            },
+          ],
+        })
+      }).pipe(Effect.provide(layer))
+    },
   )
 })

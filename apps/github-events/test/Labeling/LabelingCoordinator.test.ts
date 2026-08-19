@@ -293,6 +293,7 @@ interface State {
   applies: number
   markedMissing: number
   labelMutationFails: boolean
+  labelMutationRetryable: boolean
   repositoryLabelExists: boolean
   failActionPersistence: boolean
   operations: Array<string>
@@ -325,6 +326,7 @@ const state = (): State => ({
   applies: 0,
   markedMissing: 0,
   labelMutationFails: false,
+  labelMutationRetryable: false,
   repositoryLabelExists: true,
   failActionPersistence: false,
   operations: [],
@@ -442,17 +444,21 @@ const layer = (
           getLabels: () => Effect.succeed(new Set(value.labels)),
           applyLabels: (_pullRequest, changes) =>
             value.labelMutationFails
-              ? Effect.fail(
-                  new GitHubPullRequestLabelsError({
-                    operation: "add",
-                    repository: repository.slug,
-                    number: 42,
-                    label: "managed",
-                    status: 422,
-                    retryable: false,
-                    message: "GitHub rejected the label mutation.",
-                  }),
-                )
+              ? Effect.succeed({
+                  added: [],
+                  removed: [],
+                  failures: [
+                    new GitHubPullRequestLabelsError({
+                      operation: "add",
+                      repository: repository.slug,
+                      number: 42,
+                      label: "managed",
+                      status: value.labelMutationRetryable ? 500 : 422,
+                      retryable: value.labelMutationRetryable,
+                      message: "GitHub rejected the label mutation.",
+                    }),
+                  ],
+                })
               : Effect.sync(() => {
                   value.operations.push("github")
                   value.applies++
@@ -464,7 +470,7 @@ const layer = (
                   )
                   added.forEach((label) => value.labels.add(label))
                   removed.forEach((label) => value.labels.delete(label))
-                  return { added, removed }
+                  return { added, removed, failures: [] }
                 }),
         }),
         Layer.succeed(GitHubRepositoriesRepo, {
@@ -585,6 +591,7 @@ const layer = (
           validateCandidateLabel: () => unavailable,
           markMissing: () =>
             Effect.sync(() => {
+              value.operations.push("missing")
               value.markedMissing++
             }),
           revalidateStaleBatch: () => unavailable,
@@ -1115,23 +1122,47 @@ describe("LabelingCoordinator", () => {
       })
     },
   )
-  it.effect("keeps a rule enabled when its label still exists", () => {
-    const value = state()
-    value.labelMutationFails = true
-    return Effect.gen(function* () {
-      yield* Effect.flip(run(value))
-      expect(value.markedMissing).toBe(0)
-    })
-  })
   it.effect(
-    "marks a rule missing when GitHub confirms its label is absent",
+    "completes a failed label action when its label still exists",
+    () => {
+      const value = state()
+      value.labelMutationFails = true
+      return Effect.gen(function* () {
+        yield* run(value)
+        expect(value.markedMissing).toBe(0)
+        expect(value.completions).toEqual([false])
+      })
+    },
+  )
+  it.effect(
+    "completes partial actions before retrying a retryable label failure",
+    () => {
+      const value = state()
+      value.labelMutationFails = true
+      value.labelMutationRetryable = true
+      return Effect.gen(function* () {
+        const error = yield* Effect.flip(run(value))
+        expect(error.cause).toMatchObject({
+          _tag: "GitHubPullRequestLabelsError",
+          label: "managed",
+          status: 500,
+          retryable: true,
+        })
+        expect(value.completions).toEqual([false])
+      })
+    },
+  )
+  it.effect(
+    "completes a failed label action and marks its missing rule",
     () => {
       const value = state()
       value.labelMutationFails = true
       value.repositoryLabelExists = false
       return Effect.gen(function* () {
-        yield* Effect.flip(run(value))
+        yield* run(value)
         expect(value.markedMissing).toBe(1)
+        expect(value.completions).toEqual([false])
+        expect(value.operations).toEqual(["plan", "complete", "missing"])
       })
     },
   )
@@ -1139,11 +1170,14 @@ describe("LabelingCoordinator", () => {
     const value = state()
     value.aiFails = true
     return Effect.gen(function* () {
-      yield* run(value, deterministicProgram, {
-        policies: [],
-        versions: [],
-        rules: [aiRule()],
-      })
+      const error = yield* Effect.flip(
+        run(value, deterministicProgram, {
+          policies: [],
+          versions: [],
+          rules: [aiRule()],
+        }),
+      )
+      expect(error.cause).toMatchObject({ _tag: "PolicyAiError" })
       expect(value.applies).toBe(0)
       expect(value.evaluations).toMatchObject([
         {
@@ -1160,12 +1194,16 @@ describe("LabelingCoordinator", () => {
     })
   })
   it.effect(
-    "records fact-loading failures without failing the delivery",
+    "records fact-loading failures and fails the delivery for retry",
     () => {
       const value = state()
       value.factLoadingFailureAt = 1
       return Effect.gen(function* () {
-        yield* run(value)
+        const error = yield* Effect.flip(run(value))
+        expect(error.cause).toMatchObject({
+          _tag: "GitHubClientError",
+          retryable: true,
+        })
         expect(value.evaluations).toMatchObject([
           { outcome: "Error", rationale: "Content unavailable." },
         ])
@@ -1173,27 +1211,36 @@ describe("LabelingCoordinator", () => {
       })
     },
   )
-  it.effect("continues with other rules when one fact load fails", () => {
-    const value = state()
-    value.factLoadingFailureAt = 1
-    const secondRule = aiRule(null, {
-      id: Schema.decodeUnknownSync(Rule.LabelingRuleId)("second-rule"),
-      label: "second",
-    })
-    return Effect.gen(function* () {
-      yield* run(value, deterministicProgram, {
-        policies: [],
-        versions: [],
-        rules: [aiRule(), secondRule],
+  it.effect(
+    "finishes other rule actions before failing a partial evaluation",
+    () => {
+      const value = state()
+      value.factLoadingFailureAt = 1
+      const secondRule = aiRule(null, {
+        id: Schema.decodeUnknownSync(Rule.LabelingRuleId)("second-rule"),
+        label: "second",
       })
-      expect(value.evaluations).toMatchObject([
-        { outcome: "Error" },
-        { outcome: "Match", ruleId: secondRule.id },
-      ])
-      expect([...value.labels].sort()).toEqual(["second", "unmanaged"])
-      expect(value.applies).toBe(1)
-    })
-  })
+      return Effect.gen(function* () {
+        const error = yield* Effect.flip(
+          run(value, deterministicProgram, {
+            policies: [],
+            versions: [],
+            rules: [aiRule(), secondRule],
+          }),
+        )
+        expect(error.cause).toMatchObject({
+          _tag: "GitHubClientError",
+          retryable: true,
+        })
+        expect(value.evaluations).toMatchObject([
+          { outcome: "Error" },
+          { outcome: "Match", ruleId: secondRule.id },
+        ])
+        expect([...value.labels].sort()).toEqual(["second", "unmanaged"])
+        expect(value.applies).toBe(1)
+      })
+    },
+  )
   it.effect("skips AI when its deterministic gate does not match", () => {
     const value = state()
     const noMatchProgram: Program.PolicyProgram = {
