@@ -179,6 +179,7 @@ interface State {
   applies: number
   markedMissing: number
   labelMutationFails: boolean
+  labelMutationRetryable: boolean
   repositoryLabelExists: boolean
   failActionPersistence: boolean
   operations: Array<string>
@@ -198,6 +199,7 @@ const state = (): State => ({
   applies: 0,
   markedMissing: 0,
   labelMutationFails: false,
+  labelMutationRetryable: false,
   repositoryLabelExists: true,
   failActionPersistence: false,
   operations: [],
@@ -265,8 +267,8 @@ const layer = (
                       repository: repository.slug,
                       number: 42,
                       label: "managed",
-                      status: 422,
-                      retryable: false,
+                      status: value.labelMutationRetryable ? 500 : 422,
+                      retryable: value.labelMutationRetryable,
                       message: "GitHub rejected the label mutation.",
                     }),
                   ],
@@ -359,6 +361,7 @@ const layer = (
           validateCandidateLabel: () => unavailable,
           markMissing: () =>
             Effect.sync(() => {
+              value.operations.push("missing")
               value.markedMissing++
             }),
           revalidateStaleBatch: () => unavailable,
@@ -704,6 +707,24 @@ describe("LabelingCoordinator", () => {
     },
   )
   it.effect(
+    "completes partial actions before retrying a retryable label failure",
+    () => {
+      const value = state()
+      value.labelMutationFails = true
+      value.labelMutationRetryable = true
+      return Effect.gen(function* () {
+        const error = yield* Effect.flip(run(value))
+        expect(error.cause).toMatchObject({
+          _tag: "GitHubPullRequestLabelsError",
+          label: "managed",
+          status: 500,
+          retryable: true,
+        })
+        expect(value.completions).toEqual([false])
+      })
+    },
+  )
+  it.effect(
     "completes a failed label action and marks its missing rule",
     () => {
       const value = state()
@@ -713,6 +734,7 @@ describe("LabelingCoordinator", () => {
         yield* run(value)
         expect(value.markedMissing).toBe(1)
         expect(value.completions).toEqual([false])
+        expect(value.operations).toEqual(["plan", "complete", "missing"])
       })
     },
   )

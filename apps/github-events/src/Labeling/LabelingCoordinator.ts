@@ -565,28 +565,6 @@ export class LabelingCoordinator extends Context.Service<
               changes,
             )
       yield* Effect.forEach(
-        applied.failures,
-        (error) => {
-          if (error.label === undefined) return Effect.void
-          const rule = relevantRules.find(
-            (candidate) =>
-              candidate.label.toLowerCase() === error.label?.toLowerCase(),
-          )
-          if (rule === undefined) return Effect.void
-          return github.getRepositoryLabel(repository, error.label).pipe(
-            Effect.matchEffect({
-              onFailure: () => Effect.void,
-              onSuccess: Option.match({
-                onNone: () =>
-                  rules.markMissing(repository.id, rule.id, rule.version),
-                onSome: () => Effect.void,
-              }),
-            }),
-          )
-        },
-        { discard: true },
-      )
-      yield* Effect.forEach(
         actions.filter((action) => action.action !== "preserve"),
         (action) => {
           const execution = recordedActions.get(action.ruleId)
@@ -601,6 +579,46 @@ export class LabelingCoordinator extends Context.Service<
         },
         { discard: true },
       )
+      yield* Effect.forEach(
+        applied.failures,
+        (error) =>
+          Effect.gen(function* () {
+            if (!error.retryable)
+              yield* Effect.logWarning(
+                "Non-retryable GitHub pull request label mutation failed",
+                {
+                  repository: repository.slug,
+                  number: summary.number,
+                  operation: error.operation,
+                  label: error.label,
+                  status: error.status,
+                  error,
+                },
+              )
+            if (error.label === undefined) return
+            const rule = relevantRules.find(
+              (candidate) =>
+                candidate.label.toLowerCase() === error.label?.toLowerCase(),
+            )
+            if (rule === undefined) return
+            yield* github.getRepositoryLabel(repository, error.label).pipe(
+              Effect.matchEffect({
+                onFailure: () => Effect.void,
+                onSuccess: Option.match({
+                  onNone: () =>
+                    rules.markMissing(repository.id, rule.id, rule.version),
+                  onSome: () => Effect.void,
+                }),
+              }),
+            )
+          }),
+        { discard: true },
+      )
+      const retryableLabelFailure = applied.failures.find(
+        (failure) => failure.retryable,
+      )
+      if (retryableLabelFailure !== undefined)
+        return yield* Effect.fail(retryableLabelFailure)
       const evaluationFailure = failures.values().next().value
       if (evaluationFailure !== undefined)
         return yield* Effect.fail(evaluationFailure)
