@@ -6,6 +6,9 @@ const Payload = Schema.Struct({
   action: Schema.Literals(["created", "rerequested", "completed"]),
   check_run: Schema.Struct({
     head_sha: Schema.String,
+    pull_requests: Schema.optionalKey(
+      Schema.Array(Schema.Struct({ number: Schema.Int })),
+    ),
   }),
   repository: BasePullRequestPayload.fields.repository,
   installation: BasePullRequestPayload.fields.installation,

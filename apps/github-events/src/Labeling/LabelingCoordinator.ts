@@ -77,6 +77,7 @@ const source = (event: GitHubWebhookEvent.GitHubWebhookEvent) => {
         installation: event.payload.installation,
         sha: event.payload.pull_request.head.sha,
         number: event.payload.number,
+        pullRequestNumbers: null,
       }
     case "pull_request_review":
       return {
@@ -84,6 +85,7 @@ const source = (event: GitHubWebhookEvent.GitHubWebhookEvent) => {
         installation: event.payload.installation,
         sha: event.payload.pull_request.head.sha,
         number: event.payload.pull_request.number,
+        pullRequestNumbers: null,
       }
     case "check_suite":
       return {
@@ -91,6 +93,10 @@ const source = (event: GitHubWebhookEvent.GitHubWebhookEvent) => {
         installation: event.payload.installation,
         sha: event.payload.check_suite.head_sha,
         number: null,
+        pullRequestNumbers:
+          event.payload.check_suite.pull_requests?.map(
+            (pullRequest) => pullRequest.number,
+          ) ?? [],
       }
     case "check_run":
       return {
@@ -98,6 +104,10 @@ const source = (event: GitHubWebhookEvent.GitHubWebhookEvent) => {
         installation: event.payload.installation,
         sha: event.payload.check_run.head_sha,
         number: null,
+        pullRequestNumbers:
+          event.payload.check_run.pull_requests?.map(
+            (pullRequest) => pullRequest.number,
+          ) ?? [],
       }
     case "status":
       return {
@@ -105,6 +115,7 @@ const source = (event: GitHubWebhookEvent.GitHubWebhookEvent) => {
         installation: event.payload.installation,
         sha: event.payload.sha,
         number: null,
+        pullRequestNumbers: null,
       }
     case "ping":
     case "installation":
@@ -643,10 +654,22 @@ export class LabelingCoordinator extends Context.Service<
           ),
         )
       if (repository === null) return
-      const candidates = yield* github.listPullRequestsForCommit(
-        repository,
-        eventSource.sha,
-      )
+      const candidates = yield* eventSource.pullRequestNumbers !== null &&
+      eventSource.pullRequestNumbers.length > 0
+        ? Effect.forEach(
+            eventSource.pullRequestNumbers,
+            (number) => github.getPullRequest(repository, number),
+            { concurrency: 2 },
+          )
+        : github
+            .listPullRequestsForCommit(repository, eventSource.sha)
+            .pipe(
+              Effect.catchTag("GitHubClientError", (error) =>
+                error.status === 422
+                  ? Effect.succeed([] as ReadonlyArray<PullRequestSummary>)
+                  : Effect.fail(error),
+              ),
+            )
       const current = candidates.filter(
         (candidate) =>
           candidate.head.sha === eventSource.sha &&

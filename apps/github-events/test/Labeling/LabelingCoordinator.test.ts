@@ -66,6 +66,21 @@ const deterministicProgram: Program.PolicyProgram = {
     value: false,
   },
 }
+const requiredChecksProgram: Program.PolicyProgram = {
+  target: "pull_request",
+  appliesWhen: null,
+  matchesWhen: {
+    _tag: "CollectionPredicate",
+    fact: "pull_request.required_checks",
+    quantifier: "All",
+    item: {
+      _tag: "Predicate",
+      field: "state",
+      operator: "Equals",
+      value: "success",
+    },
+  },
+}
 const policy = new Policy.LabelingPolicy({
   id: policyId,
   repositoryId: repository.id,
@@ -77,7 +92,10 @@ const policy = new Policy.LabelingPolicy({
   updatedAt: now,
   deletedAt: Option.none(),
 })
-const version = (program: Program.PolicyProgram) =>
+const version = (
+  program: Program.PolicyProgram,
+  triggerManifest: ReadonlyArray<string> = ["pull_request:unlabeled"],
+) =>
   new Policy.LabelingPolicyVersion({
     id: versionId,
     policyId,
@@ -86,7 +104,7 @@ const version = (program: Program.PolicyProgram) =>
     program,
     contentHash: "hash",
     registryManifest: ["pull_request.draft"],
-    triggerManifest: ["pull_request:unlabeled"],
+    triggerManifest,
     publicationStatus: "published",
     createdAt: now,
   })
@@ -157,6 +175,31 @@ const event = Schema.decodeUnknownSync(Webhook.GitHubWebhookEvent)({
     installation: { id: 3 },
   },
 })
+const forkCheckRunEvent = Schema.decodeUnknownSync(Webhook.GitHubWebhookEvent)({
+  id: "fork-check-run",
+  name: "check_run",
+  payload: {
+    action: "completed",
+    check_run: {
+      head_sha: "sha",
+      pull_requests: [{ number: 42 }],
+    },
+    repository: { id: 2, full_name: "Effect-TS/effect" },
+    installation: { id: 3 },
+  },
+})
+const unmatchedCheckRunEvent = Schema.decodeUnknownSync(
+  Webhook.GitHubWebhookEvent,
+)({
+  id: "unmatched-check-run",
+  name: "check_run",
+  payload: {
+    action: "completed",
+    check_run: { head_sha: "unknown-sha", pull_requests: [] },
+    repository: { id: 2, full_name: "Effect-TS/effect" },
+    installation: { id: 3 },
+  },
+})
 const summary = {
   number: 42,
   title: "Fix",
@@ -173,6 +216,7 @@ interface State {
   currentTitle: string
   aiFails: boolean
   aiCalls: number
+  commitLookupStatus: number | null
   factLoads: number
   factLoadingFailureAt: number | null
   labels: Set<string>
@@ -192,6 +236,7 @@ const state = (): State => ({
   currentTitle: "Fix",
   aiFails: false,
   aiCalls: 0,
+  commitLookupStatus: null,
   factLoads: 0,
   factLoadingFailureAt: null,
   labels: new Set(["unmanaged"]),
@@ -237,7 +282,17 @@ const layer = (
           listItemLabels: () => unavailableStream,
           addItemLabels: () => unavailable,
           removeItemLabel: () => unavailable,
-          listPullRequestsForCommit: () => unavailable,
+          listPullRequestsForCommit: () =>
+            value.commitLookupStatus === null
+              ? Effect.succeed([])
+              : Effect.fail(
+                  new GitHubClientError({
+                    operation: "GitHubClient.listPullRequestsForCommit",
+                    status: value.commitLookupStatus,
+                    retryable: false,
+                    message: "Commit not found.",
+                  }),
+                ),
           listPullRequestReviews: () => unavailable,
           getFileContent: () => unavailable,
           listRequiredChecks: () => unavailable,
@@ -380,7 +435,9 @@ const layer = (
                 currentLabels: [...value.labels],
                 changedFiles: null,
                 changedFilesComplete: null,
-                requiredChecks: null,
+                requiredChecks: [
+                  { producer: "ci", name: "test", state: "success" },
+                ],
                 latestReviews: null,
               })
             }),
@@ -470,9 +527,10 @@ const run = (
   value: State,
   program?: Program.PolicyProgram,
   scenario?: Parameters<typeof layer>[2],
+  inputEvent: Webhook.GitHubWebhookEvent = event,
 ) =>
   Effect.gen(function* () {
-    yield* (yield* LabelingCoordinator).process(event)
+    yield* (yield* LabelingCoordinator).process(inputEvent)
   }).pipe(Effect.provide(layer(value, program, scenario)))
 
 describe("LabelingCoordinator", () => {
@@ -536,6 +594,40 @@ describe("LabelingCoordinator", () => {
       })
     },
   )
+  it.effect("resolves a fork pull request from a check run payload", () => {
+    const value = state()
+    return Effect.gen(function* () {
+      yield* run(
+        value,
+        requiredChecksProgram,
+        {
+          policies: [policy],
+          versions: [version(requiredChecksProgram, ["check_run:completed"])],
+          rules: [rule],
+        },
+        forkCheckRunEvent,
+      )
+      expect(value.applies).toBe(1)
+    })
+  })
+  it.effect("treats an unknown commit as having no pull requests", () => {
+    const value = state()
+    value.commitLookupStatus = 422
+    return Effect.gen(function* () {
+      yield* run(
+        value,
+        requiredChecksProgram,
+        {
+          policies: [policy],
+          versions: [version(requiredChecksProgram, ["check_run:completed"])],
+          rules: [rule],
+        },
+        unmatchedCheckRunEvent,
+      )
+      expect(value.applies).toBe(0)
+      expect(value.evaluations).toEqual([])
+    })
+  })
   it.effect(
     "persists attribution before mutation and recovers on retry",
     () => {
