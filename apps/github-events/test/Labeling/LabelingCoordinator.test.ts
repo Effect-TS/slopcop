@@ -720,11 +720,14 @@ describe("LabelingCoordinator", () => {
     const value = state()
     value.aiFails = true
     return Effect.gen(function* () {
-      yield* run(value, deterministicProgram, {
-        policies: [],
-        versions: [],
-        rules: [aiRule()],
-      })
+      const error = yield* Effect.flip(
+        run(value, deterministicProgram, {
+          policies: [],
+          versions: [],
+          rules: [aiRule()],
+        }),
+      )
+      expect(error.cause).toMatchObject({ _tag: "PolicyAiError" })
       expect(value.applies).toBe(0)
       expect(value.evaluations).toMatchObject([
         {
@@ -741,12 +744,16 @@ describe("LabelingCoordinator", () => {
     })
   })
   it.effect(
-    "records fact-loading failures without failing the delivery",
+    "records fact-loading failures and fails the delivery for retry",
     () => {
       const value = state()
       value.factLoadingFailureAt = 1
       return Effect.gen(function* () {
-        yield* run(value)
+        const error = yield* Effect.flip(run(value))
+        expect(error.cause).toMatchObject({
+          _tag: "GitHubClientError",
+          retryable: true,
+        })
         expect(value.evaluations).toMatchObject([
           { outcome: "Error", rationale: "Content unavailable." },
         ])
@@ -754,27 +761,36 @@ describe("LabelingCoordinator", () => {
       })
     },
   )
-  it.effect("continues with other rules when one fact load fails", () => {
-    const value = state()
-    value.factLoadingFailureAt = 1
-    const secondRule = aiRule(null, {
-      id: Schema.decodeUnknownSync(Rule.LabelingRuleId)("second-rule"),
-      label: "second",
-    })
-    return Effect.gen(function* () {
-      yield* run(value, deterministicProgram, {
-        policies: [],
-        versions: [],
-        rules: [aiRule(), secondRule],
+  it.effect(
+    "finishes other rule actions before failing a partial evaluation",
+    () => {
+      const value = state()
+      value.factLoadingFailureAt = 1
+      const secondRule = aiRule(null, {
+        id: Schema.decodeUnknownSync(Rule.LabelingRuleId)("second-rule"),
+        label: "second",
       })
-      expect(value.evaluations).toMatchObject([
-        { outcome: "Error" },
-        { outcome: "Match", ruleId: secondRule.id },
-      ])
-      expect([...value.labels].sort()).toEqual(["second", "unmanaged"])
-      expect(value.applies).toBe(1)
-    })
-  })
+      return Effect.gen(function* () {
+        const error = yield* Effect.flip(
+          run(value, deterministicProgram, {
+            policies: [],
+            versions: [],
+            rules: [aiRule(), secondRule],
+          }),
+        )
+        expect(error.cause).toMatchObject({
+          _tag: "GitHubClientError",
+          retryable: true,
+        })
+        expect(value.evaluations).toMatchObject([
+          { outcome: "Error" },
+          { outcome: "Match", ruleId: secondRule.id },
+        ])
+        expect([...value.labels].sort()).toEqual(["second", "unmanaged"])
+        expect(value.applies).toBe(1)
+      })
+    },
+  )
   it.effect("skips AI when its deterministic gate does not match", () => {
     const value = state()
     const noMatchProgram: Program.PolicyProgram = {

@@ -601,6 +601,9 @@ export class LabelingCoordinator extends Context.Service<
         },
         { discard: true },
       )
+      const evaluationFailure = failures.values().next().value
+      if (evaluationFailure !== undefined)
+        return yield* Effect.fail(evaluationFailure)
     })
 
     const run = Effect.fn("LabelingCoordinator.process")(function* (
