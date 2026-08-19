@@ -100,6 +100,14 @@ interface RuntimeSnapshot {
   readonly rules: ReadonlyArray<RuntimeRule>
 }
 
+interface ProcessPullRequestOptions {
+  readonly event: GitHubWebhookEvent.GitHubWebhookEvent
+  readonly repository: DomainRepository.GitHubRepository
+  readonly summary: PullRequestSummary
+  readonly trigger: string
+  readonly runtimeSnapshot: RuntimeSnapshot
+}
+
 type OpenPullRequestPage = Extract<
   ConditionalSnapshot<OpenPullRequestSnapshot>,
   { readonly _tag: "Modified" }
@@ -438,13 +446,13 @@ export class LabelingCoordinator extends Context.Service<
     })
     const processPullRequest = Effect.fn(
       "LabelingCoordinator.processPullRequest",
-    )(function* (
-      event: GitHubWebhookEvent.GitHubWebhookEvent,
-      repository: DomainRepository.GitHubRepository,
-      summary: PullRequestSummary,
-      trigger: string,
-      runtimeSnapshot: RuntimeSnapshot,
-    ) {
+    )(function* ({
+      event,
+      repository,
+      summary,
+      trigger,
+      runtimeSnapshot,
+    }: ProcessPullRequestOptions) {
       const { revision, resolver, rules: runtimeRules } = runtimeSnapshot
       const directlyTriggeredIds = new Set(
         runtimeRules
@@ -817,13 +825,13 @@ export class LabelingCoordinator extends Context.Service<
           repository,
           event.payload.number,
         )
-        return yield* processPullRequest(
+        return yield* processPullRequest({
           event,
           repository,
           summary,
           trigger,
           runtimeSnapshot,
-        )
+        })
       }
       const eventSource = source(event)
       if (eventSource === null) return
@@ -875,13 +883,13 @@ export class LabelingCoordinator extends Context.Service<
       yield* Effect.forEach(
         current,
         (summary) =>
-          processPullRequest(
+          processPullRequest({
             event,
             repository,
             summary,
             trigger,
             runtimeSnapshot,
-          ),
+          }),
         { concurrency: 2, discard: true },
       )
     })
