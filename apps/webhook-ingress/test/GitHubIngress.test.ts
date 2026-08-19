@@ -101,22 +101,16 @@ describe("GitHub webhook ingress", () => {
       name: "effect",
     }
     const installation = { id: 2 }
-    const event = {
-      name: "check_suite",
-      payload: {
-        action: "completed",
-        check_suite: { head_sha: "sha" },
-        repository,
-        installation,
-      },
-    } as const
+    const body = JSON.stringify({
+      action: "completed",
+      check_suite: { head_sha: "sha" },
+      repository,
+      installation,
+    })
 
     return Effect.gen(function* () {
       const result = yield* handleGitHubWebhook(
-        request({
-          body: JSON.stringify(event.payload),
-          eventName: event.name,
-        }),
+        request({ body, eventName: "check_suite" }),
         secret,
         (received) =>
           Effect.sync(() => enqueued.push(received)).pipe(Effect.asVoid),
@@ -127,28 +121,49 @@ describe("GitHub webhook ingress", () => {
     })
   })
 
-  it.effect("does not enqueue created check runs", () => {
+  it.effect("does not enqueue redundant check lifecycle events", () => {
     let enqueueCount = 0
-    const body = JSON.stringify({
-      action: "created",
-      check_run: { head_sha: "sha" },
-      repository: {
-        id: 1,
-        full_name: "Effect-TS/effect",
-        private: false,
-        owner: { login: "Effect-TS" },
-        name: "effect",
+    const repository = {
+      id: 1,
+      full_name: "Effect-TS/effect",
+      private: false,
+      owner: { login: "Effect-TS" },
+      name: "effect",
+    }
+    const installation = { id: 2 }
+    const events = [
+      {
+        eventName: "check_run",
+        payload: {
+          action: "created",
+          check_run: { head_sha: "sha" },
+          repository,
+          installation,
+        },
       },
-      installation: { id: 2 },
-    })
+      ...["requested", "rerequested"].map((action) => ({
+        eventName: "check_suite",
+        payload: {
+          action,
+          check_suite: { head_sha: "sha" },
+          repository,
+          installation,
+        },
+      })),
+    ]
 
     return Effect.gen(function* () {
-      const result = yield* handleGitHubWebhook(
-        request({ body, eventName: "check_run" }),
-        secret,
-        () => Effect.sync(() => enqueueCount++).pipe(Effect.asVoid),
-      )
-      expect(result.status).toBe(202)
+      for (const event of events) {
+        const result = yield* handleGitHubWebhook(
+          request({
+            body: JSON.stringify(event.payload),
+            eventName: event.eventName,
+          }),
+          secret,
+          () => Effect.sync(() => enqueueCount++).pipe(Effect.asVoid),
+        )
+        expect(result.status).toBe(202)
+      }
       expect(enqueueCount).toBe(0)
     })
   })
