@@ -24,6 +24,7 @@ export interface LabelChanges {
 export interface AppliedLabelChanges {
   readonly added: ReadonlyArray<string>
   readonly removed: ReadonlyArray<string>
+  readonly failures: ReadonlyArray<GitHubPullRequestLabelsError>
 }
 
 export class RepositoryInstallationMismatch extends Data.TaggedError(
@@ -306,21 +307,42 @@ export class GitHubPullRequest extends Context.Service<
         (label) => current.has(label) && !additions.includes(label),
       )
 
+      const added: Array<GitHubLabel.GitHubLabelName> = []
+      const failures: Array<GitHubPullRequestLabelsError> = []
       for (const label of additions) {
-        yield* client
+        const didAdd = yield* client
           .addItemLabels(pullRequest.repository, pullRequest.number, [label])
-          .pipe(Effect.mapError(mapLabelsError(pullRequest, "add", label)))
+          .pipe(
+            Effect.mapError(mapLabelsError(pullRequest, "add", label)),
+            Effect.match({
+              onFailure: (error) => {
+                failures.push(error)
+                return false
+              },
+              onSuccess: () => true,
+            }),
+          )
+        if (didAdd) added.push(label)
       }
 
       const removed: Array<GitHubLabel.GitHubLabelName> = []
       for (const label of removals) {
         const didRemove = yield* client
           .removeItemLabel(pullRequest.repository, pullRequest.number, label)
-          .pipe(Effect.mapError(mapLabelsError(pullRequest, "remove", label)))
+          .pipe(
+            Effect.mapError(mapLabelsError(pullRequest, "remove", label)),
+            Effect.match({
+              onFailure: (error) => {
+                failures.push(error)
+                return false
+              },
+              onSuccess: (didRemove) => didRemove,
+            }),
+          )
         if (didRemove) removed.push(label)
       }
 
-      return { added: additions, removed }
+      return { added, removed, failures }
     })
 
     return {

@@ -551,48 +551,41 @@ export class LabelingCoordinator extends Context.Service<
       }
       const applied =
         changes.add.length === 0 && changes.remove.length === 0
-          ? { added: [], removed: [] }
-          : yield* pullRequests
-              .applyLabels(
-                {
-                  deliveryId: event.id,
-                  repository,
-                  number: summary.number,
-                  title: summary.title,
-                  body: summary.body,
-                  baseRef: summary.base.ref,
-                  headSha: summary.head.sha,
-                },
-                changes,
-              )
-              .pipe(
-                Effect.catchTag("GitHubPullRequestLabelsError", (error) => {
-                  if (error.label === undefined) return Effect.fail(error)
-                  const rule = relevantRules.find(
-                    (candidate) =>
-                      candidate.label.toLowerCase() ===
-                      error.label?.toLowerCase(),
-                  )
-                  if (rule === undefined) return Effect.fail(error)
-                  return github
-                    .getRepositoryLabel(repository, error.label)
-                    .pipe(
-                      Effect.matchEffect({
-                        onFailure: () => Effect.void,
-                        onSuccess: Option.match({
-                          onNone: () =>
-                            rules.markMissing(
-                              repository.id,
-                              rule.id,
-                              rule.version,
-                            ),
-                          onSome: () => Effect.void,
-                        }),
-                      }),
-                      Effect.andThen(Effect.fail(error)),
-                    )
-                }),
-              )
+          ? { added: [], removed: [], failures: [] }
+          : yield* pullRequests.applyLabels(
+              {
+                deliveryId: event.id,
+                repository,
+                number: summary.number,
+                title: summary.title,
+                body: summary.body,
+                baseRef: summary.base.ref,
+                headSha: summary.head.sha,
+              },
+              changes,
+            )
+      yield* Effect.forEach(
+        applied.failures,
+        (error) => {
+          if (error.label === undefined) return Effect.void
+          const rule = relevantRules.find(
+            (candidate) =>
+              candidate.label.toLowerCase() === error.label?.toLowerCase(),
+          )
+          if (rule === undefined) return Effect.void
+          return github.getRepositoryLabel(repository, error.label).pipe(
+            Effect.matchEffect({
+              onFailure: () => Effect.void,
+              onSuccess: Option.match({
+                onNone: () =>
+                  rules.markMissing(repository.id, rule.id, rule.version),
+                onSome: () => Effect.void,
+              }),
+            }),
+          )
+        },
+        { discard: true },
+      )
       yield* Effect.forEach(
         actions.filter((action) => action.action !== "preserve"),
         (action) => {

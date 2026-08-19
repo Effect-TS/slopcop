@@ -256,17 +256,21 @@ const layer = (
           getLabels: () => Effect.succeed(new Set(value.labels)),
           applyLabels: (_pullRequest, changes) =>
             value.labelMutationFails
-              ? Effect.fail(
-                  new GitHubPullRequestLabelsError({
-                    operation: "add",
-                    repository: repository.slug,
-                    number: 42,
-                    label: "managed",
-                    status: 422,
-                    retryable: false,
-                    message: "GitHub rejected the label mutation.",
-                  }),
-                )
+              ? Effect.succeed({
+                  added: [],
+                  removed: [],
+                  failures: [
+                    new GitHubPullRequestLabelsError({
+                      operation: "add",
+                      repository: repository.slug,
+                      number: 42,
+                      label: "managed",
+                      status: 422,
+                      retryable: false,
+                      message: "GitHub rejected the label mutation.",
+                    }),
+                  ],
+                })
               : Effect.sync(() => {
                   value.operations.push("github")
                   value.applies++
@@ -278,7 +282,7 @@ const layer = (
                   )
                   added.forEach((label) => value.labels.add(label))
                   removed.forEach((label) => value.labels.delete(label))
-                  return { added, removed }
+                  return { added, removed, failures: [] }
                 }),
         }),
         Layer.succeed(GitHubRepositoriesRepo, {
@@ -687,23 +691,28 @@ describe("LabelingCoordinator", () => {
       })
     },
   )
-  it.effect("keeps a rule enabled when its label still exists", () => {
-    const value = state()
-    value.labelMutationFails = true
-    return Effect.gen(function* () {
-      yield* Effect.flip(run(value))
-      expect(value.markedMissing).toBe(0)
-    })
-  })
   it.effect(
-    "marks a rule missing when GitHub confirms its label is absent",
+    "completes a failed label action when its label still exists",
+    () => {
+      const value = state()
+      value.labelMutationFails = true
+      return Effect.gen(function* () {
+        yield* run(value)
+        expect(value.markedMissing).toBe(0)
+        expect(value.completions).toEqual([false])
+      })
+    },
+  )
+  it.effect(
+    "completes a failed label action and marks its missing rule",
     () => {
       const value = state()
       value.labelMutationFails = true
       value.repositoryLabelExists = false
       return Effect.gen(function* () {
-        yield* Effect.flip(run(value))
+        yield* run(value)
         expect(value.markedMissing).toBe(1)
+        expect(value.completions).toEqual([false])
       })
     },
   )
