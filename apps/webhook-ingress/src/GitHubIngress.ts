@@ -140,7 +140,7 @@ export const handleGitHubWebhook = <R>(
       return response(202, "Accepted")
     }
     if (
-      event.name === "check_suite" ||
+      (event.name === "check_suite" && event.payload.action !== "completed") ||
       (event.name === "check_run" && event.payload.action === "created")
     ) {
       return response(202, "Accepted")

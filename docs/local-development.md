@@ -59,17 +59,33 @@ Webhook secret: same value as GITHUB_WEBHOOK_SECRET in .env.dev
 Repository permissions:
 
 ```text
+Checks: Read-only
+Commit statuses: Read-only
 Contents: Read-only
 Issues: Read and write
 Metadata: Read-only
 Pull requests: Read-only
 ```
 
+`Metadata: Read-only` covers the rules-for-branch endpoint used to discover
+required checks. GitHub lists it as the only repository permission needed by a
+GitHub App installation token for
+[Get rules for a branch](https://docs.github.com/en/rest/repos/rules#get-rules-for-a-branch).
+
 Subscribe to events:
 
 ```text
+Check run
+Check suite
 Pull request
+Pull request review
+Status
 ```
+
+Check run is the primary post-CI signal. Check suite and Status are fallback
+re-evaluation paths for providers that do not deliver completed check runs; the
+three CI subscriptions are not co-required. Enabling more than one broadens
+compatibility but may produce redundant policy evaluations.
 
 Install the app only on sandbox repositories.
 

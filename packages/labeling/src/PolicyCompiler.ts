@@ -31,6 +31,7 @@ export const FACT_TRIGGERS: Readonly<
     ...RECONCILIATION_TRIGGERS,
     "check_run:rerequested",
     "check_run:completed",
+    "check_suite:completed",
     "status:*",
   ],
   "pull_request.latest_reviews": [
