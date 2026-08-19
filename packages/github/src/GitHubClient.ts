@@ -614,7 +614,7 @@ export class GitHubClient extends Context.Service<
         "GitHubClient.listOpenPullRequests",
         request,
       )
-      if (response.status === 304) {
+      if (response.status === 304 && etag !== null) {
         return { _tag: "NotModified" } as const
       }
       yield* requireStatus("GitHubClient.listOpenPullRequests", response, 200)
